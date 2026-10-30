@@ -1,0 +1,70 @@
+# Private discrete collision-world checks
+
+`DiscreteCollisionWorld` connects the existing `WorldObjects`, default-owned DBVT, pair cache, and persistent dispatcher. `lib.rs`, the public FFI, and application backend keep their native implementation.
+
+The owner registers raw current shape bounds. Updates expand each side by `0.02` and accept the current static bit or an expanded diagonal squared length strictly below `1e12`. Rejected updates preserve the proxy and request activation state 5 through the protected setter. The default updates every registered body. Public kinematic transforms keep the existing motion-state semantics.
+
+Shutdown cleans each body's matching algorithm slots in cache order before reverse proxy destruction. All body storage and the dispatcher remain alive through synchronous release. Native joint and physical body deletion events have a separate ledger. Rust does not claim the same physical deletion timing.
+
+## Hosted checks
+
+`.github/workflows/bullet-discrete-world.yml` starts on the exact private branch and supports manual dispatch after publication. Four jobs compile on Windows x64, Apple Silicon macOS, Linux x64, and Linux ARM64. Four jobs replay the current Windows capture. Rust is pinned to `1.95.0`.
+
+`check.py --out-dir PATH --policy generic-reference` builds the 114-member Bullet archive, extracts every member, and links a consumer that includes the unchanged `mds_bt.cpp`. The consumer calls the genuine world, body, and joint constructors, original collision-world methods, and original destruction. The Windows policy is `mmd-win64-sse`. `--replay-dir PATH` requires a complete current Windows capture with exact physical sources, canonical source closure, native inputs, and commit identity.
+
+`evidence.py` is the common entrance for completed native captures. Native finalization admits an in-memory schema 6 report and manifest before publishing those exact bytes, with the report replaced last. Refusal leaves a diagnostic `FAIL`. Windows replay consumes only admitted rows, bound inputs, and the producer report digest. Its schema 7 output cannot substitute for a native capture. Source-only handoffs are a separate contract.
+
+Admission checks caller-supplied current HEAD, canonical source bytes, corpus, and allowed host/policy. It binds source start/end, physical checkout and Git attributes, exact generated hooks and inverses, ordered commands and retained outputs, pre-use direct inputs, all 114 source/object/archive payload/extracted-member relationships, verified archive special metadata and exact listing multiplicity, consumer overrides and actual link selections, produced/use/executed/end binary identities, eight traces, allocator and physical ledgers, bound Rust comparisons, and all seventeen clean-baseline directed semantic controls. Counts are derived from the corpus and parsed results. Closed schemas reject unknown fields, missing or extra paths, duplicates, case collisions, nonfinite numbers, and booleans in integer fields.
+
+The reader limits file and directory counts to 24,000, each file to 512 MiB, total bytes to 4 GiB, and relative paths to 1,024 characters before reading payloads. It rejects symlinks and nonregular files. Windows path identities use Windows semantics on every replay host. Root mappings use path components. JSON object key order has no meaning; command, traversal, archive-member, mode, and mutant arrays retain their real order.
+
+Each native C++ compilation has a separately labelled discovery compilation. The checker retains discovery outputs, reads and stores the discovered include bytes, snapshots them before measured compilation, requires the measured include list and hashes to agree, and checks the union again at the end. Discovery itself consumes headers before that snapshot. These receipts do not attest to the compiler's internal reads.
+
+Absolute invocation aliases are executed without resolving away their basename. Resolved target paths and bytes are retained at registration, checked before each use, and acquired again at the end. Same-byte retargeting changes the identity. Rustup and its actual pinned rustc have separate identities. Native Rust builds explicitly select the resolved linker driver. Unix native consumer links use the linker discovered by the compiler and an explicit selector. Windows records the existing developer environment's resolved `link.exe`; this does not attest to cl's internal subprocess selection. Relevant named compiler/linker settings are recorded without an environment dump. Inner driver subprocesses, compiler libraries, the SDK, and the full operating environment are not attested. Replay preserves its original implicit Rust linker behavior and records that remaining gap. Selector changes do not claim byte equivalence with former implicit linkage.
+
+The exact native schedules include 120 discovery commands: 459 commands on Windows and 347 on Unix. Replay has 87 commands, including the actual pinned compiler-path receipt, and no native discovery or explicit linker selector. All commands must exit normally. Blanket `/W0` and `-w` suppression is absent; numeric, ABI, CRT, and deterministic-math options are preserved.
+
+The checker retains expanded DBVT policies, fourteen ABI and deterministic math macros, the direct Rust CRT library, archive members, link selections, and produced and executed binary identities. Generated DBVT, dispatcher, and world source copies receive bounded observation hooks. Exact inverse edits recover the original physical bytes, including Windows line endings. Unmodified archive consumers supply the common-output control.
+
+Darwin link selection and exact override paths come only from the leading map Object-files table, bounded by its Sections header. Later symbol and literal bytes remain opaque, and the complete raw map and command streams retain their original digests. Windows Rust executable builds require the exact corresponding PDB as a retained, hashed command output: dedicated, pure, observed Rust, and each of the seventeen baseline and mutant builds. PDBs are not compiler inputs. These harness receipts record bytes at command completion; they do not attest to inner linker activity or repeat-run determinism, and do not upgrade older failed captures.
+
+Algorithm allocation generations and manifold allocation generations have independent ledgers. Plane-plane algorithms can own no manifold. Snapshots retain registration order, activation, current, interpolation, and motion transforms, requested and leaf AABBs, proxy owners and UIDs, pair order, manifold owners, initialized numeric words, contact lifetimes, and synchronous release. No snapshot comparison sorts pairs or manifolds.
+
+The corpus separates public-shim operations from generated fixture injection for activation, flags, and independent transform sentinels. It covers all 16 ordered shape pairs, force-update states, the strict huge-boundary cases, filters, disabled joint collisions, no-contact response, stale pairs, fixed-tree migration, reactivation, repeated dispatch, allocation reuse, and shutdown.
+
+Allocator schema 2 separates `unmodified-control` from `generated-dbvt-node-sites`. Every size-matching raw or aligned allocation remains an unclassified candidate until its matching free. The original control requires every tree/cache pointer to have live candidate backing and all candidates to be freed. Size equality does not establish the candidate's C++ type. The Windows initial allocation's exact nonnode type remains unobserved.
+
+Only generated DBVT copies replace the exact allocation and free expressions with scoped wrappers. The wrappers preserve one original aligned operation, null frees, placement construction, and cache statement order. Fixed-capacity logs record alloc/free/reuse/cache, node generation, world generation, and tree index. Nonzero monotonic allocation/free call scopes bind typed events to the raw/aligned callback route, raw pointer, aligned pointer, and physical allocation generation. Typed nodes must exactly exhaust traversed and cached nodes at every checkpoint, including transient events between snapshots. Counter-consistent typed event deletion still leaves unmatched scoped raw callbacks. Ordinary mode has typed source-site observations and no raw callback corroboration.
+
+The original native links still select the original DBVT, dispatcher, and world archive members. Observed links select all three generated overrides and exclude their original members. Complete unsorted common outputs remain equal. Controlled runs additionally compare complete candidate histories, arena-relative tree traversal, owners, volumes, and cache identity. Ordinary runs compare topology, owners, volumes, cache presence, and existing observable ordering without equating absolute process addresses. Generated typed provenance is related to the original by these finite comparisons. It was not directly observed in the original binary.
+
+The controlled allocator and node-rank checks retain three allocation orders and the ordinary run. Production Rust has no address override. These finite observations do not establish universal allocator-independent ordering. Old capture schemas are refused rather than supplied with inferred typed provenance.
+
+Seventeen owner-connection mutants must compile, exit normally with zero status, produce a complete valid trace, and change the intended semantic fields against a clean same-host Rust baseline. Compile, parser, crash, and timeout failures do not satisfy this requirement. The dedicated six behavior tests and unchanged 97-test native-free suite run separately.
+
+## Compiler-free checks
+
+`python3 -B tools/bullet-rust-discrete-world-check/test_check.py -v` runs source and complete-admission controls. The latter construct independent synthetic Windows, Linux, and Darwin capture records using the full current source closure and real 81-case, 707-checkpoint corpus. Refusal controls refresh the manifest and affected command-output/artifact digests. They exercise required evidence families, source end/transport, flags/tools/environment, objects/archive payloads, includes/policy/overrides/binaries, modes/lifetimes, directed mutant witnesses, native finalization, Windows replay entry, and distinct replay schemas. Synthetic bytes are never actual execution evidence. The same command with `-O` checks that validation survives optimization. These commands do not compile or run Rust or C++.
+
+The private source packet records these compiler-free checks. All Rust tests, native consumers, compiled mutants, cross-host numeric comparisons, and final integration remain `UNRUN` until root-owned GitHub Actions and independent artifact acceptance.
+
+## Exclusions
+
+Solver stepping, islands, motion integration, CCD, queries, actions, ticks, clocks, MMD deferred AxisSweep and null-cache acceleration, ordinary body removal, and public backend adoption remain separate work. Both shims use a null debug drawer. The nonnull warning latch is outside this boundary. Intel Mac and Win32 are unsupported. Existing GJK admission updates authorize source identity only and do not inherit earlier executions.
+
+Producer schema 3 requires include binding schema 1. Each measured compilation retains discovery-pre and measured-post occurrences with stream, per-stream ordinal, exact raw spelling, compiler cwd, resolved absolute target, and target digest. Repeated headers remain separate occurrences. No ordering between stdout and stderr is inferred. The checker resolves each raw spelling against the actual compiler cwd before measurement, independently after measurement, and again at capture end. It reads bytes at each acquisition. Same-byte retargets fail. Canonical pre/post/end maps are checked projections of these bindings. Raw absolute source/generated names keep their ownership obligation as well as resolved targets. Windows replay validates these observations without resolving Windows paths on the destination filesystem. These receipts are harness observations, separate from physical command outputs.
+
+Archive payload order, tool listing order, and command schedule order are distinct observations. Every listed member must match a parsed payload or a format-valid special member actually present and listable by that host tool. BSD symbol tables do not add source objects. Git attributes and transport run at repository root with root-relative inputs; other command working directories retain their prescribed values.
+
+Native 4, replay 5, producer 2, and older temporal evidence are refused. Failed historical captures cannot acquire missing binding observations through replay. Bindings do not attest compiler-internal reads, inner toolchain/SDK/OS behavior, TOCTOU freedom, or consistently fabricated complete external histories. Fresh legal actual captures and malformed actual peers remain separate hosted acceptance gates.
+
+Darwin archive extraction retains the validated BSD symbol index as a separate
+output beside the 114 payload objects. The archive parser supplies the exact
+name and extracted body for `__.SYMDEF`, `__.SYMDEF SORTED`, `__.SYMDEF_64`, or
+`__.SYMDEF_64 SORTED` (at most one). The producer declares that output before
+running the unchanged `ar x` command; ordinary output retention records its
+actual bytes. Admission independently derives the index from the original
+archive, checks exact body equality, and binds its name and digest to the unique
+extraction command. No prefix exception or inventory exclusion is used. Other
+hosts and replay schedules keep their existing output contracts and schemas.
+Old failed captures do not become complete under the new source contract.

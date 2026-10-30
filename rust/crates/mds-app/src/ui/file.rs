@@ -695,12 +695,13 @@ pub fn load_vac_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
     let vac = read(path)?;
     let name = mds_formats::text::decode_sjis(&mds_doc::vac_mesh_name(&vac));
     let mesh = path.with_file_name(name.replace('\\', "/"));
+    let resolved = mds_formats::path::resolve_path_ci(&mesh).unwrap_or_else(|| mesh.clone());
     let stored = |p: &Path| p.to_string_lossy().replace('/', "\\");
     ctx.editor.apply(Command::LoadVac {
         path: stored(path),
         vac,
         mesh_path: stored(&mesh),
-        mesh: read(&mesh)?,
+        mesh: read(&resolved)?,
     })
 }
 

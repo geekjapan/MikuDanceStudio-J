@@ -13,12 +13,174 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
 
 
-def run(command, log, **kwargs):
+def _diagnostic_read(path, limit):
+    path = Path(path)
+    if not path.is_absolute() or any(part in ('.', '..') for part in path.parts[1:]):
+        raise ValueError('unsafe diagnostic path')
+    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        child = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        try:
+            if not stat.S_ISREG(os.fstat(child).st_mode):
+                raise ValueError('diagnostic file kind')
+            with os.fdopen(child, 'rb', closefd=False) as stream:
+                raw = stream.read(limit + 1)
+            if len(raw) > limit:
+                raise ValueError('diagnostic read limit')
+            return raw.decode('utf-8', errors='strict')
+        finally:
+            os.close(child)
+    finally:
+        os.close(descriptor)
+
+
+def _diagnostic_cgroup(cgroup, mountinfo):
+    memberships = [line[3:] for line in cgroup.splitlines() if line.startswith('0::')]
+    if len(memberships) != 1:
+        raise ValueError('ambiguous cgroup membership')
+
+    def absolute(value):
+        value = re.sub(r'\\(040|011|012|134)', lambda match: chr(int(match[1], 8)), value)
+        if not value.startswith('/') or any(p in ('.', '..') for p in value.split('/')):
+            raise ValueError('unsafe cgroup path')
+        return Path(value)
+
+    member = absolute(memberships[0])
+    candidates = []
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if '-' not in fields:
+            raise ValueError('invalid mountinfo')
+        separator = fields.index('-')
+        if len(fields) <= separator + 3 or separator < 6:
+            raise ValueError('invalid mountinfo fields')
+        if fields[separator + 1] != 'cgroup2':
+            continue
+        root, mount = absolute(fields[3]), absolute(fields[4])
+        if member == root or root in member.parents:
+            candidates.append(mount / member.relative_to(root))
+    if len(candidates) != 1:
+        raise ValueError('unresolved or ambiguous cgroup mount')
+    return candidates[0]
+
+
+class _RunDiagnostics:
+    INTERVAL = 15.0
+    MAX_EVENTS = 512
+    MAX_BYTES = 2 * 1024 * 1024
+    MAX_EVENT_BYTES = 16 * 1024
+    PROC_BYTES = 64 * 1024
+    MOUNT_BYTES = 1024 * 1024
+    SCALAR_BYTES = 8192
+
+    def __init__(self, settings, cwd):
+        self.settings = settings
+        self.cwd = cwd
+        self.stream = None
+        self.disabled = False
+        self.warned = False
+        self.events = self.bytes = 0
+        self.next_sample = None
+
+    def _unknown(self, operation):
+        try:
+            return operation()
+        except Exception:
+            return 'UNKNOWN'
+
+    def _resources(self, process, log):
+        resources = {}
+        if sys.platform.startswith('linux'):
+            for role, pid in (('runner', os.getpid()), ('child', process.pid)):
+                def read_status():
+                    text = _diagnostic_read('/proc/%d/status' % pid, self.PROC_BYTES)
+                    allowed = {'State', 'PPid', 'Threads', 'VmRSS', 'VmHWM'}
+                    return {key: value.strip() for line in text.splitlines() if ':' in line
+                            for key, value in [line.split(':', 1)] if key in allowed}
+                resources[role] = self._unknown(read_status)
+            def read_cgroup():
+                root = _diagnostic_cgroup(
+                    _diagnostic_read('/proc/%d/cgroup' % process.pid, self.PROC_BYTES),
+                    _diagnostic_read('/proc/%d/mountinfo' % os.getpid(), self.MOUNT_BYTES))
+                return dict(scope='whole_cgroup_not_command_or_shutdown_actor_proof', path=str(root),
+                    values={name: self._unknown(lambda name=name: _diagnostic_read(root / name, self.SCALAR_BYTES).strip())
+                            for name in ('memory.current', 'memory.peak', 'memory.max', 'memory.events')})
+            resources['cgroup'] = self._unknown(read_cgroup)
+        else:
+            resources.update(runner='UNKNOWN', child='UNKNOWN', cgroup='UNKNOWN')
+        def free_bytes():
+            usage = os.statvfs(log.parent)
+            return usage.f_bavail * usage.f_frsize
+        resources['evidence_free_bytes'] = self._unknown(free_bytes)
+        return resources
+
+    def emit(self, event, process, command, log, start, usage=None, reap=None):
+        if self.disabled:
+            return
+        try:
+            if self.stream is None:
+                if (type(self.settings) is not dict or set(self.settings) != {'phase', 'path'}
+                        or type(self.settings['phase']) is not str
+                        or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', self.settings['phase'])):
+                    raise ValueError('invalid diagnostic settings')
+                self.stream = Path(self.settings['path']).open('xb')
+            now = time.monotonic()
+            record = dict(event=event, phase=self.settings['phase'], utc=datetime.now(timezone.utc).isoformat(),
+                monotonic=now, elapsed_seconds=now - start, command=command,
+                cwd=str(Path(self.cwd).absolute()) if self.cwd is not None else str(Path.cwd()),
+                log=str(log), runner_pid=os.getpid(), child_pid=process.pid,
+                observed_child_pgid=self._unknown(lambda: os.getpgid(process.pid)),
+                observed_child_sid=self._unknown(lambda: os.getsid(process.pid)),
+                resources=self._resources(process, log))
+            if event == 'start':
+                record['limits'] = dict(interval_seconds=self.INTERVAL, events=self.MAX_EVENTS,
+                    total_bytes=self.MAX_BYTES, event_bytes=self.MAX_EVENT_BYTES,
+                    proc_read_bytes=self.PROC_BYTES, mountinfo_read_bytes=self.MOUNT_BYTES,
+                    scalar_read_bytes=self.SCALAR_BYTES)
+            if event == 'finish':
+                record['wait4_return'] = reap
+                record['process_exit_code'] = process.returncode
+                record['wait4_resource'] = dict(user_cpu_seconds=usage.ru_utime,
+                    system_cpu_seconds=usage.ru_stime, max_rss=usage.ru_maxrss,
+                    max_rss_unit='KiB' if sys.platform.startswith('linux') else 'bytes')
+            raw = (json.dumps(record, sort_keys=True) + '\n').encode()
+            if (self.events >= self.MAX_EVENTS or len(raw) > self.MAX_EVENT_BYTES
+                    or self.bytes + len(raw) > self.MAX_BYTES):
+                raise ValueError('diagnostic output limit')
+            self.stream.write(raw)
+            self.stream.flush()
+            self.events += 1
+            self.bytes += len(raw)
+            print('RUN_DIAGNOSTIC ' + raw.decode().rstrip(), file=sys.stderr, flush=True)
+            self.next_sample = now + self.INTERVAL
+        except Exception:
+            self.disabled = True
+            if not self.warned:
+                self.warned = True
+                try:
+                    print('RUN_DIAGNOSTIC UNKNOWN diagnostics_disabled', file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+
+    def close(self):
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except Exception:
+                pass
+
+
+def run(command, log, *, diagnostics=None, **kwargs):
     timeout = kwargs.pop("timeout", None)
     started = datetime.now(timezone.utc).isoformat()
     start = time.monotonic()
@@ -26,24 +188,39 @@ def run(command, log, **kwargs):
     with log.open("w") as output:
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, **kwargs)
+        observer = None
         try:
+            if diagnostics is not None:
+                observer = _RunDiagnostics(diagnostics, kwargs.get('cwd'))
+                observer.emit('start', process, command, log, start)
             while True:
                 pid, status, usage = os.wait4(process.pid, os.WNOHANG)
                 if pid:
                     process.returncode = os.waitstatus_to_exitcode(status)
+                    if observer is not None:
+                        observer.emit('finish', process, command, log, start, usage, dict(pid=pid, status=status))
                     break
                 if timeout is not None and time.monotonic() - start >= timeout:
                     timed_out = True
                     break
+                if (observer is not None and not observer.disabled
+                        and time.monotonic() >= observer.next_sample):
+                    observer.emit('sample', process, command, log, start)
                 time.sleep(0.05)
         finally:
-            if process.returncode is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                _, status, usage = os.wait4(process.pid, 0)
-                process.returncode = os.waitstatus_to_exitcode(status)
+            try:
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    reaped_pid, status, usage = os.wait4(process.pid, 0)
+                    process.returncode = os.waitstatus_to_exitcode(status)
+                    if observer is not None:
+                        observer.emit('finish', process, command, log, start, usage, dict(pid=reaped_pid, status=status))
+            finally:
+                if observer is not None:
+                    observer.close()
     return {"command": command, "exit_code": 124 if timed_out else process.returncode,
             "process_exit_code": process.returncode, "log": str(log), "timed_out": timed_out,
             "started_utc": started, "ended_utc": datetime.now(timezone.utc).isoformat(),

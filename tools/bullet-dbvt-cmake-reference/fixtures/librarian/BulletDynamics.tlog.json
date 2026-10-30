@@ -1,0 +1,12 @@
+{
+  "run": 40447023256,
+  "artifact": 12709290514,
+  "artifact_sha256": "ca9738ccaf91c9cdf62655c7c3368ec48c38eaafee40f831916ffaf8ab78f795",
+  "head": "62a00441d4b4152d05469f4f627e2f7d99d1508c",
+  "tlog": "native-build-metadata/BulletDynamics/BulletDynamics.dir/Release/BulletDynamics.tlog/Lib.command.1.tlog",
+  "sha256": "533d05950ad5d73a06ae461cfbb477c9c9c3f719aa62f32939022f1346ec8cd5",
+  "argument_lines": 20,
+  "argv_sha256": "2a51320d8ac0bb905a5e9d5cfb6a0f44de3d0daa2634f8aa38491c7f16b9a4ba",
+  "input_objects": 20,
+  "failure_line": 3
+}

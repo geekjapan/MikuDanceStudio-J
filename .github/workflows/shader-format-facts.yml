@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-report-graph]
+    branches: [w4-shader-format-report-graph, w4-shader-common-plan]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,45 @@ defaults:
     shell: bash
 
 jobs:
+  arm64-ordinary-types:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      LLVM_CONFIG_PATH: /usr/bin/llvm-config-18
+      LIBCLANG_PATH: /usr/lib/llvm-18/lib
+      DOCS_RS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install ARM64 type-check dependencies
+        timeout-minutes: 8
+        run: |
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libssl-dev pkg-config
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Type-check actual ordinary tool source on Linux ARM64
+        timeout-minutes: 15
+        run: |
+          mkdir -p "$RUNNER_TEMP/arm64-types"
+          exec > >(tee "$RUNNER_TEMP/arm64-types/check.log") 2>&1
+          test "$(uname -m)" = aarch64
+          git init "$RUNNER_TEMP/c2rust-arm64"
+          git -C "$RUNNER_TEMP/c2rust-arm64" remote add origin https://github.com/immunant/c2rust.git
+          git -C "$RUNNER_TEMP/c2rust-arm64" fetch --depth 1 origin "$C2RUST_REV"
+          git -C "$RUNNER_TEMP/c2rust-arm64" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/c2rust-arm64" rev-parse HEAD)" = "$C2RUST_REV"
+          python3 -B tools/vkd3d-rust-probe/apply_c2rust_patch.py --source "$RUNNER_TEMP/c2rust-arm64" --artifacts "$RUNNER_TEMP/arm64-types"
+          cargo +1.95.0 check --locked --manifest-path "$RUNNER_TEMP/c2rust-arm64/Cargo.toml" -p c2rust --bin c2rust-transpile
+      - name: Retain ARM64 typing evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-common-plan-arm64-types
+          path: ${{ runner.temp }}/arm64-types/
+          retention-days: 7
+          if-no-files-found: error
+
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -49,6 +88,15 @@ jobs:
         run: |
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
+          PYTHONPATH=tools/vkd3d-rust-probe python3 -B -m unittest \
+            test_probe.ProbeTests.test_completed_process_records_resources_and_logs \
+            test_probe.ProbeTests.test_timeout_is_not_success \
+            test_probe.ProbeTests.test_timeout_stops_spawned_children \
+            test_probe.ProbeTests.test_interruption_and_exception_kill_and_reap_owned_child
       - name: Prepare pinned native source and headers
         timeout-minutes: 8
         run: |
@@ -72,6 +120,15 @@ jobs:
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_format_ -- --nocapture | tee "$RUNNER_TEMP/format-facts/logs/closed-format-tests-execution.log"
           grep -E 'test .*closed_format_native_record_identity_is_compiler_owned \.\.\. ok' "$RUNNER_TEMP/format-facts/logs/closed-format-tests-execution.log"
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib c_ast::closed_plan::tests::closed_variadic_plan_fresh_threads_own_span_reservations -- --exact --list | tee "$RUNNER_TEMP/format-facts/logs/span-thread-test-list.log"
+          grep -Fx 'c_ast::closed_plan::tests::closed_variadic_plan_fresh_threads_own_span_reservations: test' "$RUNNER_TEMP/format-facts/logs/span-thread-test-list.log"
+          /usr/bin/time -v -o "$RUNNER_TEMP/format-facts/logs/span-thread-test-resources.log" cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib c_ast::closed_plan::tests::closed_variadic_plan_fresh_threads_own_span_reservations -- --exact --nocapture | tee "$RUNNER_TEMP/format-facts/logs/span-thread-test-execution.log"
+          grep -Fx 'COMMON_PLAN_THREAD_EMIT first' "$RUNNER_TEMP/format-facts/logs/span-thread-test-execution.log"
+          grep -Fx 'COMMON_PLAN_THREAD_EMIT second' "$RUNNER_TEMP/format-facts/logs/span-thread-test-execution.log"
+          grep -Fx 'test c_ast::closed_plan::tests::closed_variadic_plan_fresh_threads_own_span_reservations ... ok' "$RUNNER_TEMP/format-facts/logs/span-thread-test-execution.log"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_variadic_plan_ -- --list | tee "$RUNNER_TEMP/format-facts/logs/common-plan-tests-list.log"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_variadic_plan_ -- --nocapture | tee "$RUNNER_TEMP/format-facts/logs/common-plan-tests-execution.log"
+          python3 -B tools/vkd3d-rust-probe/check_common_plan.py --compiler-source "$RUNNER_TEMP/c2rust-src" --test-list "$RUNNER_TEMP/format-facts/logs/common-plan-tests-list.log" --test-log "$RUNNER_TEMP/format-facts/logs/common-plan-tests-execution.log" > "$RUNNER_TEMP/format-facts/logs/common-plan-tests.json"
           python3 -B tools/vkd3d-rust-probe/check_runtime.py --tool "$RUNNER_TEMP/format-facts/tool" --record
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/format-facts/logs/Cargo.lock"
           rustc +1.95.0 --version
@@ -98,7 +155,7 @@ jobs:
   extract:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 115
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -142,6 +199,23 @@ jobs:
             --c2rust "$RUNNER_TEMP/format-facts/tool/bin/c2rust" --clang /usr/bin/clang-18 --timeout 1800
           python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
           python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
+      - name: Retain partial diagnostic report-only checkpoint before common plan
+        id: report-only-checkpoint
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-report-only-checkpoint
+          path: ${{ runner.temp }}/format-facts/evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Exercise complete compiler-owned common plan and atomic output controls
+        timeout-minutes: 38
+        run: |
+          printf 'Partial diagnostic report-only checkpoint outcome=%s\n' '${{ steps.report-only-checkpoint.outcome }}'
+          python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
+            --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
+            --database "$RUNNER_TEMP/format-facts/evidence/result/compile_commands.json" \
+            --output "$RUNNER_TEMP/format-facts/evidence/common-plan" --timeout 1800
       - name: Retain complete packet or raw partial extraction failure
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

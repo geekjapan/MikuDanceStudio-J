@@ -10,14 +10,35 @@ from check_closed_variadic_inventory import require_inventory_outputs
 
 
 ROOT = Path(__file__).resolve().parent
+TRANSPILE_SINGLE_PREFIX = '''fn transpile_single(
+    tcfg: &TranspilerConfig,
+    input_path: &Path,
+    ancestor_path: &Path,
+    build_dir: &Path,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> TranspileResult {
+    let output_path = get_output_path(tcfg, input_path, ancestor_path, build_dir);
+    if output_path.exists() && !tcfg.overwrite_existing {
+        warn!("Skipping existing file {}", output_path.display());
+        return Err(());
+    }
+
+'''
 
 
 def patched_lines(name):
     patch = (ROOT / 'patches/c2rust-win64-abi.patch').read_text()
     sections = patch.split('diff --git ')
     section = next((s for s in sections if s.startswith(f'a/{name} b/{name}\n')), '')
-    return '\n'.join(line[1:] for line in section.splitlines()
-                     if line.startswith((' ', '+')) and not line.startswith('+++'))
+    source = '\n'.join(line[1:] for line in section.splitlines()
+                       if line.startswith((' ', '+')) and not line.startswith('+++'))
+    if name == 'c2rust-transpile/src/lib.rs':
+        boundary = '        return Err(());\n    }\n    let retained ='
+        if source.count(boundary) != 1:
+            raise ValueError('missing or duplicate retained patch-hunk boundary')
+        source = source.replace(boundary, TRANSPILE_SINGLE_PREFIX + '    let retained =', 1)
+    return source
 
 
 def inventory_condition(source):
@@ -31,14 +52,39 @@ def inventory_condition(source):
     return condition
 
 
+def exporter_conditions(source):
+    functions = re.findall(r'^fn prepare_single\([^\n]*(?:\n(?!}|(?:pub )?fn ).*)*\n}', source, re.M)
+    if len(functions) != 1:
+        raise ValueError('missing or duplicate prepare_single function')
+    routes = re.findall(r'    let exported = (.*?)^    };', functions[0], re.S | re.M)
+    expected = """if tcfg.diagnostic_common_plan {
+        ast_exporter::get_prepared_untyped_ast(input_path, cc_db, extra_clang_args,
+            tcfg.debug_ast_exporter, tcfg.emit_c_decl_map).map(|(ast, pp, instance)| (ast, pp, Some(instance)))
+    } else {
+        ast_exporter::get_untyped_ast(input_path, cc_db, extra_clang_args,
+            tcfg.debug_ast_exporter, tcfg.emit_c_decl_map, retained).map(|(ast, pp)| (ast, pp, None))
+"""
+    if (len(routes) != 1 or routes[0].split() != expected.split()
+            or functions[0].count('ast_exporter::') != 2):
+        raise ValueError('exporter source collection must remain map-only')
+    callers = re.findall(r'^fn transpile_single\([^\n]*(?:\n(?!}|(?:pub )?fn ).*)*\n}', source, re.M)
+    if len(callers) != 1 or len(re.findall(r'^fn transpile_single\(', source, re.M)) != 1:
+        raise ValueError('missing, duplicate, or incomplete transpile_single function')
+    bindings = re.findall(
+        r'    let retained = (.*?)\n    let \(typed_context, preprocessed_source, _\) = '
+        r'prepare_single\(tcfg, input_path, cc_db, extra_clang_args, retained.as_deref\(\)\)\?;',
+        callers[0], re.S)
+    retained = ('(tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts)'
+                '.then(|| output_path.with_extension("cursor.cbor"));')
+    if len(bindings) != 1 or ''.join(bindings[0].split()) != ''.join(retained.split()):
+        raise ValueError('ordinary retained CBOR must follow witness or format requests')
+    return 'tcfg.emit_c_decl_map', '(tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts)'
+
+
 def check_source_tree(source):
     lib = (source / 'c2rust-transpile/src/lib.rs').read_text()
     inventory_condition(lib)
-    exporter_call = re.search(r'ast_exporter::get_untyped_ast\((.*?)\) \{', lib, re.S)
-    if not exporter_call or [line.strip() for line in exporter_call[1].strip().splitlines()[-2:]] != [
-            'tcfg.emit_c_decl_map,',
-            '(tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts).then(|| output_path.with_extension("cursor.cbor")).as_deref(),']:
-        raise ValueError('exporter source collection must remain map-only')
+    exporter_conditions(lib)
     translator = (source / 'c2rust-transpile/src/translator/mod.rs').read_text()
     if 'let decl_source_ranges = if tcfg.emit_c_decl_map {' not in translator:
         raise ValueError('declaration source ranges must remain map-only')
@@ -67,9 +113,7 @@ class InventoryRouteTests(unittest.TestCase):
     def test_inventory_only_and_legacy_map_route(self):
         source = patched_lines('c2rust-transpile/src/lib.rs')
         condition = inventory_condition(source)
-        exporter = source.split('extra_clang_args,', 1)[1].split(') {', 1)[0].strip().splitlines()
-        map_condition = exporter[-2].strip().removesuffix(',')
-        cbor_condition = exporter[-1].strip().split('.then(', 1)[0]
+        map_condition, cbor_condition = exporter_conditions(source)
         for inventory, maps, witness, formats in product((False, True), repeat=4):
             with self.subTest(inventory=inventory, maps=maps, witness=witness, formats=formats):
                 for expression, expected in (
@@ -101,7 +145,7 @@ class InventoryRouteTests(unittest.TestCase):
             inventory_condition(source.replace('let inventory_path =', 'let other_path ='))
 
     def test_source_map_collection_guards(self):
-        lib = 'ast_exporter::get_untyped_ast(\n' + patched_lines('c2rust-transpile/src/lib.rs')
+        lib = patched_lines('c2rust-transpile/src/lib.rs')
         translator = 'let decl_source_ranges = if tcfg.emit_c_decl_map {'
         files = {'lib.rs': lib, 'translator': translator}
         for name in ('c2rust/src/bin/c2rust-transpile.rs',
@@ -119,13 +163,56 @@ class InventoryRouteTests(unittest.TestCase):
 
         with patch.object(Path, 'read_text', read):
             check_source_tree(Path('.'))
+            files['lib.rs'] = ('fn unrelated(extra_clang_args: &[&str]) {\n'
+                               '    let file = other(extra_clang_args,);\n'
+                               '    ast_exporter::get_untyped_ast(file);\n}\n' + lib)
+            check_source_tree(Path('.'))
+            files['lib.rs'] = lib
+            retained = ('    let retained = (tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts)\n'
+                        '        .then(|| output_path.with_extension("cursor.cbor"));\n')
+            caller = re.search(r'^fn transpile_single\([^\n]*(?:\n(?!}|(?:pub )?fn ).*)*\n}', lib, re.M)[0]
+            decoy = caller.replace('fn transpile_single(', 'fn unrelated_retained(') + '\n'
+            files['lib.rs'] = decoy + lib
+            check_source_tree(Path('.'))
+            for changed, error in (
+                    (decoy + lib.replace('retained.as_deref())?;', 'None)?;'), 'ordinary retained'),
+                    (lib.replace(caller, ''), 'transpile_single function'),
+                    (caller + '\n' + lib, 'transpile_single function'),
+                    (lib.replace(caller, caller[:-1]), 'transpile_single function'),
+                    ('fn transpile_single(\n' + lib, 'transpile_single function'),
+                    (decoy + lib.replace(retained, ''), 'ordinary retained'),
+                    (decoy + lib.replace(retained, retained.replace(' || tcfg.emit_closed_format_facts', '')),
+                     'ordinary retained')):
+                with self.subTest(caller=changed):
+                    files['lib.rs'] = changed
+                    with self.assertRaisesRegex(ValueError, error):
+                        check_source_tree(Path('.'))
+            files['lib.rs'] = lib
+            for changed in (
+                    lib + lib,
+                    lib.replace('    };\n    let (untyped_context',
+                                '    };\n    let exported = other();\n    let (untyped_context'),
+                    lib.replace('    Ok((typed_context, preprocessed_source, instance))\n}',
+                                '    Ok((typed_context, preprocessed_source, instance))'),
+                    lib.replace('fn prepare_single(', 'fn other('),
+                    lib.replace('    let exported =', '    let exported = if nested {'),
+                    lib.replace('    };\n    let (untyped_context', '    ;\n    let (untyped_context'),
+                    lib.replace('retained).map(', 'None).map('),
+                    lib.replace('get_prepared_untyped_ast(', 'other_prepared('),
+                    lib.replace('tcfg.emit_c_decl_map).map(', 'true).map('),
+                    lib.replace('retained.as_deref())?;', 'None)?;')):
+                with self.subTest(route=changed):
+                    files['lib.rs'] = changed
+                    with self.assertRaises(ValueError):
+                        check_source_tree(Path('.'))
+            files['lib.rs'] = lib
             for key, old, new in (
-                    ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_variadic_inventory,'),
-                    ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_cursor_witness,'),
-                    ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_closed_format_facts,'),
+                    ('lib.rs', 'tcfg.emit_c_decl_map, retained', 'tcfg.emit_c_decl_map || tcfg.emit_variadic_inventory, retained'),
+                    ('lib.rs', 'tcfg.emit_c_decl_map, retained', 'tcfg.emit_c_decl_map || tcfg.emit_cursor_witness, retained'),
+                    ('lib.rs', 'tcfg.emit_c_decl_map, retained', 'tcfg.emit_c_decl_map || tcfg.emit_closed_format_facts, retained'),
                     ('lib.rs', 'ast_exporter::get_untyped_ast(', 'ast_exporter::other('),
-                    ('lib.rs', 'tcfg.emit_c_decl_map,', ''),
-                    ('lib.rs', ').as_deref(),', ').as_deref(),\ntcfg.unknown,'),
+                    ('lib.rs', 'tcfg.emit_c_decl_map, retained', ''),
+                    ('lib.rs', 'tcfg.emit_c_decl_map, retained', 'tcfg.emit_c_decl_map, retained, tcfg.unknown'),
                     ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_cursor_witness'),
                     ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_closed_format_facts'),
                     ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_cursor_witness && tcfg.emit_closed_format_facts'),
@@ -148,8 +235,9 @@ class InventoryRouteTests(unittest.TestCase):
                 with self.subTest(file=key, replacement=new):
                     original = files[key]
                     self.assertIn(old, original)
-                    files[key] = original.replace(old, new)
-                    with self.assertRaises(ValueError):
+                    files[key] = original.replace(old, new, 1)
+                    error = 'exporter|ordinary retained' if key == 'lib.rs' else 'source|initializer'
+                    with self.assertRaisesRegex(ValueError, error):
                         check_source_tree(Path('.'))
                     files[key] = original
 

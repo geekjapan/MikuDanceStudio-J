@@ -1,0 +1,12 @@
+{
+  "finite": {
+    "input_sha256": "893a9598c0c1088d6211f0f7f8de4d6f1261702fc0247e8839497c6b7de619c8",
+    "decoded_sha256": "ed4f54765e43760520f2708906bca763e5cbad4789a3aa96c3334e7e34c0b753",
+    "gzip_sha256": "b0f92aa2c0043f5979003e736700226583ed2700cafa1eba555df9e90ab110ad"
+  },
+  "nonfinite": {
+    "input_sha256": "d9a3379c4403d4d26d0af910d74b4b228caeded1360b36ebab1d79e5196ef7e4",
+    "decoded_sha256": "b7a711205a045d9ed26bfadb2d089998b8d9ea962a80d979a92cfc9f66cb0c8a",
+    "gzip_sha256": "737223cf731bc641dc211a4f3a9724cea8339c45d83a2571c3cde196afae2a44"
+  }
+}

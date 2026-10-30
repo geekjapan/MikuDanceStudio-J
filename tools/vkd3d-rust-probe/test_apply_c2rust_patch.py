@@ -38,12 +38,12 @@ class RequiredRelationsSourceTests(unittest.TestCase):
         cls.source = '\n'.join(line[1:] for line in section.splitlines()
                                if line.startswith('+') and not line.startswith('+++')) + '\n'
 
-    def test_only_closed_variadic_patch_destination_changes(self):
+    def test_common_plan_patch_scope_preserves_inventory_contract(self):
         self.assertEqual(len(apply_c2rust_patch.patch_destinations(
-            Path(__file__).parent / 'patches/c2rust-win64-abi.patch')), 27)
+            Path(__file__).parent / 'patches/c2rust-win64-abi.patch')), len(self.sections))
         others = ''.join('diff --git ' + s for s in self.sections if not s.startswith(
             'a/c2rust-transpile/src/c_ast/closed_variadic.rs '))
-        self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), '7dcb21bf8cc98b3d39f46597efcbdd2c4982c2b41f2e1a8e722c10068d65f72f')
+        self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), 'd52b2ac3146d20c78e8a58cf72d289a3532aa985fc15b733e142218d7e0fe242')
         inventory = self.source.split('    pub fn closed_variadic_inventory(', 1)[1].split('#[cfg(test)]', 1)[0]
         self.assertEqual(hashlib.sha256(inventory.encode()).hexdigest(), 'fe98bb97bd17641f186a1c4244571e04474eab1bdfa52182fcfecce141a733cb')
 

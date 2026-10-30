@@ -74,7 +74,10 @@ fn a_body_is_drawn_where_the_camera_sees_it() {
     };
     let (lo, hi) = at(&r);
     assert!(lo > 0 && hi < size[0], "{lo} {hi}");
-    r.editor.camera.target[0] += 5.0;
+    let s = r.editor.doc.pmm.camera_state;
+    r.editor
+        .apply(mds_doc::Command::SetViewOffset([s[3] + 5.0, s[4]]))
+        .unwrap();
     let (lo2, hi2) = at(&r);
     // The camera moved right, so the picture moves left by 5 units = 50 pixels.
     assert!((49..=51).contains(&(lo - lo2)) && (49..=51).contains(&(hi - hi2)));

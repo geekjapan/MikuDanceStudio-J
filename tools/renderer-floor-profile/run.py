@@ -26,6 +26,18 @@ CENSUS_PATHS = ['.github/workflows/renderer-closure-census.yml'] + [
 CENSUS_LIMITS = {'ranges':4096,'bytes':16*1024*1024,'single':128*1024,'sections':96,'seconds':1200}
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 SOURCE_ADMISSION = 'fixed-main-9df59aec-v1'
+FIXED_IMPORT = {
+    'origin':'9a2baa350d23cddfe692ca57ca32f156c44bcc0d',
+    'parent':'f6ab4feef335e76d590c3f8a9c5f532dec73ba70',
+    'parent_tree':'005ae1183e9972df56689796cf87589117418e7d',
+    'origin_tree':'c05f458380c1352e1e650facdb90d454e730ed7c',
+    'applied':'9a0910d273706c80e99f24ee330e12693ea6840b',
+    'preceding':'843fd84b35e2629a5c008fb00933cb0d14655072',
+    'applied_tree':'d063c4f6a57a7188df9806380abaf16cc0059d72'}
+FIXED_IMPORT_BLOBS = {
+    '.github/workflows/windows-build.yml':('5b60e70bea8b6c4b1c7ba162e99ad4e63cbef32e','e873f0de37a190f54f1f7c1e1dff2bc920eee219'),
+    'tools/bullet-dbvt-cmake-reference/check.py':('dae333fa7078c08d9acc0c565cf92c80129024f7','1bc6303d748701ed8816f069b9f93f2bb28db00d'),
+    'tools/bullet-dbvt-cmake-reference/test_check.py':('b7858502179b08cfc6c68b02ad79a52537992ff3','a1be6a32fe772b3643b8e1dd3a24adde29b09763')}
 ACCEPTED_MAIN = {
     'common':'3cf0711d38f94e6be5c5d06129257d1c963f973a',
     'renderer':'634a6d3c35cd0ea1229c56d9d2eb2b336a315f60',
@@ -254,6 +266,226 @@ def census_command(out,label,argv,cwd,env,timeout):
 
 def write_json(path, value):
     path.write_text(json.dumps(value,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+
+
+BOUND_SCHEMA = 'mds-bounded-document-v1'
+BOUND_PAGE_BYTES = 4*1024*1024
+BOUND_LIMITS = {'document_bytes':512*1024*1024,'cumulative_bytes':2*1024*1024*1024,
+                'depth':128,'references':4000000,'shards':16384}
+BOUND_SERIALIZER = {'sort_keys':True,'indent':2,'ensure_ascii':True,'allow_nan':False,
+                    'encoding':'utf-8','newline':'LF','trailing_newline':True}
+
+
+class BoundDocumentLimit(ValueError):
+    pass
+
+
+def bound_check(condition,message):
+    if not condition:raise BoundDocumentLimit(message)
+
+
+def bound_name(name):
+    h.safe_name(name)
+    require(':' not in name and all(part==part.rstrip(' .') and
+            part.split('.')[0].upper() not in {'CON','PRN','AUX','NUL'} and
+            not re.fullmatch(r'(?i)(COM|LPT)[1-9]',part.split('.')[0])
+            for part in name.split('/')),'canonical bounded member name')
+    return name
+
+
+def bound_bytes(value):
+    return (json.dumps(value,sort_keys=True,indent=2,ensure_ascii=True,allow_nan=False)+'\n').encode('utf-8')
+
+
+def bound_records(value,depth=0,state=None):
+    if state is None:state={'references':0,'estimate':0}
+    state['references']+=1
+    bound_check(depth<=BOUND_LIMITS['depth'] and state['references']<=BOUND_LIMITS['references'],'bounded document depth/references')
+    kind=type(value)
+    if kind in (dict,list):
+        bound_check(kind is list or all(type(key) is str for key in value),'bounded document string keys')
+        state['estimate']+=8+len(value)*(8+2*depth)
+        bound_check(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded document allocation estimate')
+        yield ['object' if kind is dict else 'array',len(value)]
+        for key in sorted(value) if kind is dict else range(len(value)):
+            if kind is dict:yield from bound_records(key,depth+1,state)
+            yield from bound_records(value[key],depth+1,state)
+    elif kind is str:
+        bound_check(not any(0xd800<=ord(char)<=0xdfff for char in value),'bounded UTF-8 string')
+        state['estimate']+=len(value)*12+8
+        bound_check(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded document string allocation')
+        yield ['string',len(value)]
+        # Even fully escaped non-BMP characters fit a minimum test page.
+        for at in range(0,len(value),32):yield ['fragment',value[at:at+32]]
+    else:
+        bound_check(kind in (type(None),bool,int,float),'bounded document scalar type')
+        bound_check(kind is not float or math.isfinite(value),'bounded document finite scalar')
+        bound_check(kind is not int or value.bit_length()<=256,'bounded document integer width')
+        state['estimate']+=96
+        bound_check(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded document scalar allocation')
+        yield ['scalar',value]
+
+
+def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None):
+    """Pure producer: typed preorder pages; original JSON is never parsed."""
+    bound_check(type(page_budget) is int and 512<=page_budget<=BOUND_PAGE_BYTES,'bounded page budget')
+    bound_name(original)
+    # Validate finite work before allocating the original serialization.
+    for _ in bound_records(value):pass
+    raw=bound_bytes(value) if serialized is None else serialized
+    bound_check(len(raw)<=BOUND_LIMITS['document_bytes'],'bounded original bytes')
+    pages={};rows=[];total=len(raw);records=[];encoded_size=0
+    prefix=original+'.pages/'
+    def flush():
+        nonlocal records,encoded_size,total
+        if not records:return
+        ordinal=len(rows)
+        bound_check(ordinal<BOUND_LIMITS['shards'],'bounded shard count')
+        body=bound_bytes({'schema':BOUND_SCHEMA,'ordinal':ordinal,'records':records})
+        bound_check(len(body)<=page_budget,'bounded page envelope')
+        total+=len(body)
+        bound_check(total<=BOUND_LIMITS['cumulative_bytes'],'bounded cumulative bytes')
+        name=prefix+str(ordinal).zfill(5)+'.json'
+        pages[name]=body;rows.append({'name':name,'size':len(body),'sha256':digest(body)})
+        records=[];encoded_size=0
+    for row in bound_records(value):
+        size=len(bound_bytes(row))+32
+        if records and encoded_size+size+128>page_budget:flush()
+        records.append(row);encoded_size+=size
+    flush()
+    binding={'schema':BOUND_SCHEMA,'kind':'complete','original':{'name':original,'size':len(raw),'sha256':digest(raw)},
+             'serializer':BOUND_SERIALIZER,'root':0,'pages':rows,'limits':BOUND_LIMITS}
+    index=bound_bytes(binding)
+    bound_check(len(index)<=BOUND_PAGE_BYTES and total+len(index)<=BOUND_LIMITS['cumulative_bytes'],'bounded binding bytes')
+    return raw,index,pages
+
+
+def write_bound_document(path,value):
+    """Only final documents use the explicit LF byte serializer."""
+    raw=bound_bytes(value)
+    path.write_bytes(raw)
+    try:_,index,pages=bound_document(value,path.name,serialized=raw)
+    except BoundDocumentLimit as error:
+        path.with_name(path.name+'.binding.json').write_bytes(bound_bytes({
+            'schema':BOUND_SCHEMA,'kind':'incomplete','reason':str(error),
+            'original':{'name':path.name,'size':len(raw),'sha256':digest(raw)},
+            'semantic_status':'UNRUN'}))
+        return
+
+    for name,body in pages.items():
+        target=path.parent/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(body)
+    path.with_name(path.name+'.binding.json').write_bytes(index)
+
+
+def bound_json(raw):
+    require(type(raw) is bytes and len(raw)<=BOUND_PAGE_BYTES,'bounded JSON bytes')
+    depth=0;quoted=False;escaped=False
+    for byte in raw:
+        if quoted:
+            if escaped:escaped=False
+            elif byte==92:escaped=True
+            elif byte==34:quoted=False
+        elif byte==34:quoted=True
+        elif byte in (91,123):
+            depth+=1;require(depth<=BOUND_LIMITS['depth'],'bounded JSON preparse depth')
+        elif byte in (93,125):depth-=1
+    def pairs(rows):
+        result={}
+        for key,value in rows:
+            require(key not in result,'duplicate bounded JSON key');result[key]=value
+        return result
+    def constant(value):raise ValueError('nonfinite bounded JSON')
+    def integer(value):
+        result=int(value);require(result.bit_length()<=256,'bounded integer width');return result
+    def floating(value):
+        result=float(value);require(math.isfinite(result),'finite bounded number');return result
+    return json.loads(raw.decode('utf-8'),object_pairs_hook=pairs,parse_constant=constant,parse_int=integer,parse_float=floating)
+
+
+def admit_bound_document(binding_name,inventory,read):
+    """Inventory is externally authenticated; read returns the same verified bytes.
+
+    This admits structure/raw identity only. Independent graph, decode, source,
+    compiler and custody checks must still run on the restored object.
+    """
+    bound_name(binding_name)
+    require(type(inventory) is dict and len(inventory)<=200000,'bounded external member count')
+    for member in inventory:bound_name(member)
+    def identity(name):
+        bound_name(name);row=inventory[name]
+        require(type(row) is dict and set(row)=={'size','sha256'} and type(row['size']) is int and
+                0<=row['size']<=BOUND_LIMITS['cumulative_bytes'] and type(row['sha256']) is str and
+                re.fullmatch('[0-9a-f]{64}',row['sha256']),'external bounded member identity')
+        return row
+    def get(name):
+        row=identity(name);require(row['size']<=BOUND_PAGE_BYTES,'bounded member before read')
+        raw=read(name)
+        require(type(raw) is bytes and len(raw)==row['size'] and digest(raw)==row['sha256'],'same bytes bounded identity before parse')
+        return bound_json(raw)
+    binding=get(binding_name)
+    require(type(binding) is dict and set(binding)=={'schema','kind','original','serializer','root','pages','limits'} and
+            binding['schema']==BOUND_SCHEMA and binding['kind']=='complete' and bound_bytes(binding['serializer'])==bound_bytes(BOUND_SERIALIZER) and
+            bound_bytes(binding['limits'])==bound_bytes(BOUND_LIMITS) and type(binding['root']) is int and binding['root']==0,'closed bounded binding')
+    original=binding['original']
+    require(type(original) is dict and set(original)=={'name','size','sha256'} and type(original['name']) is str and
+            type(original['size']) is int and type(original['sha256']) is str,'bounded original identity')
+    name=original['name'];require(binding_name==name+'.binding.json','bounded binding name')
+    require(identity(name)=={k:original[k] for k in ('size','sha256')} and original['size']<=BOUND_LIMITS['document_bytes'],'opaque original inventory binding')
+    pages=binding['pages'];prefix=name+'.pages/'
+    require(type(pages) is list and 0<len(pages)<=BOUND_LIMITS['shards'],'bounded closed page count')
+    names=[];total=original['size']+identity(binding_name)['size']
+    for ordinal,row in enumerate(pages):
+        require(type(row) is dict and set(row)=={'name','size','sha256'} and type(row['size']) is int and type(row['sha256']) is str and
+                row['name']==prefix+str(ordinal).zfill(5)+'.json','ordered unique bounded pages')
+        require(identity(row['name'])=={k:row[k] for k in ('size','sha256')} and 0<row['size']<=BOUND_PAGE_BYTES,'external page binding')
+        total+=row['size'];require(total<=BOUND_LIMITS['cumulative_bytes'],'bounded cumulative allocation')
+        names.append(row['name'])
+    require({key for key in inventory if key.replace('\\','/').casefold().startswith(prefix.casefold())}==set(names),'complete closed page membership')
+    def records():
+        count=0
+        for ordinal,page_name in enumerate(names):
+            page=get(page_name)
+            require(type(page) is dict and set(page)=={'schema','ordinal','records'} and page['schema']==BOUND_SCHEMA and
+                    type(page['ordinal']) is int and page['ordinal']==ordinal and type(page['records']) is list and page['records'],'closed typed page')
+            for row in page['records']:
+                count+=1;require(count<=BOUND_LIMITS['references']*4,'bounded record allocation')
+                require(type(row) is list and len(row)==2 and type(row[0]) is str,'closed typed record')
+                yield row
+    stream=iter(records());state={'references':0,'estimate':0}
+    def restore(depth=0):
+        state['references']+=1
+        require(depth<=BOUND_LIMITS['depth'] and state['references']<=BOUND_LIMITS['references'],'bounded reconstruction depth/references')
+        try:kind,value=next(stream)
+        except StopIteration:raise ValueError('missing bounded record')
+        if kind=='scalar':
+            require(type(value) in (type(None),bool,int,float),'typed scalar record');state['estimate']+=96
+            result=value
+        else:
+            require(kind in ('object','array','string') and type(value) is int and 0<=value<=(BOUND_LIMITS['document_bytes'] if kind=='string' else BOUND_LIMITS['references']),'typed container length')
+            state['estimate']+=value*(12 if kind=='string' else 8+2*depth)+8
+            require(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded reconstruction allocation')
+            if kind=='string':
+                chunks=[];length=0
+                while length<value:
+                    try:tag,part=next(stream)
+                    except StopIteration:raise ValueError('missing string fragment')
+                    require(tag=='fragment' and type(part) is str and 0<len(part)<=32 and length+len(part)<=value,'ordered string fragment')
+                    chunks.append(part);length+=len(part)
+                result=''.join(chunks)
+            elif kind=='array':result=[restore(depth+1) for _ in range(value)]
+            else:
+                result={};previous_key=None
+                for _ in range(value):
+                    key=restore(depth+1)
+                    require(type(key) is str and (previous_key is None or previous_key<key),'ordered unique object keys')
+                    previous_key=key;result[key]=restore(depth+1)
+        require(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded reconstruction scalar allocation')
+        return result
+    result=restore()
+    require(next(stream,None) is None,'no extra bounded records')
+    raw=bound_bytes(result)
+    require(len(raw)==original['size'] and digest(raw)==original['sha256'],'reconstructed exact opaque serialization binding')
+    return result
 
 
 def word(x):
@@ -1468,7 +1700,7 @@ def census_evidence(directory,parsed,r,env,census):
     except (ValueError,OSError,KeyError,struct.error) as error:
         census.unknowns.append({'kind':'AcquisitionPrerequisite','reason':str(error)})
     result=census.summary(images)
-    write_json(directory/'closure-census.json',result)
+    write_bound_document(directory/'closure-census.json',result)
     return result
 
 
@@ -1847,14 +2079,35 @@ def generation_ancestry(out,m):
     source_ancestry(m,{revision:(out/'ancestry'/(revision+'.commit')).read_bytes() for revision in m['generation_ancestry']})
 
 
+def fixed_import_frames():
+    return {'fixed-import/'+name+suffix for name in ('parent','origin') for suffix in ('.commit','.tree')}|{
+        'fixed-import/bodies/'+path for path in FIXED_IMPORT_BLOBS}
+
+
+def verify_fixed_import(frames):
+    trees={name:source_tree(frames['fixed-import/'+name+'.tree']) for name in ('parent','origin')}
+    for name in trees:
+        require(h.tree_hash(trees[name])==FIXED_IMPORT[name+'_tree'],'fixed import origin tree')
+        source_commit(frames['fixed-import/'+name+'.commit'],FIXED_IMPORT[name],trees[name],
+                      [FIXED_IMPORT['parent']] if name=='origin' else None)
+    old={p:['100644',oids[0]] for p,oids in FIXED_IMPORT_BLOBS.items()}
+    new={p:['100644',oids[1]] for p,oids in FIXED_IMPORT_BLOBS.items()}
+    require(all(trees['parent'].get(p)==row for p,row in old.items()) and
+            trees['origin']==trees['parent']|new,'exact fixed three-path origin overlay')
+    bodies={p:frames['fixed-import/bodies/'+p] for p in new}
+    require(all(h.git_hash('blob',raw)==new[p][1] for p,raw in bodies.items()),'fixed import authenticated bodies')
+    return old,new,bodies
+
+
 def verify_source_data(m,frames,base,tooling,imports,current):
     require(m.get('source_admission')==SOURCE_ADMISSION,'required fixed source admission tag')
     require(m['base']==BASE and m['paths'] in (PATHS,CENSUS_PATHS),'frozen measured source contract')
     chain=m['generation_ancestry'];commits={revision:frames['ancestry/'+revision+'.commit'] for revision in chain}
     source_ancestry(m,commits)
     tail_revisions=chain[chain.index(ACCEPTED_MAIN['merge'])+1:]
-    expected_frames={name+suffix for name in ACCEPTED_MAIN for suffix in ('.commit','.tree')}|{'base.commit','head.commit','head.tree','paths'}|{'ancestry/'+revision+'.commit' for revision in chain}|{'tail/'+revision+'.tree' for revision in tail_revisions}
+    expected_frames=fixed_import_frames()|{name+suffix for name in ACCEPTED_MAIN for suffix in ('.commit','.tree')}|{'base.commit','head.commit','head.tree','paths'}|{'ancestry/'+revision+'.commit' for revision in chain}|{'tail/'+revision+'.tree' for revision in tail_revisions}
     require(set(frames)==expected_frames,'closed complete source frame set')
+    old_fixed,new_fixed,fixed_bodies=verify_fixed_import(frames)
     trees={name:source_tree(frames[name+'.tree']) for name in ACCEPTED_MAIN}
     for name,revision in ACCEPTED_MAIN.items():
         source_commit(frames[name+'.commit'],revision,trees[name],
@@ -1870,30 +2123,38 @@ def verify_source_data(m,frames,base,tooling,imports,current):
     for path,raw in imports.items():require(h.git_hash('blob',raw)==trees['merge'][path][1],'authenticated main import body')
     union=set(PATHS+CENSUS_PATHS)
     paths=frames['paths'].decode('utf-8').splitlines()
-    require(len(paths)==len(set(paths)) and set(paths)==imported|(set(CENSUS_PATHS) if m['paths']==CENSUS_PATHS else union),'complete acquired source delta')
+    require(len(paths)==len(set(paths)) and set(paths)==set(FIXED_IMPORT_BLOBS)|imported|(set(CENSUS_PATHS) if m['paths']==CENSUS_PATHS else union),'complete acquired source delta')
     require(set(tooling)==union and union<=renderer,'complete seven current tooling bodies')
     base_entries={p:[mode,h.git_hash('blob',raw)] for p,(mode,raw) in base.items()}
     source_commit(frames['base.commit'],BASE,base_entries)
     require(h.tree_hash(base_entries)==BASE_TREE,'frozen measured base tree')
     require(trees['merge']==base_entries|{p:trees['merge'][p] for p in imported|union},'full frozen base/import/tooling provenance')
-    entries=base_entries|{p:trees['merge'][p] for p in imported}|{p:['100644',h.git_hash('blob',raw)] for p,raw in tooling.items()}
-    previous=trees['merge']
+    entries=base_entries|{p:trees['merge'][p] for p in imported}|{p:['100644',h.git_hash('blob',raw)] for p,raw in tooling.items()}|new_fixed
+    previous=trees['merge'];fixed_count=0
     for revision in tail_revisions:
         tail=source_tree(frames['tail/'+revision+'.tree'])
         source_commit(commits[revision],revision,tail)
-        require(delta(previous,tail)<=set(m['paths']),'allowed ordinary renderer tail paths')
+        if revision==FIXED_IMPORT['applied']:
+            fixed_count+=1
+            source_commit(commits[revision],revision,tail,[FIXED_IMPORT['preceding']])
+            require(h.tree_hash(tail)==FIXED_IMPORT['applied_tree'] and
+                    all(previous.get(p)==row for p,row in old_fixed.items()) and
+                    delta(previous,tail)==set(new_fixed) and tail==previous|new_fixed and
+                    tail|old_fixed==previous,'one exact fixed import overlay and inverse')
+        else:require(delta(previous,tail)<=set(m['paths']),'allowed ordinary renderer tail paths')
         previous=tail
+    require(fixed_count==1,'exactly one fixed import tail transition')
     require(previous==entries,'complete current controller source bodies')
     source_commit(frames['head.commit'],m['head'],entries)
     require(source_tree(frames['head.tree'])==entries,'actual current HEAD tree frame')
-    bodies={p:raw for p,(_,raw) in base.items()}|imports|tooling
+    bodies={p:raw for p,(_,raw) in base.items()}|imports|tooling|fixed_bodies
     expected={p:{'sha256':digest(bodies[p]),'mode':int(mode,8)&0o777} for p,(mode,_) in entries.items()}
     require(current==expected,'complete current checkout source identity')
     return entries
 
 
 def retained_source_admission(out,m,complete=True):
-    root=out/'controller';frames={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file() and p.suffix in ('.commit','.tree')}
+    root=out/'controller';frames={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file() and (p.suffix in ('.commit','.tree') or 'fixed-import/bodies/' in p.relative_to(root).as_posix())}
     frames['paths']=(root/'paths').read_bytes()
     base={p:('100755' if row['mode']&0o111 else '100644',(out/'sources/base'/p).read_bytes()) for p,row in m['base_inventory'].items()}
     tooling={p:(out/'tooling'/p).read_bytes() for p in sorted(set(PATHS+CENSUS_PATHS))}
@@ -1922,6 +2183,12 @@ def acquire_source_admission(out,m,env):
     def acquire(label,argv,dest):
         require(record(out,label,argv,ROOT,env)['status']==0,'controller source identity command')
         dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(out/(label+'.stdout'),dest)
+    for name in ('parent','origin'):
+        revision=FIXED_IMPORT[name]
+        acquire('fixed-import-'+name+'-commit',['git','cat-file','commit',revision],root/'fixed-import'/(name+'.commit'))
+        acquire('fixed-import-'+name+'-tree',['git','ls-tree','-rz','--full-tree',revision],root/'fixed-import'/(name+'.tree'))
+    for path,(_,oid) in FIXED_IMPORT_BLOBS.items():
+        acquire('fixed-import-body-'+digest(path.encode()),['git','cat-file','blob',oid],root/'fixed-import/bodies'/path)
     for name,revision in ACCEPTED_MAIN.items():
         acquire('controller-'+name+'-commit',['git','cat-file','commit',revision],root/(name+'.commit'))
         acquire('controller-'+name+'-tree',['git','ls-tree','-rz','--full-tree',revision],root/(name+'.tree'))
@@ -2171,6 +2438,7 @@ def run(out,build_root,toolchain,census_mode=False):
                     write_json(out/'manifest.json',m)
     finish_source_admission(out,m,env)
     if census_mode:
+        write_bound_document(out/'manifest.json',m)
         result={'schema':CENSUS_SCHEMA,'variants':variant_results,'expected_variants':['control-Od','observed-Od','control-O2','observed-O2'],
                 'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',
                 'fixture_contract':{name:sorted(tests) for name,tests in FIXTURE_TESTS.items()}}

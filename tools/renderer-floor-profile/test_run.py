@@ -1134,12 +1134,12 @@ class Controls(unittest.TestCase):
         def commit(entries,parents,message):
             raw=('tree '+r.h.tree_hash(entries)+'\n'+''.join('parent '+p+'\n' for p in parents)+'author Test <test@example.invalid> 0 +0000\ncommitter Test <test@example.invalid> 0 +0000\n\n'+message+'\n').encode()
             return r.h.git_hash('commit',raw),raw
-        common_bodies={'product/'+str(i):b'original '+str(i).encode() for i in range(9)}
+        common_bodies={p:b'o'+str(i).encode() for i,p in enumerate(list(r.FIXED_IMPORT_BLOBS)+['p'+str(i) for i in range(6)])}
         common={p:entry(raw) for p,raw in common_bodies.items()}
         tooling={p:b'frozen '+p.encode() for p in set(r.PATHS+r.CENSUS_PATHS)}
-        additions={**tooling,**{'renderer/'+str(i):b'renderer '+str(i).encode() for i in range(20)}}
+        additions={**tooling,**{'r'+str(i):b'r'+str(i).encode() for i in range(20)}}
         renderer=common|{p:entry(raw) for p,raw in additions.items()}
-        imports={p:b'accepted main '+p.encode() for p in common}|{'main/'+str(i):b'new '+str(i).encode() for i in range(73)}
+        imports={p:b'i'+str(i).encode() for i,p in enumerate(common)}|{('main/0' if i==0 else 'm'+str(i)):b'n'+str(i).encode() for i in range(73)}
         main={p:entry(raw) for p,raw in imports.items()}
         merged=main|{p:entry(raw) for p,raw in additions.items()}
         common_id,common_raw=commit(common,[],'common')
@@ -1151,17 +1151,31 @@ class Controls(unittest.TestCase):
         base_entries={p:entry(raw) for p,raw in base_bodies.items()}
         base_id,base_raw=commit(base_entries,[],'frozen product')
         tooling['tools/renderer-floor-profile/run.py']=b'current reader'
-        final=merged|{p:entry(raw) for p,raw in tooling.items()}
-        head,head_raw=commit(final,[merge_id],'ordinary renderer followup')
+        preceding=merged|{p:entry(raw) for p,raw in tooling.items()}
+        preceding_id,preceding_raw=commit(preceding,[merge_id],'ordinary renderer followup')
+        fixed_bodies={p:b'utf8'+str(i).encode() for i,p in enumerate(r.FIXED_IMPORT_BLOBS)}
+        old={p:merged[p] for p in fixed_bodies};new={p:entry(raw) for p,raw in fixed_bodies.items()}
+        origin_parent_id,origin_parent_raw=commit(merged,[main_id],'fixed origin parent')
+        origin=merged|new
+        origin_id,origin_raw=commit(origin,[origin_parent_id],'fixed origin')
+        final=preceding|new
+        head,head_raw=commit(final,[preceding_id],'fixed import')
+        fixed={'parent':origin_parent_id,'origin':origin_id,'parent_tree':r.h.tree_hash(merged),
+               'origin_tree':r.h.tree_hash(origin),'preceding':preceding_id,'applied':head,'applied_tree':r.h.tree_hash(final)}
+        fixed_blobs={p:(old[p][1],new[p][1]) for p in old}
         anchors={'common':common_id,'renderer':renderer_id,'main':main_id,'merge':merge_id}
         frames={name+'.tree':tree(entries) for name,entries in [('common',common),('renderer',renderer),('main',main),('merge',merged),('head',final)]}
         frames.update({name+'.commit':raw for name,raw in [('common',common_raw),('renderer',renderer_raw),('main',main_raw),('merge',merge_raw),('base',base_raw),('head',head_raw)]})
-        frames.update({'ancestry/'+oid+'.commit':raw for oid,raw in [(renderer_id,renderer_raw),(merge_id,merge_raw),(head,head_raw)]})
-        frames['tail/'+head+'.tree']=tree(final);frames['paths']='\n'.join(sorted(set(imports)|set(r.CENSUS_PATHS))).encode()
-        bodies=base_bodies|imports|tooling
+        frames.update({'ancestry/'+oid+'.commit':raw for oid,raw in [(renderer_id,renderer_raw),(merge_id,merge_raw),(preceding_id,preceding_raw),(head,head_raw)]})
+        frames['tail/'+preceding_id+'.tree']=tree(preceding)
+        frames['tail/'+head+'.tree']=tree(final);frames['paths']='\n'.join(sorted(set(imports)|set(r.CENSUS_PATHS)|set(fixed_blobs))).encode()
+        frames.update({'fixed-import/parent.commit':origin_parent_raw,'fixed-import/parent.tree':tree(merged),
+                       'fixed-import/origin.commit':origin_raw,'fixed-import/origin.tree':tree(origin)})
+        frames.update({'fixed-import/bodies/'+p:raw for p,raw in fixed_bodies.items()})
+        bodies=base_bodies|imports|tooling|fixed_bodies
         current={p:{'sha256':r.digest(raw),'mode':0o644} for p,raw in bodies.items()}
-        m={'head':head,'base':base_id,'paths':r.CENSUS_PATHS,'generation_ancestry':[renderer_id,merge_id,head],'source_admission':r.SOURCE_ADMISSION}
-        patches=[patch.object(r,'ACCEPTED_MAIN',anchors),patch.object(r,'ACCEPTED_MERGE_TREE',r.h.tree_hash(merged)),patch.object(r,'BASE',base_id),patch.object(r,'BASE_TREE',r.h.tree_hash(base_entries))]
+        m={'head':head,'base':base_id,'paths':r.CENSUS_PATHS,'generation_ancestry':[renderer_id,merge_id,preceding_id,head],'source_admission':r.SOURCE_ADMISSION}
+        patches=[patch.object(r,'FIXED_IMPORT',fixed),patch.object(r,'FIXED_IMPORT_BLOBS',fixed_blobs),patch.object(r,'ACCEPTED_MAIN',anchors),patch.object(r,'ACCEPTED_MERGE_TREE',r.h.tree_hash(merged)),patch.object(r,'BASE',base_id),patch.object(r,'BASE_TREE',r.h.tree_hash(base_entries))]
         return (m,frames,base,tooling,imports,current),patches,tree,commit
 
     def test_source_admission_authenticates_full_union_and_current_bodies(self):
@@ -1225,7 +1239,7 @@ class Controls(unittest.TestCase):
             for context in patches:stack.enter_context(context)
             entries=r.verify_source_data(*args)
             m,frames=args[:2]
-            for ordinal in range(30):
+            for ordinal in range(29):
                 head,raw=commit(entries,[m['head']],'ordinary '+str(ordinal))
                 m['generation_ancestry'].append(head);m['head']=head
                 frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
@@ -1251,6 +1265,30 @@ class Controls(unittest.TestCase):
             head,raw=commit(entries,[parent],'legacy '+str(ordinal));chain.append(head);commits[head]=raw;parent=head
         r.source_ancestry({'generation_ancestry':chain[:16],'head':chain[15]},commits)
         with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.source_ancestry({'generation_ancestry':chain,'head':head},commits)
+
+    def test_fixed_import_requires_exact_three_path_overlay(self):
+        args,patches,tree,commit=self.admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            legal=r.verify_source_data(*args);m,frames=args[:2]
+            preceding=r.source_tree(frames['tail/'+r.FIXED_IMPORT['preceding']+'.tree'])
+            for kind in ('missing','extra','content','mode','reverse'):
+                bad=copy.deepcopy(args);bm,bf=bad[:2];entries=copy.deepcopy(legal);path=next(iter(r.FIXED_IMPORT_BLOBS))
+                if kind=='missing':entries[path]=preceding[path]
+                elif kind=='extra':entries['unexpected']=['100644',r.h.git_hash('blob',b'extra')]
+                elif kind=='content':entries[path]=['100644',r.h.git_hash('blob',b'wrong')]
+                elif kind=='mode':entries[path][0]='100755'
+                else:entries=copy.deepcopy(preceding)
+                head,raw=commit(entries,[r.FIXED_IMPORT['preceding']],kind)
+                old=bm['head'];bm['head']=head;bm['generation_ancestry'][-1]=head
+                del bf['ancestry/'+old+'.commit'];del bf['tail/'+old+'.tree']
+                bf['ancestry/'+head+'.commit']=raw;bf['tail/'+head+'.tree']=tree(entries)
+                bf['head.commit']=raw;bf['head.tree']=tree(entries)
+                with patch.dict(r.FIXED_IMPORT,applied=head,applied_tree=r.h.tree_hash(entries)):
+                    with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,'exact fixed import overlay'):r.verify_source_data(*bad)
+            for chain in (m['generation_ancestry']+[m['head']],m['generation_ancestry'][:-2]+m['generation_ancestry'][-2:][::-1]):
+                bad=copy.deepcopy(args);bad[0]['generation_ancestry']=chain
+                with self.assertRaises(ValueError):r.verify_source_data(*bad)
 
     def test_34_selected_range_capacity_preserves_byte_caps(self):
         raw,mapping,rows,_=code_fixture()
@@ -1933,7 +1971,7 @@ class CensusControls(unittest.TestCase):
             first=int(argv[2].split('=')[1],16)-0x140000000;last=int(argv[3].split('=')[1],16)-0x140000000
             return receipt,instructions(r.pe_code(raw)[3](first,last,True)),b''
         census=r.ClosureCensus();parsed=({'operations':rows},{'operations':rows})
-        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'write_bound_document',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
             result=r.census_evidence(directory,parsed,recipe,{},census)
         self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
         self.assertEqual(len([label for label in commands if '-instructions-' in label]),4)
@@ -1970,7 +2008,7 @@ class CensusControls(unittest.TestCase):
                     saved[path]=json.loads(json.dumps(value))
                     self.assertEqual(saved[path],value)
                     if path.name=='closure-census-progress.json':progress.append(saved[path])
-                with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',save),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
+                with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',save),patch.object(r,'write_bound_document',save),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
                     result=r.census_evidence(directory,({'operations':rows},observed),{'source':'source','evidence':str(directory)},{},r.ClosureCensus())
                 runtime=lambda summary:next(image['witness'] for image in summary['images'] if image['file']=='runtime-pre-0-module.bin')
                 first,last=[0x1000,0x1008],[0x1020,0x1028]
@@ -2054,6 +2092,7 @@ class CensusControls(unittest.TestCase):
                 patch.object(r,'source_expected',return_value=({}, {}, {})),
                 patch.object(r,'record',record),
                 patch.object(r,'write_json',save),
+                patch.object(r,'write_bound_document',save),
                 patch.object(r,'native_commands',return_value=[]),
                 patch.object(r,'cargo_binary',return_value='synthetic-cargo'),
                 patch.object(r,'parse',lambda raw,language,observed:{'dll':{'path':'dll'}} if language=='native' else {}),
@@ -2106,7 +2145,7 @@ class SourceFinalizationControls(unittest.TestCase):
         files.update({out/'sources/base'/p:raw for p,(_,raw) in base.items()})
         files.update({out/'tooling'/p:raw for p,raw in tooling.items()})
         files.update({out/'controller/imports'/p:raw for p,raw in imports.items()})
-        bodies={p:raw for p,(_,raw) in base.items()}|tooling|imports
+        bodies={p:raw for p,(_,raw) in base.items()}|tooling|imports|{p:frames['fixed-import/bodies/'+p] for p in r.FIXED_IMPORT_BLOBS}
         files.update({r.ROOT/p:raw for p,raw in bodies.items()})
         files[out/'controller-source-before.json']=json.dumps(current).encode()
         files[out/'writer-custody.json']=json.dumps({'schema':r.CUSTODY_SCHEMA,'state':'no_writer_started','receipts':[]}).encode()
@@ -2470,7 +2509,126 @@ class CustodyControls(unittest.TestCase):
         self.assertLess(gate.index('if ($LASTEXITCODE)'),gate.index('"upload=true"'))
         self.assertIn("-eq 'no_acquisition_started'",gate)
         self.assertIn("throw 'Acquisition custody is unknown",gate)
-        self.assertIn("branches: [w4-renderer-c4200-workflow-fix]",workflow)
+        self.assertIn("branches: [w4-renderer-bounded-documents]",workflow)
+
+
+class BoundedDocumentControls(unittest.TestCase):
+    def fixture(self,value=...):
+        value={'created_ns':1781234567890123456,'nested':[{},[],None,True,False,1,1.0,-0.0,'雪😀\r\n'],
+               'first_ordinary_violation':{'snapshot':['original']},'long':'雪😀'*150} if value is ... else value
+        raw,binding,pages=r.bound_document(value,'manifest.json',1024)
+        files={'manifest.json':raw,'manifest.json.binding.json':binding}|pages
+        inventory={name:{'size':len(body),'sha256':r.digest(body)} for name,body in files.items()}
+        return value,files,inventory
+
+    def admit(self,files,inventory):
+        reads=[]
+        def read(name):
+            self.assertNotEqual(name,'manifest.json','opaque original must never be read/parsed')
+            reads.append(name);return files[name]
+        return r.admit_bound_document('manifest.json.binding.json',inventory,read)
+
+    def replace(self,files,inventory,name,value):
+        body=r.bound_bytes(value);files[name]=body;inventory[name]={'size':len(body),'sha256':r.digest(body)}
+        if '.pages/' in name:
+            index=r.bound_json(files['manifest.json.binding.json'])
+            for row in index['pages']:
+                if row['name']==name:row.update(inventory[name])
+            self.replace(files,inventory,'manifest.json.binding.json',index)
+
+    def test_bound_roundtrip_types_and_same_original_bytes(self):
+        value,files,inventory=self.fixture()
+        self.assertEqual(self.admit(files,inventory),value)
+        restored=self.admit(files,inventory)
+        self.assertIs(type(restored['nested'][5]),int);self.assertIs(type(restored['nested'][6]),float)
+        self.assertEqual(struct.pack('d',restored['nested'][7]),struct.pack('d',-0.0))
+        self.assertTrue(all(len(raw)<=1024 for name,raw in files.items() if '.pages/' in name))
+        self.assertGreater(sum('.pages/' in name for name in files),1)
+        self.assertEqual(files['manifest.json'],r.bound_bytes(value))
+        self.assertTrue(files['manifest.json'].endswith(b'\n'));self.assertNotIn(b'\r',files['manifest.json'])
+        for scalar in ({},[],None,False,1,1.0,'',{'sentinel':{'$ref':0}}):
+            _,files,inventory=self.fixture(scalar)
+            self.assertEqual(self.admit(files,inventory),scalar)
+
+    def test_bound_inventory_same_bytes_before_any_page_parse(self):
+        for kind in ('missing','extra','size','sha','bytes','original','original-newline','alias','case-alias','slash-alias'):
+            _,files,inventory=self.fixture();page=next(n for n in files if '.pages/' in n)
+            if kind=='missing':del inventory[page]
+            elif kind=='extra':inventory['manifest.json.pages/99999.json']=dict(inventory[page])
+            elif kind=='size':inventory[page]['size']=True
+            elif kind=='sha':inventory[page]['sha256']='0'*64
+            elif kind=='bytes':files[page]+=b' '
+            elif kind=='original':inventory['manifest.json']['sha256']='1'*64
+            elif kind=='original-newline':
+                raw=files['manifest.json'].replace(b'\n',b'\r\n');inventory['manifest.json']={'size':len(raw),'sha256':r.digest(raw)}
+            elif kind=='case-alias':inventory[page.upper()]=dict(inventory[page])
+            elif kind=='slash-alias':inventory[page.replace('/','\\')]=dict(inventory[page])
+            else:
+                index=r.bound_json(files['manifest.json.binding.json']);index['pages'][0]['name']='manifest.json.pages/../other'
+                self.replace(files,inventory,'manifest.json.binding.json',index)
+            with self.subTest(kind=kind),self.assertRaises((ValueError,KeyError)):self.admit(files,inventory)
+
+    def test_bound_closed_index_and_order_controls(self):
+        for kind in ('duplicate','reorder','missing','extra','root-bool','schema','serializer','limits','original-name'):
+            _,files,inventory=self.fixture();index=r.bound_json(files['manifest.json.binding.json'])
+            if kind=='duplicate':index['pages'].append(index['pages'][0])
+            elif kind=='reorder':index['pages'].reverse()
+            elif kind=='missing':index['pages'].pop()
+            elif kind=='extra':index['unexpected']=0
+            elif kind=='root-bool':index['root']=False
+            elif kind=='schema':index['schema']='foreign'
+            elif kind=='serializer':index['serializer']['newline']='CRLF'
+            elif kind=='limits':index['limits']['depth']+=1
+            else:index['original']['name']='../manifest.json'
+            self.replace(files,inventory,'manifest.json.binding.json',index)
+            with self.subTest(kind=kind),self.assertRaises((ValueError,KeyError)):self.admit(files,inventory)
+
+    def test_bound_closed_typed_records_and_raw_binding(self):
+        for records in ([['array',True]],[['array',2],['scalar',1]],
+                        [['scalar',{'$ref':0}]],[['reference',0]],[['scalar',1],['scalar',2]],
+                        [['object',2],['string',1],['fragment','a'],['scalar',1],['string',1],['fragment','a'],['scalar',2]],
+                        [['object',2],['string',1],['fragment','z'],['scalar',1],['string',1],['fragment','a'],['scalar',2]],
+                        [['string',1],['fragment','xx']],[['scalar',2]]):
+            _,files,inventory=self.fixture(1);page=next(n for n in files if '.pages/' in n)
+            body=r.bound_json(files[page]);body['records']=records
+            self.replace(files,inventory,page,body)
+            with self.subTest(records=records),self.assertRaises(ValueError):self.admit(files,inventory)
+
+    def test_bound_strict_parser_and_finite_budgets(self):
+        for raw in (b'{"a":0,"a":1}',b'NaN',b'Infinity',b'1e999',b'9'*100,b'"\xff"',b'['*129+b'0'+b']'*129):
+            with self.subTest(raw=raw),self.assertRaises((ValueError,UnicodeError)):r.bound_json(raw)
+        for value in (float('nan'),float('inf'),2**300,{1:'bad'},object()):
+            with self.assertRaises(ValueError):r.bound_document(value,'manifest.json',1024)
+        for budget in (True,511,r.BOUND_PAGE_BYTES+1):
+            with self.assertRaises(ValueError):r.bound_document({},'manifest.json',budget)
+        value={}
+        for _ in range(r.BOUND_LIMITS['depth']+1):value=[value]
+        with self.assertRaises(ValueError):r.bound_document(value,'manifest.json',1024)
+        with patch.dict(r.BOUND_LIMITS,shards=1):
+            with self.assertRaises(ValueError):self.fixture()
+        with patch.dict(r.BOUND_LIMITS,document_bytes=64):
+            with self.assertRaises(ValueError):self.fixture()
+
+    def test_bound_writer_serializes_original_once_and_preserves_final_object(self):
+        files={};path=Path('/inert/closure-census.json');value={'created_ns':456,'snapshot':[{},'雪']};calls=[]
+        serializer=r.bound_bytes
+        def serialize(item):
+            if item is value:calls.append(True)
+            return serializer(item)
+        with patch.object(r,'bound_bytes',serialize),patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(Path,'mkdir'):
+            r.write_bound_document(path,value)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(files[path],serializer(value))
+        members={str(name.relative_to(path.parent)):raw for name,raw in files.items()}
+        inventory={name:{'size':len(raw),'sha256':r.digest(raw)} for name,raw in members.items()}
+        self.assertEqual(r.admit_bound_document('closure-census.json.binding.json',inventory,members.__getitem__),value)
+
+    def test_bound_writer_retains_original_on_partition_overflow(self):
+        files={};path=Path('/inert/manifest.json');value={'created_ns':123,'long':'x'*200}
+        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.dict(r.BOUND_LIMITS,references=1):
+            r.write_bound_document(path,value)
+        self.assertEqual(files[path],r.bound_bytes(value))
+        self.assertEqual(r.bound_json(files[path.with_name('manifest.json.binding.json')])['kind'],'incomplete')
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

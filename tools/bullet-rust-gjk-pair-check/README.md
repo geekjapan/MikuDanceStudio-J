@@ -46,7 +46,12 @@ Each measurement records its actual evidence head, run, job, artifact, ZIP hash,
 For the MMD source layer, `verification_sha256` retains the immutable f6 baseline.
 Current verification identities come from the checkout's Git HEAD blobs for the
 same ten paths. Hosted execution requires HEAD to equal `GITHUB_SHA`. The fixed
-f6 blob map anchors the baseline. Only this tool's `README.md`, `check.py`,
+f6 blob map constrains the allowed current changes. A pinned SHA256 of the
+whole four-host `verification_sha256` map authenticates the historical f6
+physical baseline before use. Its canonical encoding is UTF-8
+`json.dumps(map, sort_keys=True)` with Python default separators. Runtime Git
+reads use only HEAD and its ten blobs, so shallow checkouts need no history or
+network access. Only this tool's `README.md`, `check.py`,
 `measured_profiles.py`, and `test_measured_profiles.py` may differ in that map.
 All ten Git entries and every collected physical source must retain regular,
 nonexecutable file modes. Missing paths, extra paths, unexpected verification

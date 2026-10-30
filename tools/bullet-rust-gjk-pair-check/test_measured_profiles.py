@@ -17,32 +17,54 @@ from test_capture import mutations
 class MmdCollisionAdmissionTests(unittest.TestCase):
     def test_verification_git_layer_requires_exact_paths_modes_and_scope(self):
         blobs = measured_profiles.VERIFICATION_BASE_BLOBS
+        manifest = json.loads((measured_profiles.HERE / 'measured-profiles.json').read_text())
+        baseline = manifest['verification_sha256']
         head = '2' * 40
         changed = dict(blobs)
         path = 'tools/bullet-rust-gjk-pair-check/measured_profiles.py'
         changed[path] = '3' * 40
         def records(mapping, mode='100644'):
             return b''.join(f'{mode} blob {blob}\t{name}\0'.encode() for name, blob in mapping.items())
-        def run(mapping, mode='100644'):
+        def run(mapping, mode='100644', value=manifest, github_sha=head):
             measured_profiles.git_verification_maps.cache_clear()
             def git(argv):
-                if 'ls-tree' in argv:
-                    return records(blobs) if measured_profiles.VERIFICATION_BASE in argv else records(mapping, mode)
-                return argv[-1].encode() + b'\n'
-            with patch.object(measured_profiles.subprocess, 'check_output', side_effect=git):
-                return measured_profiles.git_verification_maps(head, 'linux-x64')
-        baseline, current = run(changed)
-        self.assertEqual(set(current), set(blobs))
-        self.assertNotEqual(baseline[path], current[path])
-        invalid = [({p: b for p, b in changed.items() if p != path}, '100644'),
-                   (dict(changed, **{'unexpected.py': '4' * 40}), '100644'),
-                   (changed, '100755'), (changed, '120000')]
-        foreign = next(p for p in blobs if p not in measured_profiles.VERIFICATION_LAYER_PATHS)
-        invalid.append((dict(changed, **{foreign: '4' * 40}), '100644'))
+                args = argv[3:]
+                if args == ['rev-parse', 'HEAD']:
+                    return (head + '\n').encode()
+                if args == ['ls-tree', '-r', '-z', head, '--', *sorted(blobs)]:
+                    return records(mapping, mode)
+                if len(args) == 3 and args[:2] == ['cat-file', 'blob'] and args[2] in mapping.values():
+                    return args[2].encode() + b'\n'
+                raise AssertionError('shallow checkout forbids non-HEAD object read: ' + repr(args))
+            with patch.object(measured_profiles.subprocess, 'check_output', side_effect=git), \
+                    patch.dict(measured_profiles.os.environ, {'GITHUB_ACTIONS': 'true', 'GITHUB_SHA': github_sha}):
+                return measured_profiles.current_verification_map(value, 'linux-x64')
         try:
+            current = run(changed)
+            self.assertEqual(current, {p: measured_profiles.sha((blob + '\n').encode())
+                                       for p, blob in changed.items()})
+            self.assertEqual(manifest['verification_sha256'], baseline)
+            invalid = [({p: b for p, b in changed.items() if p != path}, '100644'),
+                       (dict(changed, **{'unexpected.py': '4' * 40}), '100644'),
+                       (changed, '100755'), (changed, '120000')]
+            foreign = next(p for p in blobs if p not in measured_profiles.VERIFICATION_LAYER_PATHS)
+            invalid.append((dict(changed, **{foreign: '4' * 40}), '100644'))
             for mapping, mode in invalid:
                 with self.subTest(mode=mode, paths=set(mapping)), self.assertRaisesRegex(ValueError, 'schema'):
                     run(mapping, mode)
+            for host in measured_profiles.HOSTS:
+                for mutation in ['identity', 'missing', 'extra']:
+                    value = copy.deepcopy(manifest)
+                    if mutation == 'identity':
+                        value['verification_sha256'][host][path] = '0' * 64
+                    elif mutation == 'missing':
+                        value['verification_sha256'][host].pop(path)
+                    else:
+                        value['verification_sha256'][host]['extra.py'] = '0' * 64
+                    with self.subTest(host=host, mutation=mutation), self.assertRaisesRegex(ValueError, 'immutable baseline'):
+                        run(changed, value=value)
+            with self.assertRaisesRegex(ValueError, 'trusted checkout head'):
+                run(changed, github_sha='4' * 40)
         finally:
             measured_profiles.git_verification_maps.cache_clear()
 

@@ -9,6 +9,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 VERIFICATION_BASE = 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70'
+VERIFICATION_BASE_SHA256 = '4092dd2ca3f1c3018ba144136d5c8c68da2c5d7628ff1b58a1258d23dea159e7'
 VERIFICATION_BASE_BLOBS = {
     '.github/workflows/bullet-outer-gjk-host-capture.yml': 'c9b0e3155dd819ad49b0b085c735879e3fa0cf90',
     'rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv': 'a033f5920e953595291bd0bd5b0224ef80faa616',
@@ -125,38 +126,32 @@ def git_verification_maps(head, host):
     schema(digest(head, 40) and host in HOSTS, 'current verification context')
     def git(*args):
         return subprocess.check_output(['git', '-C', str(ROOT), *args])
-    maps = []
-    for revision in [VERIFICATION_BASE, head]:
-        entries = git('ls-tree', '-r', '-z', revision, '--', *sorted(VERIFICATION_BASE_BLOBS)).split(b'\0')
-        blobs = {}
-        for entry in filter(None, entries):
-            metadata, path = entry.decode('ascii').split('\t')
-            mode, kind, blob = metadata.split()
-            schema(mode == '100644' and kind == 'blob', 'verification regular mode')
-            blobs[path] = blob
-        schema(set(blobs) == set(VERIFICATION_BASE_BLOBS), 'verification fixed paths')
-        if revision == VERIFICATION_BASE:
-            schema(blobs == VERIFICATION_BASE_BLOBS, 'immutable verification baseline')
-        else:
-            schema({p for p in blobs if blobs[p] != VERIFICATION_BASE_BLOBS[p]} <= VERIFICATION_LAYER_PATHS,
-                   'verification layer scope')
-        physical = {}
-        for path, blob in blobs.items():
-            body = git('cat-file', 'blob', blob)
-            if host == 'windows-x64' and '/tests/' not in path:
-                body = body.replace(b'\n', b'\r\n')
-            physical[path] = sha(body)
-        maps.append(physical)
-    return maps
+    entries = git('ls-tree', '-r', '-z', head, '--', *sorted(VERIFICATION_BASE_BLOBS)).split(b'\0')
+    blobs = {}
+    for entry in filter(None, entries):
+        metadata, path = entry.decode('ascii').split('\t')
+        mode, kind, blob = metadata.split()
+        schema(mode == '100644' and kind == 'blob', 'verification regular mode')
+        blobs[path] = blob
+    schema(set(blobs) == set(VERIFICATION_BASE_BLOBS), 'verification fixed paths')
+    schema({p for p in blobs if blobs[p] != VERIFICATION_BASE_BLOBS[p]} <= VERIFICATION_LAYER_PATHS,
+           'verification layer scope')
+    physical = {}
+    for path, blob in blobs.items():
+        body = git('cat-file', 'blob', blob)
+        if host == 'windows-x64' and '/tests/' not in path:
+            body = body.replace(b'\n', b'\r\n')
+        physical[path] = sha(body)
+    return physical
 
 
 def current_verification_map(manifest, host):
+    schema(source_map_digest(manifest['verification_sha256']) == VERIFICATION_BASE_SHA256,
+           'immutable baseline verification')
     head = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode('ascii').strip()
     if os.environ.get('GITHUB_ACTIONS') == 'true':
         schema(head == os.environ.get('GITHUB_SHA'), 'trusted checkout head')
-    baseline, current = git_verification_maps(head, host)
-    schema(manifest['verification_sha256'][host] == baseline, 'immutable baseline verification')
-    return current
+    return git_verification_maps(head, host)
 
 
 def hash_map(value, count, label):
@@ -556,6 +551,9 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                 'mmd_collision_world_source_admission': {name: value for name, value in
                     manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
                 'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
+                'historical_verification_baseline': {
+                    'head': VERIFICATION_BASE, 'four_host_map_sha256': VERIFICATION_BASE_SHA256,
+                    'physical_sha256': manifest['verification_sha256'][host_name]},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

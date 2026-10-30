@@ -95,9 +95,11 @@ def collect(tool, database, output, timeout):
     base = [str(tool), '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
             '--emit-build-files', '--output-dir', str(emitted), str(database)]
     receipts = {}
+    def diagnostic_run(command, log, **kwargs):
+        return run(command, log, diagnostics=dict(phase=log.stem, path=log.with_suffix('.diagnostics.jsonl')), **kwargs)
     for mode in ('off', 'on'):
         argv = base if mode == 'off' else [base[0], '--diagnostic-common-plan', *base[1:]]
-        receipts[mode] = run(argv, output / (mode + '.log'), timeout=timeout)
+        receipts[mode] = diagnostic_run(argv, output / (mode + '.log'), timeout=timeout)
         (output / 'executions.json').write_text(json.dumps(receipts, indent=2) + '\n')
         require(receipts[mode]['exit_code'] == 0 and not receipts[mode]['timed_out'], 'common-plan compiler failed in ' + mode)
         emitted.rename(output / mode)
@@ -122,7 +124,7 @@ def collect(tool, database, output, timeout):
     require(independent_unknowns, 'missing independent unknown-signature evidence')
     plan_unknowns = {(d['unit'], d['name']) for d in counts['unknown_definitions']}
     require(independent_unknowns <= plan_unknowns, 'common plan lost an original unclassified definition')
-    controls = boundary_controls(tool, output / 'controls', timeout, run)
+    controls = boundary_controls(tool, output / 'controls', timeout, diagnostic_run)
     report = dict(status='PASS', authorization='diagnostic_only', lowering='not_authorized',
                   generated=manifests, counts=counts, preserved_unknowns=sorted(independent_unknowns), executions=receipts, controls=controls,
                   source_receipt_sha256=sha((output / 'source-receipt.json').read_bytes()),

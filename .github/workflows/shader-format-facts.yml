@@ -90,6 +90,13 @@ jobs:
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
+          PYTHONPATH=tools/vkd3d-rust-probe python3 -B -m unittest \
+            test_probe.ProbeTests.test_completed_process_records_resources_and_logs \
+            test_probe.ProbeTests.test_timeout_is_not_success \
+            test_probe.ProbeTests.test_timeout_stops_spawned_children \
+            test_probe.ProbeTests.test_interruption_and_exception_kill_and_reap_owned_child
       - name: Prepare pinned native source and headers
         timeout-minutes: 8
         run: |
@@ -192,9 +199,19 @@ jobs:
             --c2rust "$RUNNER_TEMP/format-facts/tool/bin/c2rust" --clang /usr/bin/clang-18 --timeout 1800
           python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
           python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
+      - name: Retain partial diagnostic report-only checkpoint before common plan
+        id: report-only-checkpoint
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-report-only-checkpoint
+          path: ${{ runner.temp }}/format-facts/evidence/
+          retention-days: 7
+          if-no-files-found: error
       - name: Exercise complete compiler-owned common plan and atomic output controls
         timeout-minutes: 38
         run: |
+          printf 'Partial diagnostic report-only checkpoint outcome=%s\n' '${{ steps.report-only-checkpoint.outcome }}'
           python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
             --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
             --database "$RUNNER_TEMP/format-facts/evidence/result/compile_commands.json" \

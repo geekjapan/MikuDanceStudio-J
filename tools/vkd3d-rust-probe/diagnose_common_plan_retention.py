@@ -72,10 +72,12 @@ class RetentionForwarder:
         self.bytes = self.sequence = self.previous_ns = 0
         self.next_read = 0.0
         self.disabled = False
+        self.status = 'unobserved'
 
     def unavailable(self):
         if not self.disabled:
             self.disabled = True
+            self.status = 'unavailable'
             self.pending = b''
             try:
                 self.emit('RETENTION_DIAGNOSTIC_UNAVAILABLE sidecar', flush=True)
@@ -100,10 +102,15 @@ class RetentionForwarder:
                 record = parse_record(raw, self.pid, self.sequence, self.previous_ns)
                 self.emit('RETENTION_EVENT ' + raw.decode('utf-8').rstrip('\n'), flush=True)
                 self.sequence += 1
+                if record['status'] == 'unavailable' or self.status == 'observed_with_missing_rss':
+                    self.status = 'observed_with_missing_rss'
+                else:
+                    self.status = 'observed'
                 self.previous_ns = record['monotonic_ns']
                 if record['status'] == 'truncated':
                     require(not data, 'records after retention truncation')
                     self.disabled = True
+                    self.status = 'truncated'
                     return
             require(len(data) < MAX_LINE, 'retention partial line cap')
             self.pending = data

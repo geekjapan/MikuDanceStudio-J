@@ -242,12 +242,17 @@ def run(command, log, *, diagnostics=None, retention_log=None, **kwargs):
                         pass
                 if observer is not None:
                     observer.close()
-    return {"command": command, "exit_code": 124 if timed_out else process.returncode,
+    receipt = {"command": command, "exit_code": 124 if timed_out else process.returncode,
             "process_exit_code": process.returncode, "log": str(log), "timed_out": timed_out,
             "started_utc": started, "ended_utc": datetime.now(timezone.utc).isoformat(),
             "wall_seconds": time.monotonic() - start, "user_cpu_seconds": usage.ru_utime,
             "system_cpu_seconds": usage.ru_stime,
             "max_rss_bytes": usage.ru_maxrss * (1024 if sys.platform.startswith("linux") else 1)}
+    if retention_log is not None:
+        receipt['retention_telemetry'] = dict(status=retention.status if retention is not None else 'unavailable',
+            events=retention.sequence if retention is not None else 0,
+            bytes=retention.bytes if retention is not None else 0)
+    return receipt
 
 
 def outcome(result):

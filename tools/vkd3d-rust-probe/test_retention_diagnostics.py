@@ -78,6 +78,7 @@ class RetentionProtocolTests(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertTrue(all(line.startswith('RETENTION_EVENT ') for line in seen))
         self.assertEqual(forwarder.sequence, 2)
+        self.assertEqual(forwarder.status, 'observed')
 
     def test_partial_line_waits_then_reports_unavailable_once(self):
         stream = io.BytesIO(event()[:-1])
@@ -95,6 +96,7 @@ class RetentionProtocolTests(unittest.TestCase):
                                       lambda line, **_: seen.append(line))
         forwarder.drain()
         self.assertEqual(seen, ['RETENTION_DIAGNOSTIC_UNAVAILABLE sidecar'])
+        self.assertEqual(forwarder.status, 'unavailable')
 
     def test_partial_and_total_byte_caps(self):
         for initial, raw in ((0, b'x' * MAX_LINE), (MAX_BYTES, b'x')):
@@ -112,6 +114,7 @@ class RetentionProtocolTests(unittest.TestCase):
         forwarder.drain()
         forwarder.drain()
         self.assertTrue(forwarder.disabled)
+        self.assertEqual(forwarder.status, 'truncated')
         self.assertEqual(len(seen), 1)
         self.assertIn('"status":"truncated"', seen[0])
 

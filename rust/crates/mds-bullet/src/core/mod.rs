@@ -1,4 +1,3 @@
-//! Native-free Bullet 2.75 migration core. Not yet connected to the public World.
 //!
 //! Altered Rust translation of the vendored Bullet sources, including local
 //! changes. Pilot math/body/time operations were compared with stock Bullet 2.75
@@ -31,6 +30,11 @@ pub mod body;
 pub mod box_box;
 pub mod contact;
 pub mod contact_solver;
+pub mod dbvt;
+pub mod dbvt_broadphase;
+#[allow(dead_code)]
+pub mod discrete_collision_world;
+
 pub mod dispatcher;
 pub mod gjk_epa;
 pub mod gjk_pair;

@@ -205,8 +205,10 @@ jobs:
             --artifacts "$RUNNER_TEMP/format-facts/evidence/result" \
             --c2rust "$RUNNER_TEMP/format-facts/tool/bin/c2rust" --clang /usr/bin/clang-18 --timeout 1800
           python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts" --trusted-handoff > "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json"
-          printf 'handoff_size=%s\n' "$(stat -c %s "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json")" >> "$GITHUB_OUTPUT"
-          printf 'handoff_sha256=%s\n' "$(sha256sum "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          handoff_size=$(stat -c %s "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json")
+          handoff_sha256=$(sha256sum "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" | cut -d ' ' -f 1)
+          printf 'handoff_size=%s\n' "$handoff_size" >> "$GITHUB_OUTPUT"
+          printf 'handoff_sha256=%s\n' "$handoff_sha256" >> "$GITHUB_OUTPUT"
           python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
       - name: Retain partial diagnostic report-only checkpoint before common plan
         id: report-only-checkpoint

@@ -537,7 +537,10 @@ class ClosedFormatFactsTests(unittest.TestCase):
             path.write_bytes(raw + b'corruption')
             with self.assertRaises(F.FactsError):
                 F.read_handoff(self.root, path, len(raw), F.sha(raw))
-            path.write_bytes(raw.replace(b'complete_coverage', b'changed_coverage'))
+            tampered = raw.replace(b'complete_coverage', b'changed_coverage!')
+            self.assertNotEqual(tampered, raw)
+            self.assertEqual(len(tampered), len(raw))
+            path.write_bytes(tampered)
             with self.assertRaisesRegex(F.FactsError, 'external digest'):
                 F.read_handoff(self.root, path, len(raw), F.sha(raw))
             changes = [lambda h: h.update(schema=True), lambda h: h.update(schema=1.0),

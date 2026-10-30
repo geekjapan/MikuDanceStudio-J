@@ -59,6 +59,11 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+MMD_DYNAMICS_WORLD_SHA256 = 'bdd31e3281259d21c0a187c497191bd8d5f2e824c95069f220bb8e718978a59d'
+MMD_DYNAMICS_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/' + path for path in
+                                ['mod.rs', 'mmd_collision_world.rs']}
+MMD_DYNAMICS_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
+                             ['src/core/mmd_dynamics_world.rs', 'tests/mmd_dynamics_world.rs']}
 MMD_COLLISION_WORLD_SHA256 = '59875b274c0099e5c49d51f76cef60a7af70646b9abdbe2bc3b7fadeb31c93e3'
 MMD_COLLISION_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                                 ['src/core/mmd_collision_world.rs', 'tests/mmd_collision_world.rs']}
@@ -185,8 +190,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'mmd_collision_world_source_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'mmd_collision_world_source_admission', 'mmd_dynamics_world_source_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 14, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -336,7 +341,7 @@ def bridge_protected_source_map(manifest, host):
 
 
 def approved_source_map(manifest, host):
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 14, 'schema_version')
     protected = bridge_protected_source_map(manifest, host)
     admission = manifest['registration_format_admission']
     schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')
@@ -455,6 +460,7 @@ def approved_source_map(manifest, host):
            'immutable dynamics world c23 test format admission')
     protected = apply_mmd_collision_admission(manifest, host, protected)
     protected = apply_mmd_collision_format_admission(protected, host)
+    protected = apply_mmd_dynamics_admission(manifest, host, protected)
     return {**protected, **current_verification_map(manifest, host)}
 
 
@@ -482,6 +488,37 @@ def apply_mmd_collision_admission(manifest, host, protected):
         protected[path] = identity['new_sha256']
     schema(source_map_digest(admission) == MMD_COLLISION_WORLD_SHA256,
            'immutable MMD collision world admission')
+    return {**protected, **delta['additions']}
+
+
+def apply_mmd_dynamics_admission(manifest, host, protected):
+    schema('mmd_dynamics_world_source_admission' in manifest, 'required MMD dynamics world admission')
+    admission = manifest['mmd_dynamics_world_source_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'MMD dynamics world admission')
+    schema(admission['kind'] == 'private-mmd-dynamics-world-source-only'
+           and admission['base_head'] == '4a78362ba76da689eac75979764972f94efed9ff'
+           and admission['base_tree'] == '5ab1a37524863ec5d41475d38d74af32112cf835'
+           and admission['execution'] == 'UNRUN', 'fixed MMD dynamics world base and execution')
+    fields(admission['hosts'], HOSTS, 'MMD dynamics world hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements', 'additions'}, 'MMD dynamics world delta')
+    fields(delta['replacements'], MMD_DYNAMICS_WORLD_REPLACEMENTS, 'MMD dynamics world replacements')
+    hash_map(delta['additions'], len(MMD_DYNAMICS_WORLD_ADDITIONS), 'MMD dynamics world additions')
+    schema(set(delta['additions']) == MMD_DYNAMICS_WORLD_ADDITIONS, 'MMD dynamics world addition paths')
+    schema(not MMD_DYNAMICS_WORLD_ADDITIONS & (set(protected) | set(manifest['verification_sha256'][host])),
+           'MMD dynamics world additions must be absent')
+    schema(not MMD_DYNAMICS_WORLD_REPLACEMENTS & MMD_DYNAMICS_WORLD_ADDITIONS, 'MMD dynamics world overlap')
+    schema(MMD_DYNAMICS_WORLD_REPLACEMENTS <= set(protected), 'MMD dynamics world replacements must exist')
+    schema(not (MMD_DYNAMICS_WORLD_REPLACEMENTS | MMD_DYNAMICS_WORLD_ADDITIONS)
+           & set(manifest['verification_sha256'][host]), 'MMD dynamics world verification overlap')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'MMD dynamics world replacement')
+        schema(protected[path] == identity['old_sha256'], 'MMD dynamics world old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'MMD dynamics world new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == MMD_DYNAMICS_WORLD_SHA256,
+           'immutable MMD dynamics world admission')
     return {**protected, **delta['additions']}
 
 
@@ -580,6 +617,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                 'mmd_collision_world_source_admission': {name: value for name, value in
                     manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
                 'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
+                'mmd_dynamics_world_source_admission': {name: value for name, value in
+                    manifest['mmd_dynamics_world_source_admission'].items() if name != 'hosts'},
                 'historical_verification_baseline': {
                     'head': VERIFICATION_BASE, 'four_host_map_sha256': VERIFICATION_BASE_SHA256,
                     'physical_sha256': manifest['verification_sha256'][host_name]},

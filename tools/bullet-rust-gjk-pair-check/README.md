@@ -143,14 +143,12 @@ author commit. It creates no measurement and admits no alternate source chain.
 `capture_head` continues to identify the actual capture. A replay of old actual
 streams remains old execution evidence. The current status is execution pending.
 
-The three independent support, internal GJK/EPA, and outer GJK comparison
-programs import their numerical modules directly. Their math, shape, simplex,
-GJK/EPA, pair, box and contact code, native sources, shim, CRT, fixtures,
-generators, observers and mutation commands remain unchanged. They do not import
-the new broadphase module through `core/mod.rs`. The whole-pure test registers
-new broadphase tests and requires fresh execution. Source equality of the direct
-comparison programs does not accept whole-pure, broadphase, DBVT, General,
-Shipping, public World cutover or native dependency removal.
+The internal GJK/EPA and outer GJK comparison programs import their numerical
+modules directly. The support helper compiles the whole `pure_bullet` suite
+through `core/mod.rs`, including admitted world modules, and needs fresh compiled
+checks. Source equality of the direct comparison programs does not establish
+support compiler closure, whole-pure, broadphase, DBVT, General, Shipping, public
+World cutover or native dependency removal.
 ## Private dynamics source admission
 
 Schema 8 appends a fixed source-only dynamics layer at base `816df8133b021359a2684c2ad5fd3666583c7c60`, tree `ef7ae5c209fa4cdc5669a3757effe770f8f19df0`. It replaces the current identities of `core/mod.rs`, `core/world_objects.rs`, and `core/discrete_collision_world.rs`, and adds the private dynamics owner and its dedicated tests. Every previous admission, measurement, compiler profile, and numerical policy remains historical and unchanged.
@@ -221,3 +219,42 @@ This discovery run failed at the unknown provenance guard. Its mutation gate was
 `not-run`. The observation supplies no successful measured-profile receipt or
 final-head native acceptance. Fresh exact-head hosted capture, compiled mutations,
 suite baselines, final integrity, and independent acceptance remain `UNRUN`.
+
+## Private MMD dynamics source admission
+
+Schema 14 requires `mmd_dynamics_world_source_admission` after the MMD format
+layer and before current verification composition. Its fixed source target is
+`4a78362ba76da689eac75979764972f94efed9ff`, tree
+`5ab1a37524863ec5d41475d38d74af32112cf835`. The canonical entry SHA256 is
+`bdd31e3281259d21c0a187c497191bd8d5f2e824c95069f220bb8e718978a59d`.
+Canonical bytes use `json.dumps(entry, sort_keys=True).encode("utf-8")`.
+Execution is `UNRUN`.
+
+The layer replaces only `src/core/mod.rs` and `src/core/mmd_collision_world.rs`
+and adds only `src/core/mmd_dynamics_world.rs` and `tests/mmd_dynamics_world.rs`
+under `rust/crates/mds-bullet/`. Old Git bytes come from predecessor
+`96336e2ef253f148f1042836e79b06d42d9d8cf5`, tree
+`71d32635e461d14f0edd03b6bebf1f6dcf1c6d79`.
+New Git bytes come from protected target
+`4a78362ba76da689eac75979764972f94efed9ff`, tree
+`5ab1a37524863ec5d41475d38d74af32112cf835`, and remain identical at helper-only
+base `3cddd11bf1b4350a5badd014054bf27222a5dca7`. Unix hosts use Git LF bytes.
+Windows production sources use CRLF, while the dedicated test retains LF under
+`rust/.gitattributes` `-text`. Wrong physical bytes are refused without
+normalization. Exact old and new physical SHA256 values are in the admission.
+
+The current collector contains 485 paths including this registry. The approved
+map contains exactly 484 paths, comprising 474 protected and 10 verification
+paths. Only the manifest excludes itself, with its raw SHA256 recorded separately.
+The other 17 candidate paths stay outside the existing collector. The explicit
+macOS captured layer list, 472-path digest, older 467 and 464 maps, numerical
+457 and verification 10 partitions, stream rows 5081, 1800 and 6, NaN inventory,
+compiler provenance selectors and both supplemental observations remain fixed.
+Only non-host admission metadata appears in `current_source`; old commands,
+streams, provenance and `measurement_reference` stay unchanged.
+
+Fresh final-head four-host GJK, native, support, pure and focused-nine gates,
+MMD native, replay and controls, General and Bullet gates, and independent
+acceptance remain `UNRUN`. Source continuity proves no new simulation or support
+compiler closure. Full helpers, large test ASTs, compilers and mutation execution
+run on GitHub Actions. Local checks use selected source groups at most 65536 bytes.

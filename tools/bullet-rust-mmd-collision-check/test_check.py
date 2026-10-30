@@ -43,7 +43,7 @@ class CorpusTests(unittest.TestCase):
         source.resolve.return_value = target
         out, recorder = MagicMock(), Mock()
         namespace = dict(Path=Mock(return_value=source), out=out, recorder=recorder,
-                         digest=digest, require=require, os=SimpleNamespace(normcase=ntpath.normcase))
+                         digest=digest, require=require, os=SimpleNamespace(path=SimpleNamespace(normcase=ntpath.normcase)))
         exec(compile(ast.Module(body=[acquire], type_ignores=[]), 'include-acquisition', 'exec'), namespace)
         occurrence = {'stream': 'stdout', 'ordinal': 3, 'raw': alias}
         self.assertEqual(namespace['acquire']([occurrence], PureWindowsPath('C:/source')),

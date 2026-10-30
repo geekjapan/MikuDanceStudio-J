@@ -297,6 +297,52 @@ def bound_bytes(value):
     return (json.dumps(value,sort_keys=True,indent=2,ensure_ascii=True,allow_nan=False)+'\n').encode('utf-8')
 
 
+def bound_preflight(value):
+    """Bound the LF serializer and reconstruction before creating output bytes."""
+    state={'bytes':1,'estimate':0,'references':0};active=set()
+    def charge(size=0,estimate=0):
+        state['bytes']+=size;state['estimate']+=estimate
+        bound_check(state['bytes']<=BOUND_LIMITS['document_bytes'],'bounded original serialization estimate')
+        bound_check(state['estimate']<=BOUND_LIMITS['document_bytes'],'bounded document allocation estimate')
+        bound_check(state['bytes']+state['estimate']<=BOUND_LIMITS['cumulative_bytes'],'bounded cumulative preflight')
+    def walk(item,depth):
+        state['references']+=1
+        bound_check(depth<=BOUND_LIMITS['depth'] and state['references']<=BOUND_LIMITS['references'],'bounded document depth/references')
+        kind=type(item)
+        if kind in (dict,list):
+            bound_check(id(item) not in active,'bounded document cycle')
+            count=len(item)
+            charge(2,8+count*(8+2*depth))
+            # Nonempty pretty-printed containers include child and closing lines.
+            if count:charge(count*(1+2*(depth+1))+count-1+1+2*depth)
+            active.add(id(item))
+            try:
+                if kind is dict:
+                    for key,child in item.items():
+                        bound_check(type(key) is str,'bounded document string keys')
+                        walk(key,depth+1);charge(2);walk(child,depth+1)
+                else:
+                    for child in item:walk(child,depth+1)
+            finally:active.remove(id(item))
+        elif kind is str:
+            charge(2,len(item)*12+8)
+            # Count escaped ASCII bytes without constructing an encoding or copy.
+            for char in item:
+                code=ord(char)
+                bound_check(not 0xd800<=code<=0xdfff,'bounded UTF-8 string')
+                charge(12 if code>0xffff else 6 if code>127 or code<32 and char not in '\b\f\n\r\t' else
+                       2 if char in '\"\\\b\f\n\r\t' else 1)
+        else:
+            bound_check(kind in (type(None),bool,int,float),'bounded document scalar type')
+            bound_check(kind is not float or math.isfinite(item),'bounded document finite scalar')
+            bound_check(kind is not int or item.bit_length()<=256,'bounded document integer width')
+            # 30103/100000 exceeds log10(2); include sign without str(huge_int).
+            size=(item.bit_length()*30103//100000+2) if kind is int else 32 if kind is float else 5 if kind is bool else 4
+            charge(size,96)
+    walk(value,0)
+    return state['bytes']
+
+
 def bound_records(value,depth=0,state=None):
     if state is None:state={'references':0,'estimate':0}
     state['references']+=1
@@ -331,7 +377,7 @@ def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None
     bound_check(type(page_budget) is int and 512<=page_budget<=BOUND_PAGE_BYTES,'bounded page budget')
     bound_name(original)
     # Validate finite work before allocating the original serialization.
-    for _ in bound_records(value):pass
+    bound_preflight(value)
     raw=bound_bytes(value) if serialized is None else serialized
     bound_check(len(raw)<=BOUND_LIMITS['document_bytes'],'bounded original bytes')
     pages={};rows=[];total=len(raw);records=[];encoded_size=0
@@ -362,6 +408,11 @@ def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None
 
 def write_bound_document(path,value):
     """Only final documents use the explicit LF byte serializer."""
+    try:bound_preflight(value)
+    except BoundDocumentLimit as error:
+        # Refusal precedes all writes, including any pre-existing binding.
+        return {'schema':BOUND_SCHEMA,'kind':'incomplete','reason':str(error),
+                'original_created':False,'semantic_status':'UNRUN'}
     raw=bound_bytes(value)
     path.write_bytes(raw)
     try:_,index,pages=bound_document(value,path.name,serialized=raw)

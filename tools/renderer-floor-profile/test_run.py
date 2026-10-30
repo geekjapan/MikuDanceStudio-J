@@ -2623,9 +2623,54 @@ class BoundedDocumentControls(unittest.TestCase):
         inventory={name:{'size':len(raw),'sha256':r.digest(raw)} for name,raw in members.items()}
         self.assertEqual(r.admit_bound_document('closure-census.json.binding.json',inventory,members.__getitem__),value)
 
+    def test_bound_preflight_covers_serializer_and_small_limits(self):
+        values=[{},[],None,True,False,0,-1,2**255,-2**255,1.0,-0.0,1e-300,
+                {'z':'ascii','a':['\\\"\b\f\n\r\t\x00雪😀',{},[]]},'x'*32]
+        for value in values:
+            with self.subTest(value=value):
+                self.assertGreaterEqual(r.bound_preflight(value),len(r.bound_bytes(value)))
+        value='x'*32;size=len(r.bound_bytes(value))
+        with patch.dict(r.BOUND_LIMITS,document_bytes=32*12+8):
+            self.assertEqual(r.bound_preflight(value),size)
+        nested=0
+        for _ in range(4):nested=[nested]
+        with patch.dict(r.BOUND_LIMITS,depth=4):r.bound_preflight(nested)
+        with patch.dict(r.BOUND_LIMITS,depth=3):
+            with self.assertRaises(r.BoundDocumentLimit):r.bound_preflight(nested)
+        near=[]
+        for _ in range(20):near=[near]
+        size=len(r.bound_bytes(near))
+        with patch.dict(r.BOUND_LIMITS,document_bytes=size):self.assertEqual(r.bound_preflight(near),size)
+        with patch.dict(r.BOUND_LIMITS,document_bytes=size-1):
+            with self.assertRaises(r.BoundDocumentLimit):r.bound_preflight(near)
+        shared=[];r.bound_preflight([shared,shared])
+
+    def test_bound_preflight_refusal_never_serializes_or_writes(self):
+        cyclic=[];cyclic.append(cyclic)
+        class StringSubclass(str):pass
+        for value,limits in [('x'*33,{'document_bytes':32*12+8}),
+                             ('x'*33,{'cumulative_bytes':64}),
+                             ({'a':0},{'references':1}),([[[0]]],{'depth':2}),
+                             (cyclic,{}),({'a':float('inf')},{}),(2**300,{}),
+                             ({1:'bad'},{}),(StringSubclass('bad'),{}),('\ud800',{})]:
+            path=Path('/inert/manifest.json');binding=path.with_name('manifest.json.binding.json')
+            files={path:b'previous original\n',binding:b'previous binding\n'};before=dict(files)
+            with self.subTest(kind=type(value),limits=limits),patch.dict(r.BOUND_LIMITS,limits),\
+                 patch.object(r,'bound_bytes',side_effect=AssertionError('serializer before refusal')),\
+                 patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)):
+                result=r.write_bound_document(path,value)
+            self.assertEqual(files,before)
+            self.assertEqual(result['kind'],'incomplete');self.assertFalse(result['original_created'])
+            self.assertEqual(result['semantic_status'],'UNRUN')
+        files={};path=Path('/inert/new.json')
+        with patch.dict(r.BOUND_LIMITS,document_bytes=1),patch.object(r,'bound_bytes',side_effect=AssertionError('serializer')),\
+             patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)):
+            r.write_bound_document(path,0)
+        self.assertEqual(files,{})
+
     def test_bound_writer_retains_original_on_partition_overflow(self):
         files={};path=Path('/inert/manifest.json');value={'created_ns':123,'long':'x'*200}
-        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.dict(r.BOUND_LIMITS,references=1):
+        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(r,'bound_document',side_effect=r.BoundDocumentLimit('partition overflow')):
             r.write_bound_document(path,value)
         self.assertEqual(files[path],r.bound_bytes(value))
         self.assertEqual(r.bound_json(files[path.with_name('manifest.json.binding.json')])['kind'],'incomplete')

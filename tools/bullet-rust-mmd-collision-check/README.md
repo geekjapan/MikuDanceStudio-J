@@ -31,12 +31,23 @@ backing-slot dump, companion-ID modification or claim that capacity proves
 initialized backing slots. A retained-slot error fails the capture for diagnosis.
 
 Original and observed native run ordinary, ascending, descending and alternating
-aligned-allocation roles. The custom roles use a bounded 256 MiB arena and reset
-it only after actual teardown has no live callbacks. Allocation chronology,
-address direction and observed Bullet requested-byte events are checked in the
-MMD aligned-request domain. Ordinary has no custom allocator callbacks. Original
+allocation roles. The custom roles install `btAlignedAllocSetCustom` callbacks on
+the unchanged archive's active `sAllocFunc` and `sFreeFunc` path. They use a bounded
+256 MiB arena and reset it only after actual teardown has no live callbacks.
+`ROLE` records the MMD raw-request domain, `mmd-raw-request`, with padded bytes
+and raw pointers. The callback receives no requested alignment, so `ROLE` has no
+alignment field. Arena pointers satisfy the raw allocator's fundamental alignment
+contract. Address direction and raw ownership are checked separately from observed
+`ALLOC` payload pointers, payload bytes and requested alignment. Their chronology,
+64-bit pointer metadata, padding and matching frees must agree. Ordinary has no
+custom allocator callbacks, including when observed `ALLOC` events are present. Original
 native physical or default-allocator closure is not inferred. The genuine ray
 accelerator remains enabled. Rust ray allocation parity remains excluded.
+
+Public capture admission requires an explicit boolean `dynamics` in its closed
+context for both collision and dynamics modes. Lifetime summaries preserve separate
+raw callback and observed payload event counts. `raw_callback_absence` is boolean;
+integer event counts reject booleans.
 
 Twelve dynamics control definitions extend the ten DBVT dynamics semantics with
 mass-zero-on-toggle and SAP dispatch-order controls. They are proposed controls

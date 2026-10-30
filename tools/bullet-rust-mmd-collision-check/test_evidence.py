@@ -3,6 +3,21 @@ from evidence import admit_capture
 
 
 class AdmissionBoundaryTests(unittest.TestCase):
+    def test_public_context_routes_both_explicit_boolean_modes(self):
+        from unittest.mock import patch
+        context = dict(authority=object(), expected_head='a' * 40, canonical_sources={'one': b'x'},
+                       inputs='X\n', cases=[], expected_host={('Linux', 'x86_64')})
+        for dynamics in (False, True):
+            with patch('evidence._admit_capture', return_value='admitted') as admission:
+                self.assertEqual(admit_capture('capture', **context, dynamics=dynamics), 'admitted')
+                admission.assert_called_once_with('capture', **context, dynamics=dynamics)
+        for changed in (context, {**context, 'dynamics': True, 'extra': 1},
+                        *({**context, 'dynamics': value} for value in (0, 1, None, 'false', [], {}))):
+            with self.subTest(context=changed), patch('evidence._admit_capture') as admission:
+                with self.assertRaises(ValueError):
+                    admit_capture('capture', **changed)
+                admission.assert_not_called()
+
     def test_no_source_or_synthetic_input_is_admitted(self):
         for input in (None, {}, {'status': 'PASS'}, b'legal-looking-source'):
             with self.assertRaisesRegex(ValueError, 'context'):
@@ -384,20 +399,72 @@ class CommandRecipeTests(unittest.TestCase):
     def test_mmd_allocator_roles_refuse_ordinary_callbacks_and_wrong_address_order(self):
         from evidence import validate_native_lifetimes
         inputs = 'H empty mixed-explicit-operations\nX\n'
-        ordinary = b'ROLE 0 START ordinary mmd-aligned-request\nBODY_REGISTER 0 0 128\nROLE 1 END 0\n'
+        ordinary = b'ROLE 0 START ordinary mmd-raw-request\nBODY_REGISTER 0 0 128\nROLE 1 END 0\n'
         summary = validate_native_lifetimes(ordinary, inputs, observed=False, role='ordinary')
-        self.assertEqual(summary['domain'], 'mmd-aligned-request')
+        self.assertEqual(summary['domain'], 'mmd-raw-request')
         self.assertEqual(summary['callback_events'], 0)
         self.assertIs(summary['physical_closure'], False)
-        custom = (b'ROLE 0 START ascending mmd-aligned-request\nROLE 0 1 A 128 0 16\n'
-                  b'ROLE 0 2 A 144 8 16\nBODY_REGISTER 0 0 128\n'
-                  b'ROLE 1 3 F 144 0 0\nROLE 1 4 F 128 0 0\nROLE 1 END 0\n')
+        custom = (b'ROLE 0 START ascending mmd-raw-request\nROLE 0 1 A 128 23\n'
+                  b'ROLE 0 2 A 160 31\nBODY_REGISTER 0 0 128\n'
+                  b'ROLE 1 3 F 160 0\nROLE 1 4 F 128 0\nROLE 1 END 0\n')
         self.assertEqual(validate_native_lifetimes(custom, inputs, observed=False, role='ascending')['callback_events'], 4)
         for changed, role in [(custom.replace(b'ascending', b'ordinary'), 'ordinary'),
                               (custom.replace(b'ascending', b'descending'), 'descending'),
-                              (custom.replace(b'ROLE 1 4 F 128 0 0\n', b''), 'ascending')]:
+                              (custom.replace(b'ROLE 1 4 F 128 0\n', b''), 'ascending')]:
             with self.assertRaises(ValueError):
                 validate_native_lifetimes(changed, inputs, observed=False, role=role)
+
+    def test_observed_ordinary_summary_roundtrips_admission_data(self):
+        import ast
+        import textwrap
+        from pathlib import Path
+        from evidence import encode_json, json_value, validate_native_lifetimes
+        inputs = 'H empty mixed-explicit-operations\nX\n'
+        raw = (b'ROLE 0 START ordinary mmd-raw-request\nALLOC 0 1 1 144 0 16\n'
+               b'BODY_REGISTER 0 0 128\nPHYSICAL 1 body 128 0\nALLOC 1 2 0 144 0 0\nROLE 1 END 0\n')
+        summary = validate_native_lifetimes(raw, inputs, observed=True, role='ordinary')
+        self.assertEqual(summary, dict(allocation_events=2, physical_closure=True, role='ordinary',
+                                     domain='mmd-raw-request', callback_events=0, raw_callback_absence=True))
+        source = (Path(__file__).resolve().parent / 'evidence.py').read_text()
+        start = source.index('    def data(name):', source.index('def _admit_capture('))
+        data_source = textwrap.dedent(source[start:source.index('    manifest = data(', start)])
+        content = {'observed-lifetime-summary.json': encode_json(summary)}
+        namespace = dict(raw=content.__getitem__, json_value=json_value)
+        exec(compile(ast.parse(data_source), 'admission-data', 'exec'), namespace)
+        self.assertEqual(namespace['data']('observed-lifetime-summary.json'), summary)
+        for field in ('allocation_events', 'callback_events'):
+            for value in (False, True):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    json_value(encode_json({**summary, field: value}))
+        for value in (0, 1, None, 'true', [], {}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                json_value(encode_json({**summary, 'raw_callback_absence': value}))
+
+    def test_raw_roles_preserve_separate_bullet_payload_chronology(self):
+        from evidence import encode_json, json_value, validate_native_lifetimes
+        inputs = 'H empty mixed-explicit-operations\nX\n'
+        for role, bases in [('ascending', (128, 160)), ('descending', (160, 128)),
+                            ('alternating', (128, 1024, 160, 992))]:
+            lines = [f'ROLE 0 START {role} mmd-raw-request']
+            for index, base in enumerate(bases):
+                lines += [f'ROLE 0 {index + 1} A {base} 31', f'ALLOC 0 {index + 1} 1 {base + 16} 8 16']
+            for index, base in enumerate(reversed(bases), len(bases) + 1):
+                lines += [f'ALLOC 1 {index} 0 {base + 16} 0 0', f'ROLE 1 {index} F {base} 0']
+            lines += ['ROLE 1 END 0']
+            raw = ('\n'.join(lines) + '\n').encode()
+            summary = validate_native_lifetimes(raw, inputs, observed=True, role=role)
+            self.assertEqual(summary['callback_events'], 2 * len(bases))
+            self.assertIs(summary['raw_callback_absence'], False)
+            self.assertEqual(json_value(encode_json(summary)), summary)
+            first = bases[0]
+            for changed in (raw.replace(b' 31\n', b' 30\n', 1),
+                            raw.replace(f'1 {first + 16} 8 16'.encode(), f'1 {first + 32} 8 16'.encode(), 1),
+                            raw.replace(f'F {first} 0'.encode(), f'F {first + 1} 0'.encode(), 1),
+                            raw.replace(f'ROLE 0 1 A {first} 31\nALLOC 0 1 1 {first + 16} 8 16'.encode(),
+                                        f'ALLOC 0 1 1 {first + 16} 8 16\nROLE 0 1 A {first} 31'.encode()),
+                            raw.replace(b'mmd-raw-request', b'mmd-aligned-request')):
+                with self.subTest(role=role, changed=changed), self.assertRaises(ValueError):
+                    validate_native_lifetimes(changed, inputs, observed=True, role=role)
 
     def test_dynamics_recipe_has_distinct_mode_all_allocator_roles_and_pdb_outputs(self):
         from evidence import command_schedule

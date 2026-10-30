@@ -25,6 +25,21 @@ class Memory:
 
 
 class CorpusTests(unittest.TestCase):
+    def test_mmd_allocator_roles_use_unchanged_active_raw_archive_path(self):
+        directory = Path(__file__).resolve().parent
+        allocator = (directory / 'allocator.hpp').read_text()
+        native = (directory.parents[1] / 'recipes/bullet275/bullet-src/src/LinearMath/btAlignedAllocator.cpp').read_text()
+        self.assertIn('btAlignedAllocSetCustom(mmd_allocate,mmd_deallocate)', allocator)
+        self.assertNotIn('btAlignedAllocSetCustomAligned', allocator)
+        self.assertNotIn('BT_HAS_ALIGNED_ALLOCATOR', allocator)
+        allocate = native.split('void*\tbtAlignedAllocInternal\t(size_t size, int alignment)', 1)[1]
+        allocate = allocate.split('#endif  // defined (BT_HAS_ALIGNED_ALLOCATOR)', 1)[0]
+        self.assertIn('sAlignedAllocFunc(size, alignment);\n#else', allocate)
+        self.assertIn('sAllocFunc(size + sizeof(void *) + (alignment-1))', allocate)
+        free = native.split('void\tbtAlignedFreeInternal\t(void* ptr)', 1)[1]
+        self.assertIn('sAlignedFreeFunc(ptr);\n#else', free)
+        self.assertIn('real = *((void **)(ptr)-1);\n    sFreeFunc(real);', free)
+
     def test_include_acquisition_preserves_resolved_windows_case_and_raw_alias(self):
         import ntpath
         from pathlib import PureWindowsPath

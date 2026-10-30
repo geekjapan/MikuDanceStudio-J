@@ -405,7 +405,8 @@ def selected_members(raw, system, library):
 
 def admit_capture(directory, **expected):
     require(bool(expected), 'strict current source/head/corpus/host context is required')
-    fields(expected,['authority','expected_head','canonical_sources','inputs','cases','expected_host'],'external strict admission context')
+    fields(expected,['authority','expected_head','canonical_sources','inputs','cases','expected_host','dynamics'],'external strict admission context')
+    require(type(expected['dynamics']) is bool, 'explicit boolean dynamics mode')
     return _admit_capture(directory, **expected)
 
 
@@ -448,12 +449,12 @@ def validate_native_lifetimes(raw, inputs, *, observed, role=None):
         require(not role_lines, 'no allocator-role records in collision mode')
     else:
         require(role in {'ordinary', 'ascending', 'descending', 'alternating'} and role_lines and
-                role_lines[0] == f'ROLE 0 START {role} mmd-aligned-request', 'genuine MMD allocator role domain')
-        live, sequence, ended, previous = {}, 0, [], 0
+                role_lines[0] == f'ROLE 0 START {role} mmd-raw-request', 'genuine MMD allocator role domain')
+        live, role_sequence, ended, previous = {}, 0, [], 0
         ascending, descending, allocations = None, None, 0
         for line in role_lines[1:]:
             words = line.split(' ')
-            require(len(words) in {4, 7} and words[1].isdigit(), 'MMD allocator role framing')
+            require(len(words) in {4, 6} and words[1].isdigit(), 'MMD allocator role framing')
             row = int(words[1])
             require(previous <= row < len(commands), 'MMD allocator ordered checkpoints')
             previous = row
@@ -464,14 +465,13 @@ def validate_native_lifetimes(raw, inputs, *, observed, role=None):
                 ascending, descending, allocations = None, None, 0
                 continue
             require(role != 'ordinary' and words[2].isdigit() and words[3] in {'A', 'F'} and
-                    all(v.isdigit() for v in words[4:]), 'ordinary raw-callback absence and custom aligned callback')
-            current, pointer, size, alignment = map(int, [words[2], *words[4:]])
-            require(current == sequence + 1, 'exact MMD role allocation chronology')
-            sequence = current
+                    all(v.isdigit() for v in words[4:]), 'ordinary raw-callback absence and custom raw callback')
+            current, pointer, size = map(int, [words[2], *words[4:]])
+            require(current == role_sequence + 1, 'exact MMD role allocation chronology')
+            role_sequence = current
             if words[3] == 'A':
-                require(pointer > 0 and pointer not in live and alignment > 0 and
-                        alignment & (alignment - 1) == 0 and pointer % alignment == 0, 'MMD aligned request ownership')
-                live[pointer] = (size, alignment)
+                require(pointer > 0 and pointer not in live and size > 0, 'MMD raw request ownership')
+                live[pointer] = size
                 high = role == 'descending' or (role == 'alternating' and allocations % 2 == 1)
                 if high:
                     require(descending is None or pointer < descending, 'descending MMD allocation addresses')
@@ -483,10 +483,10 @@ def validate_native_lifetimes(raw, inputs, *, observed, role=None):
                     ascending = pointer
                 allocations += 1
             else:
-                require(pointer in live and size == alignment == 0, 'MMD aligned callback free')
+                require(pointer in live and size == 0, 'MMD raw callback free')
                 del live[pointer]
         require(not live and ended == [i for i, command in enumerate(commands) if command == 'X'], 'complete MMD allocator role teardown coverage')
-        require(sequence == 0 if role == 'ordinary' else sequence > 0, 'allocator role callback domain')
+        require(role_sequence == 0 if role == 'ordinary' else role_sequence > 0, 'allocator role callback domain')
     for line in ordinary_lines:
         words = line.split(' ')
         require(all(words) and words[0] in {'ALLOC', 'BODY_REGISTER', 'JOINT_CREATE', 'PHYSICAL'}, 'known native lifetime event')
@@ -543,13 +543,28 @@ def validate_native_lifetimes(raw, inputs, *, observed, role=None):
         require(not registered and not joints and not live_allocations, 'complete native ownership and allocation closure')
     require(last_sequence > 0 if observed else last_sequence == 0, 'native allocator observation domain')
     if observed and role not in {None, 'ordinary'}:
-        callbacks = [line.split(' ') for line in role_lines if len(line.split(' ')) == 7]
-        requests = [line.split(' ') for line in ordinary_lines if line.startswith('ALLOC ')]
-        require([[r[1], r[2], '1' if r[3] == 'A' else '0', *r[4:]] for r in callbacks] ==
-                [r[1:] for r in requests], 'genuine callback and Bullet aligned-request chronology agree exactly')
+        events = [line.split(' ') for line in raw.decode('ascii').splitlines()]
+        callbacks = [(i, r) for i, r in enumerate(events) if r[0] == 'ROLE' and len(r) == 6]
+        requests = [(i, r) for i, r in enumerate(events) if r[0] == 'ALLOC']
+        require(len(callbacks) == len(requests), 'raw callback and Bullet payload event counts')
+        payloads = {}
+        for (callback_index, callback), (request_index, request) in zip(callbacks, requests):
+            require(callback[1:3] == request[1:3] and
+                    ('1' if callback[3] == 'A' else '0') == request[3], 'raw callback and Bullet payload chronology')
+            base, padded = map(int, callback[4:])
+            pointer, size, alignment = map(int, request[4:])
+            if callback[3] == 'A':
+                require(callback_index < request_index and padded == size + 8 + alignment - 1 and
+                        base + 8 <= pointer <= base + 8 + alignment - 1,
+                        'unchanged 64-bit Bullet raw padding and aligned payload')
+                payloads[pointer] = base
+            else:
+                require(request_index < callback_index and payloads.pop(pointer, None) == base,
+                        'Bullet payload release precedes matching raw free')
+        require(not payloads, 'raw callback and Bullet payload ownership closure')
     result = {'allocation_events': last_sequence, 'physical_closure': observed}
     if role is not None:
-        result.update(role=role, domain='mmd-aligned-request', callback_events=sequence,
+        result.update(role=role, domain='mmd-raw-request', callback_events=role_sequence,
                       raw_callback_absence=role == 'ordinary')
     return result
 
@@ -615,7 +630,8 @@ def inventory(expected, actual):
 def json_value(raw):
     value = decode_json(raw)
     def finite(item, key=None):
-        if type(item) is bool: require(key in {'timeout','normal_exit','full_schema','waited','streams_closed','full_trace','physical_closure'}, 'boolean in integer receipt field')
+        if key == 'raw_callback_absence': require(type(item) is bool, 'boolean raw callback absence')
+        elif type(item) is bool: require(key in {'timeout','normal_exit','full_schema','waited','streams_closed','full_trace','physical_closure'}, 'boolean in integer receipt field')
         elif isinstance(item, float): require(math.isfinite(item), 'finite JSON number')
         elif isinstance(item, dict):
             for name,child in item.items(): finite(child,name)
@@ -997,7 +1013,8 @@ class _Memory:
 ACTUAL_PEERS = ['wrong-head','unclosed-command','boolean-pid','open-source','bad-executed-binary']
 
 
-def _admit_capture(directory, *, authority, expected_head, canonical_sources, inputs, cases, expected_host, require_actual_controls=True, dynamics=False):
+def _admit_capture(directory, *, authority, expected_head, canonical_sources, inputs, cases, expected_host, dynamics, require_actual_controls=True):
+    require(type(dynamics) is bool, 'explicit boolean dynamics mode')
     from hooks import (OWNER, mutants, observation_paths, native_observations, instrument, inverse, mutate)
     MUTANTS, OBSERVATION_PATHS, NATIVE_OBSERVATIONS = mutants(dynamics), observation_paths(dynamics), native_observations(dynamics)
     from trace import frames, common, validate_lifetimes, semantic_projection

@@ -4,12 +4,40 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import friction_native as native
 from hooks import inverse, replace
 
 
 class NativeBoundaries(unittest.TestCase):
+    def test_census_scans_raw_lf_lines_and_preserves_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = native.NATIVE + 'point.h'
+            original = b'// non-UTF8 \xdf\r\n// embedded \x85 comment\r\nbtManifoldPoint point;\r\nm_solverMode = 260;\n'
+            consumer = b'// non-UTF8 \xff\nsetAnisotropicFriction();\n'
+            self.assertLessEqual(len(original) + len(consumer), 65536)
+            for name, raw in ((path, original), (native.CONSUMER, consumer)):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+            digest = native.sha(path.encode() + b'\0' + bytes.fromhex(native.sha(original)))
+            with patch.multiple(native, FROZEN_LIBRARY_COUNT=1, FROZEN_LIBRARY_SHA=digest,
+                                FROZEN_CONSUMER_SHA=native.sha(consumer)):
+                self.assertEqual(native.original_census(root), [
+                    (path, 3, 'btManifoldPoint point;\r'),
+                    (path, 4, 'm_solverMode = 260;'),
+                    (native.CONSUMER, 2, 'setAnisotropicFriction();')])
+                self.assertEqual((root / path).read_bytes(), original)
+                self.assertEqual((root / native.CONSUMER).read_bytes(), consumer)
+                changes = []
+                replace(root, path, 'btManifoldPoint point;', 'btManifoldPoint observed;', changes)
+                inverse(root, changes, {path: original})
+                self.assertEqual((root / path).read_bytes(), original.replace(b'point;', b'observed;'))
+                with self.assertRaisesRegex(ValueError, 'native/shim census bytes'):
+                    native.original_census(root)
+
     def test_local_generation_cannot_start(self):
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             self.skipTest('local-only boundary')

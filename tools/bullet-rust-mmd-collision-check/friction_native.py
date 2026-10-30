@@ -51,13 +51,13 @@ def original_census(root):
     require(len(paths) == FROZEN_LIBRARY_COUNT and digest.hexdigest() == FROZEN_LIBRARY_SHA,
             'complete original-only native/shim census bytes')
     require(sha((root / CONSUMER).read_bytes()) == FROZEN_CONSUMER_SHA, 'original consumer census bytes')
-    tokens = re.compile(r'btManifoldPoint|m_lateralFriction(?:Dir[12]|Initialized)|'
-                        r'm_userPersistentData|gContact(?:Added|Processed|Destroyed)Callback|'
-                        r'addManifoldPoint|replaceContactPoint|setAnisotropicFriction|'
-                        r'pthread_create|sigaction|CreateThread|m_solverMode')
-    return [(p.relative_to(root).as_posix(), n, line)
+    tokens = re.compile(br'btManifoldPoint|m_lateralFriction(?:Dir[12]|Initialized)|'
+                        br'm_userPersistentData|gContact(?:Added|Processed|Destroyed)Callback|'
+                        br'addManifoldPoint|replaceContactPoint|setAnisotropicFriction|'
+                        br'pthread_create|sigaction|CreateThread|m_solverMode')
+    return [(p.relative_to(root).as_posix(), n, line.decode('ascii'))
             for p in [*paths, root / CONSUMER] if p.suffix in ('.h', '.hpp', '.cpp')
-            for n, line in enumerate(p.read_text().splitlines(), 1) if tokens.search(line)]
+            for n, line in enumerate(p.read_bytes().split(b'\n'), 1) if tokens.search(line)]
 
 
 def _legacy_native(edit):

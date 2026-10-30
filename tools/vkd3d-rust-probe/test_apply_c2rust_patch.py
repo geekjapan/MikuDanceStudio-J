@@ -43,7 +43,7 @@ class RequiredRelationsSourceTests(unittest.TestCase):
             Path(__file__).parent / 'patches/c2rust-win64-abi.patch')), len(self.sections))
         others = ''.join('diff --git ' + s for s in self.sections if not s.startswith(
             'a/c2rust-transpile/src/c_ast/closed_variadic.rs '))
-        self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), '2c9d30277cf20b05d6d7cdc204872f9ec28d86b6cd567a4dbf7d356171286b1e')
+        self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), 'b9863701329e183f39a913109b51af9f6e2c77841cc0b659c4dc2bb33ec92f76')
         inventory = self.source.split('    pub fn closed_variadic_inventory(', 1)[1].split('#[cfg(test)]', 1)[0]
         self.assertEqual(hashlib.sha256(inventory.encode()).hexdigest(), 'fe98bb97bd17641f186a1c4244571e04474eab1bdfa52182fcfecce141a733cb')
 

@@ -1836,7 +1836,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,624 @@
 +use super::*;
 +use crate::program::{command_identity, native_database_row, native_sources};
 +
@@ -2137,8 +2137,9 @@ new file mode 100644
 +    f.visibility = vec![(false, text.clone()), (true, String::new())];
 +    f.native_attributes = vec![text.clone()];
 +    let mut owner = None;
-+    let owner_text = "界".repeat(3000);
++    let owner_text = "界".repeat(50_000);
 +    for i in 0..33 { owner = Some(Box::new(RecordIdentity { kind: "struct".into(), tag: Some(if i == 0 { String::new() } else { owner_text.clone() }), file: owner_text.clone(), line: i + 1, column: 1, owner })); }
++    assert!(serde_json::to_vec(owner.as_ref().unwrap()).unwrap().len() > REPORT_JSON_BYTES);
 +    let typ = TypeFact { qualifiers: (true, false, true), shape: TypeShape::Record { identity: *owner.unwrap(), packed: true,
 +        manual_alignment: Some(0), max_field_alignment: None, size: 0, alignment: 0,
 +        fields: vec![FieldFact { typ: TypeFact { qualifiers: (false,true,false), shape: TypeShape::Array(Box::new(f.signature.clone()), None) }, bitfield_width: Some(0), bit_offset: 0, type_bitwidth: 0, alignment: None }] } };

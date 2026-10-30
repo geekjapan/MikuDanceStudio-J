@@ -33,20 +33,31 @@ def logical_plan(root):
     return plan, row
 
 
-def rebind_fixture(root):
+def rebind_fixture(root, padding=None):
+    def seal(path):
+        raw = path.read_bytes()
+        return dict(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+
+    def write(path, value):
+        raw = encode(value)
+        size = (padding or {}).get(path.relative_to(root).as_posix(), len(raw))
+        if size < len(raw):
+            raise ValueError('fixture padding would truncate JSON')
+        path.write_bytes(raw + b' ' * (size - len(raw)))
+
     path = root / 'closed-variadic-plan.json'
     index = json.loads(path.read_bytes())
     for descriptor in index['catalogs']:
         catalog_path = root / descriptor['path']
         catalog = json.loads(catalog_path.read_bytes())
         for page in catalog['pages']:
-            page.update(report.file_seal(root / page['path'], report.JSON_BYTES))
-        catalog_path.write_bytes(encode(catalog))
-        descriptor.update(report.file_seal(catalog_path, report.JSON_BYTES))
-    index['bytes'] = sum(report.file_seal(root / name, report.JSON_BYTES)['bytes']
+            page.update(seal(root / page['path']))
+        write(catalog_path, catalog)
+        descriptor.update(seal(catalog_path))
+    index['bytes'] = sum(seal(root / name)['bytes']
                          for name in report.report_members(root) if name != 'closed-variadic-plan.json')
-    path.write_bytes(encode(index))
-    return dict(authority='external_artifact_inventory', files={name: report.file_seal(root / name, report.JSON_BYTES)
+    write(path, index)
+    return dict(authority='external_artifact_inventory', files={name: seal(root / name)
                                                               for name in report.report_members(root)})
 
 
@@ -198,6 +209,72 @@ class BoundedReportTests(unittest.TestCase):
 
 
 class HostedGiantReportTests(unittest.TestCase):
+    def catalog_fixture(self, root, counts):
+        plan, row = logical_plan(root)
+        records = list(plan_records(plan))
+        pages = sum(counts)
+        plan['units'][0]['calls'][0]['arguments'].extend([0] * (pages - len(records)))
+        records = list(plan_records(plan))
+        self.assertEqual(len(records), pages)
+        (root / 'closed-variadic-plan').mkdir()
+        index = dict(schema=2, logical_schema=1, status='ClosedDiagnosticPlan', lowering='not_authorized',
+                     units=1, records=len(records), pages=pages, bytes=0, catalogs=[])
+        descriptors = []
+        for i, record in enumerate(records):
+            name = f'closed-variadic-plan/page-{i:08}.json'
+            raw = encode(dict(schema=2, first=i, records=[record]))
+            (root / name).write_bytes(raw)
+            descriptors.append(dict(path=name, first=i, count=1))
+        first = 0
+        for i, count in enumerate(counts):
+            name = f'closed-variadic-plan/catalog-{i:08}.json'
+            (root / name).write_bytes(encode(dict(schema=2, first=first, pages=descriptors[first:first + count])))
+            index['catalogs'].append(dict(path=name, first=first, count=count))
+            first += count
+        (root / 'closed-variadic-plan.json').write_bytes(encode(index))
+        return row, rebind_fixture(root)
+
+    def test_catalog_packing_boundaries(self):
+        cases = [([4096, 1], None), ([4096, 4096], None),
+                 ([4095, 1], 'nonfinal catalog packing differs'),
+                 ([4096, 0], 'report descriptor range or path differs'),
+                 ([4097], 'report descriptor range or path differs'),
+                 ([1] * 50, 'report catalog count bound')]
+        for counts, error in cases:
+            with self.subTest(counts=counts), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                row, authority = self.catalog_fixture(root, counts)
+                if error:
+                    with self.assertRaisesRegex(ValueError, '^' + error + '$'):
+                        report.ReportValidation(root, [row], authority)
+                else:
+                    with report.ReportValidation(root, [row], authority) as validation:
+                        self.assertEqual(validation.counts['report']['pages'], sum(counts))
+
+    def test_actual_encoded_page_catalog_and_index_byte_bounds(self):
+        cases = [('closed-variadic-plan/page-00000000.json', report.PAGE_BYTES),
+                 ('closed-variadic-plan/catalog-00000000.json', report.JSON_BYTES),
+                 ('closed-variadic-plan.json', report.JSON_BYTES)]
+        for name, limit in cases:
+            for excess in (0, 1):
+                with self.subTest(name=name, excess=excess), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    plan, row = logical_plan(root)
+                    write_records(root, plan_records(plan))
+                    if '/page-' in name:
+                        path = root / name
+                        raw = path.read_bytes()
+                        path.write_bytes(raw + b' ' * (limit + excess - len(raw)))
+                    authority = rebind_fixture(root, {name: limit + excess})
+                    self.assertEqual((root / name).stat().st_size, limit + excess)
+                    self.assertEqual(authority['files'][name]['bytes'], limit + excess)
+                    if excess:
+                        with self.assertRaisesRegex(ValueError, '^report external authority fields differ$'):
+                            report.ReportValidation(root, [row], authority)
+                    else:
+                        with report.ReportValidation(root, [row], authority) as validation:
+                            self.assertEqual(validation.counts['declarations'], 1)
+
     def test_surrogate_and_actual_encoded_record_length_are_rejected(self):
         for which in ('surrogate', 'record-bytes'):
             with self.subTest(which=which), tempfile.TemporaryDirectory() as directory:

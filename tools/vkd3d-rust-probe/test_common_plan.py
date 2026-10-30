@@ -291,5 +291,34 @@ class NestedUnknownEvidenceTests(IndependentUnknownSchemaTests):
                                'evidence differs')
 
 
+class CommonPlanReceiptTests(unittest.TestCase):
+    def test_report_writer_controls_require_source_discovery_and_execution(self):
+        from check_common_plan import check_test_receipts
+        names = ['closed_variadic_plan_command_reorder_preserves_owned_plan',
+                 'closed_variadic_plan_borrowed_report_matches_legacy_bytes',
+                 'closed_variadic_plan_borrowed_report_propagates_write_failure',
+                 'closed_variadic_plan_report_flush_failure_publishes_no_partial_output']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'c2rust-transpile/src'
+            (source / 'c_ast').mkdir(parents=True)
+            listing, execution = root / 'listing', root / 'execution'
+            def write(source_names, listed, passed):
+                (source / 'c_ast/closed_plan_tests.rs').write_text(''.join('fn ' + n + '() {}\n' for n in source_names[:-1]))
+                (source / 'program.rs').write_text('fn ' + source_names[-1] + '() {}\n')
+                listing.write_text(''.join('tests::' + n + ': test\n' for n in listed))
+                execution.write_text(''.join('test tests::' + n + ' ... ok\n' for n in passed))
+            write(names, names, names)
+            self.assertEqual(check_test_receipts(root, listing, execution)['tests'], sorted(names))
+            for name in names:
+                reduced = [n for n in names if n != name]
+                for source_names, listed, passed in [(reduced, reduced, reduced),
+                                                      (names, reduced, names), (names, names, reduced)]:
+                    with self.subTest(name=name, source=source_names, listing=listed, execution=passed):
+                        write(source_names, listed, passed)
+                        with self.assertRaises(ValueError):
+                            check_test_receipts(root, listing, execution)
+
+
 if __name__ == '__main__':
     unittest.main()

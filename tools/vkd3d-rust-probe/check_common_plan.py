@@ -292,6 +292,11 @@ def check_test_receipts(source, listing, execution):
     import re
     paths = [source / 'c2rust-transpile/src/c_ast/closed_plan_tests.rs', source / 'c2rust-transpile/src/program.rs']
     expected = {name for path in paths for name in re.findall(r'fn (closed_variadic_plan_\w+)\(', path.read_text())}
+    report_controls = {'closed_variadic_plan_command_reorder_preserves_owned_plan',
+                       'closed_variadic_plan_borrowed_report_matches_legacy_bytes',
+                       'closed_variadic_plan_borrowed_report_propagates_write_failure',
+                       'closed_variadic_plan_report_flush_failure_publishes_no_partial_output'}
+    require(report_controls <= expected, 'focused report writer controls missing from compiler source')
     discovered = {line.removesuffix(': test').split('::')[-1] for line in listing.read_text().splitlines()
                   if line.endswith(': test') and 'closed_variadic_plan_' in line}
     passed = {name.split('::')[-1] for name in re.findall(r'^test (\S*closed_variadic_plan_\S*) \.\.\. ok$', execution.read_text(), re.M)}

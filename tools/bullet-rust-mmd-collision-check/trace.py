@@ -100,7 +100,6 @@ def semantic_projection(checkpoint, field):
 
 
 def validate_lifetimes(rows):
-    """Check independent algorithm/manifold generations without reordering events."""
     algorithms, manifolds, owners = set(), {}, {}
     next_algorithm = next_manifold = 0
     for checkpoint in rows:

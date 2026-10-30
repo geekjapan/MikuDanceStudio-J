@@ -37,13 +37,18 @@ fields. Algorithm and manifold generations have separate lifetime checks. The
 delayed-release control remains a valid complete trace and differs in event
 timing. Counts come from the corpus, command records, and control definitions.
 
-`admit_capture` reads a bounded closed artifact inventory, rederives observations
+`admit_capture` requires frozen producer member size/SHA and closed-command authority.
+It authenticates each member once and parses only the retained immutable bytes, including
+the manifest itself. It rederives observations
 and mutations from current source, checks command and include ownership, and
 compares the complete genuine native and Rust outputs. The native driver first
 admits the actual compiled capture before constructing bound malformed peers.
 It publishes `CONTROLLED_PASS` only after those peers are rejected and the final
 closed capture is admitted again. Replay requires an admitted same-HEAD Windows
-producer and validates its own current-source command and binary receipts.
+producer and validates its own current-source command and binary receipts. Windows
+uses a detached authority receipt whose size/SHA comes from the explicit Windows
+producer job outputs. Replay authenticates those receipt bytes before JSON parsing.
+All JSON members and authority receipts have an 8 MiB limit.
 
 ## Verification status
 
@@ -63,7 +68,7 @@ gates. The unchanged General workflow runs `tools/rust/check.sh` on branch push.
 python3 -B tools/bullet-rust-mmd-collision-check/test_check.py -v
 python3 -B -O tools/bullet-rust-mmd-collision-check/test_check.py -v
 python3 -B tools/bullet-rust-mmd-collision-check/test_evidence.py -v
-python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world"
+python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world" --authority "$RUNNER_TEMP/mmd-collision-authority.json"
 ```
 
 Compilation and actual-capture tests are hosted-only. MMD dynamics,

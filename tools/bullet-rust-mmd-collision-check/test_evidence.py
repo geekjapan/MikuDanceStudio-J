@@ -9,6 +9,153 @@ class AdmissionBoundaryTests(unittest.TestCase):
                 admit_capture(input)
 
 
+class ByteAuthorityTests(unittest.TestCase):
+    def test_exact_identity_types_and_deep_immutable_members(self):
+        from evidence import ByteIdentity, ExpectedEvidence, digest, freeze
+        for size in (True, False, 1.0, -1):
+            with self.assertRaises(ValueError):
+                ByteIdentity(size, digest(b'x'))
+        members = {'tiny.json': ByteIdentity.of(b'{}')}
+        expected = ExpectedEvidence(members, [])
+        members.clear()
+        self.assertEqual(expected.members['tiny.json'].size, 2)
+        with self.assertRaises(TypeError):
+            expected.members['other'] = ByteIdentity.of(b'')
+        original = {'argv': ['one'], 'nested': {'items': [1]}}
+        frozen = freeze(original)
+        original['argv'].append('two')
+        self.assertEqual(frozen['argv'], ('one',))
+        with self.assertRaises(TypeError):
+            frozen['nested']['items'][0] = 2
+
+    def test_cached_same_path_never_reopens_after_authentication(self):
+        import io
+        import stat
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch, Mock
+        from evidence import ByteIdentity, Capture, ExpectedEvidence, json_value
+        first, replacement = b'{"value":1}', b'{"value":2}'
+        expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(first)}, [])
+        info = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_nlink=1, st_size=len(first),
+                               st_dev=1, st_ino=1, st_mtime_ns=1, st_ctime_ns=1)
+        directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755)
+        def status(path):
+            return directory if str(path) == '/inert-cache' else info
+        streams = [io.BytesIO(first), io.BytesIO(replacement)]
+        for stream in streams:
+            stream.fileno = lambda: 123
+        opened = Mock(side_effect=streams)
+        with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['tiny.json'])]), \
+             patch.object(Path, 'lstat', status), patch.object(Path, 'open', opened), \
+             patch('evidence.os.fstat', return_value=info):
+            capture = Capture.open('/inert-cache', expected=expected)
+            self.assertEqual(json_value(capture['tiny.json']), {'value': 1})
+            self.assertIs(capture['tiny.json'], capture['tiny.json'])
+            self.assertEqual(capture['tiny.json'], first)
+            self.assertEqual(opened.call_count, 1)
+        with self.assertRaises(TypeError):
+            capture.content['tiny.json'] = replacement
+
+    def test_corrupted_length_and_hash_fail_before_json_parser(self):
+        from unittest.mock import patch
+        from evidence import ByteIdentity, Capture, ExpectedEvidence
+        expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(b'{"a":1}')}, [])
+        for raw, reason in [(b'{"a":2}', 'SHA256'), (b'{}', 'length')]:
+            with patch('evidence.json_value') as parser:
+                with self.assertRaisesRegex(ValueError, reason):
+                    Capture({'tiny.json': raw}, expected)
+                parser.assert_not_called()
+
+    def test_missing_authority_and_declared_json_size_fail_before_open(self):
+        from pathlib import Path
+        from unittest.mock import patch
+        from evidence import ByteIdentity, Capture, ExpectedEvidence, MAX_JSON, digest, read_authority
+        with self.assertRaises(TypeError):
+            Capture.open('/inert-cache')
+        with self.assertRaisesRegex(ValueError, 'mandatory'):
+            Capture.open('/inert-cache', expected=None)
+        with patch.object(Path, 'open') as opened, patch('evidence.decode_json') as parser:
+            with self.assertRaisesRegex(ValueError, 'JSON byte bounds'):
+                ExpectedEvidence({'tiny.json': ByteIdentity(MAX_JSON + 1, digest(b''))}, [])
+            with self.assertRaisesRegex(ValueError, 'JSON byte bounds'):
+                read_authority(Path('/never-opened'), size=MAX_JSON + 1, sha256=digest(b''))
+            opened.assert_not_called()
+            parser.assert_not_called()
+
+    def test_declared_length_refusal_precedes_member_open(self):
+        import stat
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evidence import ByteIdentity, Capture, ExpectedEvidence
+        expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(b'{}')}, [])
+        def status(path):
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if str(path) == '/inert-cache' else \
+                   SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_nlink=1, st_size=1)
+        with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['tiny.json'])]), \
+             patch.object(Path, 'lstat', status), patch.object(Path, 'open') as opened:
+            with self.assertRaisesRegex(ValueError, 'member size'):
+                Capture.open('/inert-cache', expected=expected)
+            opened.assert_not_called()
+
+    def test_closed_inventory_kinds_and_links_precede_member_open(self):
+        import stat
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evidence import ByteIdentity, Capture, ExpectedEvidence
+        expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(b'{}')}, [])
+        for mode, links in [(stat.S_IFLNK | 0o777, 1), (stat.S_IFREG | 0o644, 2),
+                            (stat.S_IFREG | 0o4644, 1)]:
+            def status(path):
+                return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if str(path) == '/inert-cache' else \
+                       SimpleNamespace(st_mode=mode, st_nlink=links, st_size=2)
+            with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['tiny.json'])]), \
+                 patch.object(Path, 'lstat', status), patch.object(Path, 'open') as opened:
+                with self.assertRaisesRegex(ValueError, 'member size'):
+                    Capture.open('/inert-cache', expected=expected)
+                opened.assert_not_called()
+        with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['other.json'])]), \
+             patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR | 0o755)), \
+             patch.object(Path, 'open') as opened:
+            with self.assertRaisesRegex(ValueError, 'expected capture member'):
+                Capture.open('/inert-cache', expected=expected)
+            opened.assert_not_called()
+
+    def test_json_duplicate_nonfinite_overflow_and_boolean_receipts(self):
+        from evidence import json_value
+        for raw in (b'{"a":1,"a":2}', b'{"a":NaN}', b'{"a":Infinity}', b'{"a":1e999}', b'{"pid":true}'):
+            with self.assertRaises(ValueError):
+                json_value(raw)
+        self.assertEqual(json_value(b'{"pid":1,"normal_exit":true}'), {'pid':1, 'normal_exit':True})
+
+    def test_detached_receipt_is_authenticated_before_decode(self):
+        import io
+        import stat
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evidence import ByteIdentity, ExpectedEvidence, digest, read_authority
+        expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(b'{}')}, [])
+        raw = expected.receipt()
+        info = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_nlink=1, st_size=len(raw),
+                               st_dev=1, st_ino=1, st_mtime_ns=1, st_ctime_ns=1)
+        stream = io.BytesIO(raw)
+        stream.fileno = lambda: 123
+        with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'open', return_value=stream), \
+             patch('evidence.os.fstat', return_value=info):
+            restored = read_authority(Path('/inert-receipt'), size=len(raw), sha256=digest(raw))
+            self.assertEqual(restored, expected)
+        stream = io.BytesIO(raw.replace(b'"schema": 1', b'"schema": 2'))
+        stream.fileno = lambda: 123
+        with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'open', return_value=stream), \
+             patch('evidence.os.fstat', return_value=info), patch('evidence.json_value') as parser:
+            with self.assertRaisesRegex(ValueError, 'SHA256'):
+                read_authority(Path('/inert-receipt'), size=len(raw), sha256=digest(raw))
+            parser.assert_not_called()
+
+
 class NativeEvidenceFramingTests(unittest.TestCase):
     def test_exact_archive_payload_and_compiled_source_binding(self):
         from evidence import digest, verify_archive

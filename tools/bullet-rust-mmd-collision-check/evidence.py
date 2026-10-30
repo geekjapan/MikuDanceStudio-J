@@ -1,4 +1,3 @@
-"""Closed native capture and Rust replay custody and admission."""
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +12,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import subprocess
 import time
+from types import MappingProxyType
+from collections.abc import Mapping
 
 ENVIRONMENT = ['CL', '_CL_', 'INCLUDE', 'LIB', 'LIBPATH', 'CXX', 'CC', 'LD', 'AR', 'SDKROOT',
                'MACOSX_DEPLOYMENT_TARGET', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'RUSTFLAGS',
@@ -33,8 +34,10 @@ def utc():
 
 def save(path, value):
     temporary = path.with_name(path.name + '.pending')
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    raw = encode_json(value)
+    temporary.write_bytes(raw)
     temporary.replace(path)
+    return raw
 
 
 def identity(executable):
@@ -51,16 +54,73 @@ class Recorder:
         self.out, self.snapshot = out, snapshot
         self.sources = snapshot()
         self.commands = []
+        self.members = {}
+        self.closed_bytes = {}
+        self.closed = False
         self.generated_roots = []
         self.tools = {}
         self.environment = {key: os.environ.get(key) for key in ENVIRONMENT}
-        save(out / 'source-start.json', self.sources)
-        save(out / 'environment-start.json', self.environment)
+        self.save(out / 'source-start.json', self.sources)
+        self.save(out / 'environment-start.json', self.environment)
+
+    def retain(self, path, raw):
+        name = safe_name(Path(path).relative_to(self.out).as_posix())
+        self.members[name] = ByteIdentity.of(raw)
+        self.closed_bytes[name] = raw
+        return raw
+
+    def acquire(self, path):
+        info = path.lstat()
+        cap = MAX_JSON if path.suffix == '.json' else MAX_FILE
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 <= info.st_size <= cap,
+                'bounded closed producer file')
+        with path.open('rb') as stream:
+            opened = os.fstat(stream.fileno())
+            require((opened.st_dev, opened.st_ino, opened.st_size) == (info.st_dev, info.st_ino, info.st_size),
+                    'fixed closed producer file')
+            raw = stream.read(info.st_size + 1)
+            end = os.fstat(stream.fileno())
+            require((end.st_dev, end.st_ino, end.st_size, end.st_mtime_ns, end.st_ctime_ns) ==
+                    (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns),
+                    'closed producer read preservation')
+        require(len(raw) == info.st_size, 'bounded producer read length')
+        return self.retain(path, raw)
+
+    def write(self, path, raw):
+        path.write_bytes(raw)
+        return self.retain(path, raw)
+
+    def save(self, path, value):
+        return self.retain(path, save(path, value))
+
+    def read(self, path):
+        name = Path(path).relative_to(self.out).as_posix()
+        require(name in self.closed_bytes, 'producer registered bytes ' + name)
+        return self.closed_bytes[name]
 
     def generated_snapshot(self):
-        return {p.relative_to(self.out).as_posix(): digest(p.read_bytes())
+        return {p.relative_to(self.out).as_posix(): digest(self.acquire(p))
                 for root in self.generated_roots for p in sorted(root.rglob('*'))
                 if p.is_file() and '__pycache__' not in p.parts}
+
+    def authority(self):
+        require(self.closed, 'closed producer authority')
+        require(self.read(self.out / 'commands.json') == encode_json(self.commands), 'closed serialized command authority')
+        for name, expected in self.sources.items():
+            require(self.members['source/' + name].sha256 == expected, 'fixed producer source bytes')
+        for record in self.commands:
+            bindings = {**record['inputs_before'], **record['outputs'],
+                        record['executable']['path']: record['executable']['sha256']}
+            for path, expected in bindings.items():
+                if Path(path).is_relative_to(self.out):
+                    name = Path(path).relative_to(self.out).as_posix()
+                    require(name in self.members and self.members[name].sha256 == expected,
+                            'live closed produced binary/input authority')
+        return ExpectedEvidence(self.members, self.commands)
+
+    def manifest(self):
+        self.save(self.out / 'artifact-manifest.json',
+                  {name: value.sha256 for name, value in self.members.items() if name != 'artifact-manifest.json'})
 
     def bind_tool(self, executable):
         binding = identity(executable)
@@ -70,8 +130,10 @@ class Recorder:
             retained = self.out / 'tool-bytes' / binding['sha256']
             retained.parent.mkdir(exist_ok=True)
             if not retained.exists():
-                retained.write_bytes(Path(binding['target']).read_bytes())
-            save(self.out / 'tools-start.json', self.tools)
+                raw = Path(binding['target']).read_bytes()
+                require(digest(raw) == binding['sha256'], 'retained tool identity')
+                self.write(retained, raw)
+            self.save(self.out / 'tools-start.json', self.tools)
         return binding
 
     def run(self, label, argv, *, cwd, data=None, inputs=(), outputs=()):
@@ -93,14 +155,14 @@ class Recorder:
                   'outputs': {}, 'pid': None, 'start_utc': utc(), 'end_utc': None,
                   'waited': False, 'streams_closed': False, 'returncode': None}
         self.commands.append(record)
-        save(self.out / 'commands.json', self.commands)
+        self.save(self.out / 'commands.json', self.commands)
         start = time.monotonic()
         stdout_path, stderr_path = (self.out / (label + suffix) for suffix in ('.stdout', '.stderr'))
         with stdout_path.open('xb') as stdout, stderr_path.open('xb') as stderr:
             process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
                                        stdout=stdout, stderr=stderr, env={**os.environ, 'VSLANG': '1033'})
             record['pid'] = process.pid
-            save(self.out / 'commands.json', self.commands)
+            self.save(self.out / 'commands.json', self.commands)
             try:
                 process.communicate(data, timeout=600)
             except subprocess.TimeoutExpired:
@@ -108,34 +170,40 @@ class Recorder:
                 process.communicate()
                 record['timeout'] = True
             record.update(returncode=process.returncode, waited=True)
+        stdout_raw = self.acquire(stdout_path)
+        stderr_raw = self.acquire(stderr_path)
         record.update(end_utc=utc(), seconds=time.monotonic() - start, streams_closed=True,
-                      stdout_sha256=digest(stdout_path.read_bytes()), stderr_sha256=digest(stderr_path.read_bytes()))
-        record['outputs'] = {str(p): digest(Path(p).read_bytes()) for p in outputs if Path(p).is_file()}
+                      stdout_sha256=digest(stdout_raw), stderr_sha256=digest(stderr_raw))
+        record['outputs'] = {str(p): digest(self.acquire(Path(p)))
+                             for p in outputs if Path(p).is_file()}
         record['inputs_end'] = {str(p): digest(Path(p).read_bytes()) for p in inputs}
         record['executable_end'] = identity(binding['path'])
         record['generated_end'] = self.generated_snapshot()
-        save(self.out / 'commands.json', self.commands)
+        self.save(self.out / 'commands.json', self.commands)
         require(record['inputs_end'] == record['inputs_before'], 'input preservation ' + label)
         require(record['executable_end'] == binding, 'executable preservation ' + label)
         require(record['generated_end'] == record['generated_before'], 'generated source preservation ' + label)
         require(self.snapshot() == self.sources, 'fixed sources after ' + label)
         require(record['returncode'] == 0 and not record.get('timeout'), 'normally exiting command ' + label)
         require(len(record['outputs']) == len(outputs), 'all declared command outputs ' + label)
-        return stdout_path.read_bytes()
+        return stdout_raw
 
     def close(self):
         end = self.snapshot()
-        save(self.out / 'source-end.json', end)
+        self.save(self.out / 'source-end.json', end)
         environment = {key: os.environ.get(key) for key in ENVIRONMENT}
-        save(self.out / 'environment-end.json', environment)
+        self.save(self.out / 'environment-end.json', environment)
         require(environment == self.environment, 'named setting start/end preservation')
         tools = {name: identity(name) for name in self.tools}
-        save(self.out / 'tools-end.json', tools)
+        self.save(self.out / 'tools-end.json', tools)
         require(tools == self.tools, 'external tool start/end identity preservation')
         require(end == self.sources, 'source before/end preservation')
-        require(all(record['waited'] and record['streams_closed'] for record in self.commands), 'all commands waited and closed')
+        require(all(record['waited'] and record['streams_closed'] and type(record['returncode']) is int
+                    and record['returncode'] == 0 for record in self.commands), 'all commands normally exited and closed')
+        self.closed = True
 
 
+MAX_JSON = 8 * 1024**2
 MAX_FILES, MAX_FILE, MAX_TOTAL, MAX_PATH = 24000, 512 * 1024**2, 4 * 1024**3, 1024
 
 
@@ -327,7 +395,7 @@ def selected_members(raw, system, library):
 
 def admit_capture(directory, **expected):
     require(bool(expected), 'strict current source/head/corpus/host context is required')
-    fields(expected,['expected_head','canonical_sources','inputs','cases','expected_host'],'external strict admission context')
+    fields(expected,['authority','expected_head','canonical_sources','inputs','cases','expected_host'],'external strict admission context')
     return _admit_capture(directory, **expected)
 
 
@@ -453,6 +521,7 @@ def macro_source():
 
 
 def decode_json(raw):
+    require(type(raw) is bytes and len(raw) <= MAX_JSON, 'bounded JSON bytes')
     def unique(pairs):
         value = {}
         for key, item in pairs:
@@ -491,53 +560,173 @@ def json_value(raw):
     return value
 
 
-class Capture:
-    def __init__(self, directory, overrides=None):
-        self.directory, self.overrides = Path(directory), overrides or {}
-        require(not self.directory.is_symlink(), 'capture root symlink forbidden')
-        self.sizes = {}
-        total = 0
-        directory_count = 0
-        for root, directories, files in os.walk(self.directory, followlinks=False):
-            for name in directories:
-                directory_count += 1
-                require(directory_count<=MAX_FILES, 'capture directory bounds')
-                safe_name((Path(root)/name).relative_to(self.directory).as_posix())
-                require(stat.S_ISDIR((Path(root)/name).lstat().st_mode), 'capture directory symlink forbidden')
-            for name in files:
-                path = Path(root)/name
-                info = path.lstat()
-                require(stat.S_ISREG(info.st_mode), 'capture regular files only')
-                relative = safe_name(path.relative_to(self.directory).as_posix())
-                self.sizes[relative] = info.st_size
-                total += info.st_size
-                require(len(self.sizes) <= MAX_FILES and info.st_size <= MAX_FILE and total <= MAX_TOTAL, 'capture resource bounds')
-        for name, raw in self.overrides.items():
-            safe_name(name)
-            require(type(raw) is bytes and len(raw) <= MAX_FILE, 'candidate byte bounds')
-            total += len(raw) - self.sizes.get(name, 0)
-            self.sizes[name] = len(raw)
-        require(len(self.sizes) <= MAX_FILES and total <= MAX_TOTAL, 'candidate resource bounds')
-        require(len({name.casefold() for name in self.sizes}) == len(self.sizes), 'capture case collision')
+def encode_json(value):
+    raw = (json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n').encode()
+    require(len(raw) <= MAX_JSON, 'bounded JSON serialization')
+    return raw
 
-    def __iter__(self):
-        return iter(self.sizes)
 
-    def __getitem__(self, name):
-        require(name in self.sizes, 'required capture file ' + name)
-        if name in self.overrides: return self.overrides[name]
-        path = self.directory/name
-        info = path.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_size == self.sizes[name], 'fixed regular capture file')
-        with path.open('rb') as stream:
-            raw = stream.read(self.sizes[name]+1)
-        require(len(raw) == self.sizes[name], 'fixed bounded capture read')
+def freeze(value):
+    if type(value) is dict:
+        return MappingProxyType({key: freeze(item) for key, item in value.items()})
+    if type(value) in {list, tuple}:
+        return tuple(freeze(item) for item in value)
+    require(value is None or type(value) in {str, int, bool, float}, 'command authority value')
+    return value
+
+
+def thaw(value):
+    if isinstance(value, Mapping):
+        return {key: thaw(item) for key, item in value.items()}
+    if type(value) is tuple:
+        return [thaw(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True)
+class ByteIdentity:
+    size: int
+    sha256: str
+
+    def __post_init__(self):
+        require(type(self.size) is int and 0 <= self.size <= MAX_FILE, 'exact bounded byte size')
+        sha_identity(self.sha256)
+
+    @classmethod
+    def of(cls, raw):
+        require(type(raw) is bytes, 'immutable byte identity')
+        return cls(len(raw), digest(raw))
+
+    def check(self, raw):
+        require(type(raw) is bytes and len(raw) == self.size, 'expected byte length')
+        require(digest(raw) == self.sha256, 'expected byte SHA256')
         return raw
 
 
 @dataclass(frozen=True)
+class ExpectedEvidence:
+    members: Mapping
+    commands: tuple
+
+    def __post_init__(self):
+        require(isinstance(self.members, Mapping) and 0 < len(self.members) <= MAX_FILES, 'closed expected membership')
+        members = dict(self.members)
+        require(all(type(value) is ByteIdentity for value in members.values()), 'typed member byte identities')
+        require(len({safe_name(name).casefold() for name in members}) == len(members), 'expected case collision')
+        require(sum(value.size for value in members.values()) <= MAX_TOTAL, 'expected total byte bounds')
+        require(all(value.size <= MAX_JSON for name, value in members.items() if name.endswith('.json')),
+                'expected JSON byte bounds')
+        commands = freeze(thaw(self.commands))
+        require(type(commands) is tuple, 'closed command authority sequence')
+        for record in commands:
+            require(isinstance(record, Mapping) and type(record['pid']) is int and record['pid'] > 0
+                    and record['waited'] is True and record['streams_closed'] is True
+                    and type(record['returncode']) is int and record['returncode'] == 0,
+                    'actual closed command authority')
+            for stream in ['stdout', 'stderr']:
+                name = record['label'] + '.' + stream
+                require(name in members and members[name].sha256 == record[stream + '_sha256'],
+                        'closed stream member authority')
+        object.__setattr__(self, 'members', MappingProxyType(members))
+        object.__setattr__(self, 'commands', commands)
+
+    def generated(self, changes):
+        return ExpectedEvidence({**self.members, **{name: ByteIdentity.of(raw) for name, raw in changes.items()}},
+                                self.commands)
+
+    def receipt(self):
+        return encode_json({'schema': 1, 'members': {name: {'size': value.size, 'sha256': value.sha256}
+                            for name, value in self.members.items()}, 'commands': thaw(self.commands)})
+
+
+def read_authority(path, *, size, sha256):
+    expected = ByteIdentity(size, sha256)
+    require(expected.size <= MAX_JSON, 'expected authority JSON byte bounds')
+    raw = read_member(Path(path), expected, json_member=True)
+    value = fields(json_value(raw), ['schema', 'members', 'commands'], 'detached authority')
+    require(type(value['schema']) is int and value['schema'] == 1 and type(value['members']) is dict,
+            'detached authority schema')
+    members = {}
+    for name, item in value['members'].items():
+        fields(item, ['size', 'sha256'], 'detached member identity')
+        members[name] = ByteIdentity(item['size'], item['sha256'])
+    return ExpectedEvidence(members, value['commands'])
+
+
+def read_member(path, expected, *, json_member=False):
+    require(not json_member or expected.size <= MAX_JSON, 'expected JSON byte bounds')
+    info = path.lstat()
+    require(stat.S_ISREG(info.st_mode) and not info.st_mode & 0o7000 and info.st_nlink == 1 and info.st_size == expected.size,
+            'fixed regular capture file and expected size')
+    with path.open('rb') as stream:
+        opened = os.fstat(stream.fileno())
+        require(stat.S_ISREG(opened.st_mode) and not opened.st_mode & 0o7000 and opened.st_nlink == 1 and opened.st_size == expected.size
+                and (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino), 'fixed opened capture file')
+        raw = stream.read(expected.size + 1)
+        end = os.fstat(stream.fileno())
+        require((end.st_dev, end.st_ino, end.st_size, end.st_mtime_ns, end.st_ctime_ns) ==
+                (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns),
+                'closed capture read preservation')
+    return expected.check(raw)
+
+
+@dataclass(frozen=True)
+class Capture:
+    content: Mapping
+    authority: ExpectedEvidence
+
+    def __post_init__(self):
+        require(type(self.authority) is ExpectedEvidence, 'mandatory expected evidence authority')
+        require(set(self.content) == set(self.authority.members), 'exact capture inventory')
+        checked = {name: self.authority.members[name].check(raw) for name, raw in self.content.items()}
+        object.__setattr__(self, 'content', MappingProxyType(checked))
+
+    @classmethod
+    def _checked(cls, content, authority):
+        capture = object.__new__(cls)
+        object.__setattr__(capture, 'content', MappingProxyType(dict(content)))
+        object.__setattr__(capture, 'authority', authority)
+        return capture
+
+    @classmethod
+    def open(cls, directory, *, expected):
+        require(type(expected) is ExpectedEvidence, 'mandatory expected evidence authority')
+        directory = Path(directory)
+        require(stat.S_ISDIR(directory.lstat().st_mode), 'capture regular root directory')
+        found, total, directory_count = {}, 0, 0
+        for root, directories, files in os.walk(directory, followlinks=False):
+            for name in directories:
+                directory_count += 1
+                require(directory_count <= MAX_FILES, 'capture directory bounds')
+                path = Path(root) / name
+                safe_name(path.relative_to(directory).as_posix())
+                require(stat.S_ISDIR(path.lstat().st_mode), 'capture directory symlink forbidden')
+            for name in files:
+                path = Path(root) / name
+                relative = safe_name(path.relative_to(directory).as_posix())
+                require(relative in expected.members, 'expected capture member')
+                identity = expected.members[relative]
+                info = path.lstat()
+                require(stat.S_ISREG(info.st_mode) and not info.st_mode & 0o7000 and info.st_nlink == 1 and info.st_size == identity.size,
+                        'expected regular member size')
+                total += info.st_size
+                found[relative] = path
+                require(len(found) <= MAX_FILES and total <= MAX_TOTAL, 'capture resource bounds')
+        require(set(found) == set(expected.members), 'exact capture inventory')
+        return cls._checked({name: read_member(path, expected.members[name], json_member=name.endswith('.json'))
+                             for name, path in found.items()}, expected)
+
+    def __iter__(self):
+        return iter(self.content)
+
+    def __getitem__(self, name):
+        require(name in self.content, 'required capture file ' + name)
+        return self.content[name]
+
+
+
+@dataclass(frozen=True)
 class VerifiedCapture:
-    """Carries the checked producer input and ordered output."""
     head: str
     inputs: str
     cases: tuple
@@ -690,13 +879,14 @@ class _Memory:
 ACTUAL_PEERS = ['wrong-head','unclosed-command','boolean-pid','open-source','bad-executed-binary']
 
 
-def _admit_capture(directory, *, expected_head, canonical_sources, inputs, cases, expected_host, require_actual_controls=True):
+def _admit_capture(directory, *, authority, expected_head, canonical_sources, inputs, cases, expected_host, require_actual_controls=True):
     from hooks import (MUTANTS, OWNER, OBSERVATION_PATHS, NATIVE_OBSERVATIONS, instrument, inverse, mutate)
     from trace import frames, common, validate_lifetimes, semantic_projection
     require(type(expected_head) is str and re.fullmatch('[0-9a-f]{40}', expected_head), 'external current HEAD')
     require(type(canonical_sources) is dict and canonical_sources and type(inputs) is str and type(cases) is list,
             'external current source and corpus context')
-    capture = directory if isinstance(directory, Capture) else Capture(directory)
+    capture = directory if isinstance(directory, Capture) else Capture.open(directory, expected=authority)
+    require(capture.authority == authority, 'bound capture authority')
     names, used = set(capture), set()
     folded = {name.casefold(): name for name in names}
     def raw(name):
@@ -780,6 +970,7 @@ def _admit_capture(directory, *, expected_head, canonical_sources, inputs, cases
                  [] if host['system'] == 'Darwin' else ['-ldl','-lpthread','-lm'])
     schedule = command_schedule(context, sources, libraries)
     commands = data('commands.json')
+    require(encode_json(commands) == encode_json(thaw(authority.commands)), 'external closed command authority')
     require(type(commands) is list and len(commands) == len(schedule) and type(report['commands']) is int and
             report['commands'] == len(commands), 'complete exact command schedule')
     expected_mutants = {}
@@ -944,16 +1135,27 @@ def _admit_capture(directory, *, expected_head, canonical_sources, inputs, cases
 
 
 def candidate_capture(capture, overrides):
-    require(isinstance(capture, Capture) and type(overrides) is dict, 'bounded current actual capture candidate')
-    changes = {**capture.overrides, **overrides}
-    view = Capture(capture.directory, changes)
-    inventory = {name:digest(view[name]) for name in view if name != 'artifact-manifest.json'}
-    changes['artifact-manifest.json'] = (json.dumps(inventory,indent=2,sort_keys=True)+'\n').encode()
-    return Capture(capture.directory, changes)
+    require(isinstance(capture, Capture) and type(overrides) is dict, 'bounded trusted producer candidate')
+    content = {**capture.content, **overrides}
+    manifest = encode_json({name: digest(raw) for name, raw in content.items() if name != 'artifact-manifest.json'})
+    changes = {**overrides, 'artifact-manifest.json': manifest}
+    authority = capture.authority.generated(changes)
+    for name, raw in changes.items():
+        authority.members[name].check(raw)
+    return Capture._checked({**content, 'artifact-manifest.json': manifest}, authority)
+
+
+def semantic_peer(capture, overrides):
+    require(not any(name.startswith(('source/', 'generated/', 'mutants/', 'tool-bytes/')) for name in overrides),
+            'peer preserves actual source and tool authority')
+    peer = candidate_capture(capture, overrides)
+    require(peer.authority.commands == capture.authority.commands, 'peer preserves closed command authority')
+    return peer
 
 
 def actual_peer_controls(capture, **expected):
     # The positive uses actual compiled capture bytes, never a synthetic PID/binary fixture.
+    require(expected['authority'] == capture.authority, 'legal actual authority')
     proof = _admit_capture(capture, **expected, require_actual_controls=False)
     rejected = []
     for name in ACTUAL_PEERS:
@@ -974,10 +1176,22 @@ def actual_peer_controls(capture, **expected):
             raw = capture[executable]
             require(raw, 'nonempty actual executable')
             overrides[executable] = bytes([raw[0]^1])+raw[1:]
-        peer = candidate_capture(capture,overrides)
         try:
-            _admit_capture(peer, **expected, require_actual_controls=False)
-        except ValueError:
+            Capture({**capture.content, **overrides}, capture.authority)
+        except ValueError as error:
+            require(str(error) in {'expected byte length', 'expected byte SHA256'}, 'peer byte guard refusal')
+        else:
+            raise ValueError('corrupted actual peer bytes admitted: ' + name)
+        peer = semantic_peer(capture, overrides)
+        try:
+            _admit_capture(peer, **{**expected, 'authority': peer.authority}, require_actual_controls=False)
+        except ValueError as error:
+            reason = {'wrong-head': 'fixed MMD base and current producer HEAD',
+                      'unclosed-command': 'external closed command authority',
+                      'boolean-pid': 'boolean in integer receipt field',
+                      'open-source': 'source-before/end preservation',
+                      'bad-executed-binary': 'produced/pre-use/end input identity '}
+            require(str(error).startswith(reason[name]), 'intended semantic peer refusal ' + name + ': ' + str(error))
             rejected.append(name)
         else:
             raise ValueError('malformed actual peer admitted: '+name)
@@ -985,11 +1199,12 @@ def actual_peer_controls(capture, **expected):
     return {'schema':1,'domain':'actual-capture-malformed-peers','legal_actual_report_sha256':proof.report_sha256,'rejected':rejected}
 
 
-def _admit_replay(directory, producer, *, expected_head, canonical_sources, require_pass=True):
+def _admit_replay(directory, producer, *, authority, expected_head, canonical_sources, require_pass=True):
     from hooks import MUTANTS, OBSERVATION_PATHS, instrument, inverse, mutate
     from trace import frames, validate_lifetimes, semantic_projection
     require(isinstance(producer, VerifiedCapture) and producer.head == expected_head, 'admitted same-HEAD Windows producer')
-    capture = Capture(directory)
+    capture = directory if isinstance(directory, Capture) else Capture.open(directory, expected=authority)
+    require(capture.authority == authority, 'bound replay authority')
     names, used = set(capture), set()
     def raw(name):
         safe_name(name); require(name in names, 'required replay member '+name)
@@ -1073,6 +1288,7 @@ def _admit_replay(directory, producer, *, expected_head, canonical_sources, requ
             add(prefix+'-build-'+name,[*rargs,'--cfg','test',entry,'-o',exe],[entry,rlib],[exe],gen)
             add(prefix+'-run-'+name,[exe],generation=gen,corpus=True)
     commands = data('commands.json')
+    require(encode_json(commands) == encode_json(thaw(authority.commands)), 'external closed command authority')
     require(type(commands) is list and len(commands) == len(recipe) and type(report['commands']) is int and report['commands'] == len(recipe),'complete replay command schedule')
     def artifact(value,identity_value):
         target = path(value)
@@ -1124,5 +1340,5 @@ def _admit_replay(directory, producer, *, expected_head, canonical_sources, requ
     return {'head':expected_head,'producer_report_sha256':producer.report_sha256,'checkpoints':len(actual),'compiled_controls':len(controls)}
 
 
-def admit_replay(directory, producer, *, expected_head, canonical_sources):
-    return _admit_replay(directory,producer,expected_head=expected_head,canonical_sources=canonical_sources)
+def admit_replay(directory, producer, *, authority, expected_head, canonical_sources):
+    return _admit_replay(directory,producer,authority=authority,expected_head=expected_head,canonical_sources=canonical_sources)

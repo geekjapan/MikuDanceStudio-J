@@ -90,7 +90,10 @@ fn dynamics_world_zero_substep_synchronizes_motion_and_hash() {
     let current = w.collision().objects().bodies()[0].snapshot();
     assert_eq!(current.world.origin, Vec3([0.0, 10.0, 0.0]));
     assert_eq!(current.interpolation_world, current.world);
-    assert_eq!(current.interpolation_linear_velocity, Vec3([0.0, -1.0, 0.0]));
+    assert_eq!(
+        current.interpolation_linear_velocity,
+        Vec3([0.0, -1.0, 0.0])
+    );
     let mut clock = None;
     assert_eq!(
         w.step_simulation(0.0, 1, 1.0, |event| {

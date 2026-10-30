@@ -23,7 +23,9 @@ FOLDERS = ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src/core'
            'rust/crates/mds-bullet/tests', 'rust/crates/mds-bullet-sys/shim',
            'rust/crates/mds-crtmath/src', 'tools/bullet-rust-mmd-collision-check']
 EXTRA = ['.github/workflows/bullet-mmd-collision-world.yml', 'rust/crates/mds-bullet-sys/build.rs',
-         'rust/crates/mds-bullet/Cargo.toml', 'rust/Cargo.lock', '.gitattributes', 'rust/.gitattributes']
+         'rust/crates/mds-bullet/Cargo.toml', 'rust/Cargo.lock', '.gitattributes', 'rust/.gitattributes',
+         'tools/bullet-rust-dbvt-check/fixtures.rs',
+         'tools/bullet-rust-dbvt-check/native-topdown-nontermination.tsv']
 PENDING = ['same-HEAD hosted native and Windows replay execution after independent source review']
 
 

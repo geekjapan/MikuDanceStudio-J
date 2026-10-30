@@ -16,6 +16,8 @@ not attested. Rust ray/query and accelerator allocation parity are not claimed.
 The Rust runner uses generated access to the owner's existing storage. `W` seeds
 nonzero warmstart values independently into already-created legal contacts on
 each side. Native contacts are never transferred to Rust.
+The generated `--cfg test` source tree includes the DBVT test fixture and its
+included regression TSV; both are bound by the same source manifest as the core.
 
 `cases.py` derives 55 cases. Huge boxes place their center at their half extent,
 keep their lower edge inside the SAP range, and cover float32 bounds below,

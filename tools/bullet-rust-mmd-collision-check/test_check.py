@@ -2,6 +2,9 @@
 import unittest
 import struct
 import copy
+import ast
+from pathlib import Path
+import re
 
 from cases import corpus, word
 from hooks import MUTANTS, OWNER, inverse, mutate, replace
@@ -20,6 +23,36 @@ class Memory:
 
 
 class CorpusTests(unittest.TestCase):
+    def test_generated_rust_literal_dependencies_are_in_source_closure(self):
+        here = Path(__file__).resolve().parent
+        root = here.parents[1]
+        manifest = ast.parse((here / 'check.py').read_text())
+        declared = {node.targets[0].id: ast.literal_eval(node.value)
+                    for node in manifest.body if isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id in {'FOLDERS', 'EXTRA'}}
+        folders = [root / name for name in declared['FOLDERS']]
+        extra = {root / name for name in declared['EXTRA']}
+        pending = list((root / 'rust/crates/mds-bullet/src/core').rglob('*.rs'))
+        pending.append(here / 'runner.rs')
+        visited = set()
+        dependencies = re.compile(
+            r'#\[path\s*=\s*"([^"]+)"\]|include(?:_str|_bytes)?!\(\s*"([^"]+)"')
+        while pending:
+            source = pending.pop().resolve()
+            if source in visited:
+                continue
+            visited.add(source)
+            for match in dependencies.finditer(source.read_text()):
+                target = (source.parent / (match[1] or match[2])).resolve()
+                with self.subTest(source=source.relative_to(root), target=target):
+                    self.assertTrue(target.is_relative_to(root), 'dependency escapes generated root')
+                    self.assertTrue(target.is_file(), 'literal Rust dependency exists')
+                    self.assertTrue(target in extra or any(target.is_relative_to(folder) for folder in folders),
+                                    'literal Rust dependency belongs to generated source manifest')
+                if target.suffix == '.rs':
+                    pending.append(target)
+
     def test_source_derived_case_families_and_unique_names(self):
         inputs, cases = corpus()
         self.assertLessEqual(len(inputs.encode()), 64 * 1024)

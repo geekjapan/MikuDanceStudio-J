@@ -179,3 +179,14 @@ collision owner and its dedicated test to the fixed `f6ab4fee` base. It replaces
 only `core/mod.rs` in the previous source map. The layer remains `UNRUN` and does
 not add a measurement or change any historical receipt. Windows production
 sources use CRLF and the dedicated test retains its binary checkout bytes.
+
+A separate fixed code contract, `MMD_COLLISION_WORLD_FORMAT`, then admits only
+`tests/mmd_collision_world.rs` from format commit
+`6e16debd2b5c8d3b309d60b47bd0badce1e2175c`, based on `46135113`, tree
+`e7354fdb6b89e5b56e78a189a032f2d275b42e2e`. It binds the old and new Git blobs,
+regular file mode, and exact physical SHA256 for each host. The test has Git
+`-text` transport, so all four identities use LF. The old identity must match
+before its single replacement; the complete current closure must still match.
+The original schema 12 admission digest and historical measurements remain
+unchanged. `current_source.mmd_collision_world_format_admission` records this
+additional source-only contract with execution `UNRUN`.

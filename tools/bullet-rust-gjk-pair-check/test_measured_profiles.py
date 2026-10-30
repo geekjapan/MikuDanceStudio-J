@@ -46,6 +46,32 @@ class MmdCollisionAdmissionTests(unittest.TestCase):
         finally:
             measured_profiles.git_verification_maps.cache_clear()
 
+    def test_exact_mmd_format_map_once_and_refusals(self):
+        layer = measured_profiles.MMD_COLLISION_WORLD_FORMAT
+        path = layer['path']
+        self.assertEqual(layer['execution'], 'UNRUN')
+        self.assertEqual(set(layer['hosts']), measured_profiles.HOSTS)
+        self.assertEqual(layer['mode'], '100644')
+        for host, identity in layer['hosts'].items():
+            old = {path: identity['old_sha256'], 'unchanged.rs': '1' * 64}
+            expected = {**old, path: identity['new_sha256']}
+            actual = measured_profiles.apply_mmd_collision_format_admission(old, host)
+            self.assertEqual(actual, expected)
+            self.assertEqual(old[path], identity['old_sha256'])
+            for changed in [actual, {**old, path: '0' * 64}, {'unchanged.rs': '1' * 64}]:
+                with self.subTest(host=host, source=changed), self.assertRaisesRegex(ValueError, 'format old identity'):
+                    measured_profiles.apply_mmd_collision_format_admission(changed, host)
+            mutations = [{**actual, path: identity['old_sha256']}, {**actual, path: '0' * 64},
+                         {**actual, 'extra.rs': '2' * 64}, {path: identity['new_sha256']},
+                         {**actual, 'unchanged.rs': '2' * 64}]
+            manifest = {'profiles': {host: {}}}
+            with patch.object(measured_profiles, 'load_manifest', return_value=manifest), \
+                    patch.object(measured_profiles, 'approved_source_map', return_value=expected):
+                for changed in mutations:
+                    with self.subTest(host=host, closure=changed), self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=None,
+                            source_hashes=lambda: changed, stream=None, transport=None)
+
     def test_fixed_unrun_source_layer_and_physical_transport(self):
         manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
         layer = manifest['mmd_collision_world_source_admission']

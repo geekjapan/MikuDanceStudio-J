@@ -58,6 +58,21 @@ MMD_COLLISION_WORLD_SHA256 = '59875b274c0099e5c49d51f76cef60a7af70646b9abdbe2bc3
 MMD_COLLISION_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                                 ['src/core/mmd_collision_world.rs', 'tests/mmd_collision_world.rs']}
 MMD_COLLISION_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+MMD_COLLISION_WORLD_FORMAT = {
+    'kind': 'fixed-mmd-collision-world-rustfmt-source-only',
+    'base_head': '461351137b525475e43add330fd258885956067f',
+    'format_head': '6e16debd2b5c8d3b309d60b47bd0badce1e2175c',
+    'format_tree': 'e7354fdb6b89e5b56e78a189a032f2d275b42e2e',
+    'execution': 'UNRUN',
+    'path': 'rust/crates/mds-bullet/tests/mmd_collision_world.rs',
+    'mode': '100644',
+    'old_blob': 'cd4af6aa929a93c8313ba330acd7a0ab590c3c7d',
+    'new_blob': '7b8185f26fcfa4dfdd9817f93c0f5a475aee873a',
+    'hosts': {host: {
+        'old_sha256': 'e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd',
+        'new_sha256': '8a31d5dbc0e14024762199975064b702268bc8bb4dac7997d4e33b574792ba52',
+    } for host in ['macos-arm64', 'linux-arm64', 'linux-x64', 'windows-x64']},
+}
 DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256 = '795b2906a053fabc3e9728c575bd3372c564abfa52700223da18f8158e03ae5c'
 DYNAMICS_WORLD_C23_TEST_FORMAT_REPLACEMENTS = {'rust/crates/mds-bullet/tests/discrete_dynamics_world.rs'}
 DYNAMICS_WORLD_C23_REPAIR_SHA256 = '803c1e31e1bfbcfc805f0559c00bbd2f76a0101a76c603d29922150cb39e03ee'
@@ -415,6 +430,7 @@ def approved_source_map(manifest, host):
     schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
            'immutable dynamics world c23 test format admission')
     protected = apply_mmd_collision_admission(manifest, host, protected)
+    protected = apply_mmd_collision_format_admission(protected, host)
     return {**protected, **current_verification_map(manifest, host)}
 
 
@@ -443,6 +459,14 @@ def apply_mmd_collision_admission(manifest, host, protected):
     schema(source_map_digest(admission) == MMD_COLLISION_WORLD_SHA256,
            'immutable MMD collision world admission')
     return {**protected, **delta['additions']}
+
+
+def apply_mmd_collision_format_admission(protected, host):
+    admission = MMD_COLLISION_WORLD_FORMAT
+    identity = admission['hosts'][host]
+    path = admission['path']
+    schema(protected.get(path) == identity['old_sha256'], 'MMD collision world format old identity')
+    return {**protected, path: identity['new_sha256']}
 
 
 def select_measurement(manifest, host, provenance):
@@ -531,6 +555,7 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['dynamics_world_c23_test_format_admission'].items() if name != 'hosts'},
                 'mmd_collision_world_source_admission': {name: value for name, value in
                     manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
+                'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

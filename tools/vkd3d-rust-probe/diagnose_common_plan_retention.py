@@ -63,7 +63,6 @@ def parse_record(raw, pid, sequence, previous_ns):
 
 
 class RetentionForwarder:
-    """One owned binary sidecar, bounded reads and partial tail, no child log forwarding."""
     INTERVAL = 0.25
 
     def __init__(self, stream, pid, emit=print):
@@ -89,7 +88,6 @@ class RetentionForwarder:
             return
         self.next_read = time.monotonic() + self.INTERVAL
         try:
-            # The reader refuses overflow before attempting a larger allocation.
             chunk = self.stream.read(min(READ_BYTES, MAX_BYTES - self.bytes + 1))
             require(type(chunk) is bytes, 'binary retention sidecar')
             self.bytes += len(chunk)

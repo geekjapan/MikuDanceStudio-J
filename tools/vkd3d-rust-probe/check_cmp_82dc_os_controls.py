@@ -77,7 +77,6 @@ def second_ack_diagnostic(sample):
 
 
 def observer_definitions(source):
-    """Extract only pure owner setup/interrupt and the genuine observer; do not import product setup."""
     product_path = Path(source) / PREFIX / 'run_cmp_input.py'
     controller_path = Path(__file__).resolve()
     product_raw, controller_raw = product_path.read_bytes(), controller_path.read_bytes()
@@ -95,7 +94,6 @@ def observer_definitions(source):
 
 
 def profiler_observer_control(source):
-    """Hosted observer-only counterexample with no signal delivery or product registration."""
     require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
             and sys.implementation.name == 'cpython' and sys.version_info[:3] == (3, 12, 3),
             'observer control requires hosted Linux CPython 3.12.3')
@@ -117,7 +115,6 @@ def profiler_observer_control(source):
             owner.cancelled = False
             owner.interrupt(15, None)
             nested.append(dict(signal=15, cancelled=owner.cancelled, accounted=len(events)))
-    # Inert collaborators satisfy identity checks without installing a signal handler.
     namespace.update(wrapper=type('Wrapper', (), {'WrapperRun': namespace['WrapperRun']}), owner=owner,
         signal=type('Signal', (), {'getsignal': staticmethod(lambda sig: owner.interrupt)}),
         channel=type('Channel', (), {'send': staticmethod(send)}), handler_events=events,

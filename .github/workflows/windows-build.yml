@@ -35,6 +35,8 @@ jobs:
           python-version: '3.12'
       - name: Test scheduled-task exit boundary (stand-in scheduler)
         run: python -I tools/windows/test_runtask.py
+      - name: Test DirectX response diagnostics and execution guards
+        run: ./tools/ci/test-directx-runtime.ps1
       - name: Validate tag and version
         if: inputs.release-tag != ''
         env:
@@ -77,18 +79,24 @@ jobs:
           -- /verbosity:normal /clp:ShowCommandLine
       - name: Install legacy DirectX test runtime
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'directx_Jun2010_redist.exe'
-          $unpack = Join-Path $env:RUNNER_TEMP 'directx-june2010'
-          New-Item -ItemType Directory -Force $unpack | Out-Null
-          # Microsoft Download Center, id=8109. Keep the exact tested payload.
-          Invoke-WebRequest 'https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe' -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '053F76DCBB28802E23341B6A787E3B0791C0FA5C8D4D011B1044172DBF89C73B') {
-            throw 'Unexpected DirectX redistributable payload'
-          }
-          $extract = Start-Process -FilePath $archive -ArgumentList '/Q', ('/T:"{0}"' -f $unpack) -Wait -PassThru -WindowStyle Hidden
-          if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
-          $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
-          if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
+          . ./tools/ci/install-directx-runtime.ps1
+          Install-DirectXRuntime -OutputDirectory (Join-Path $env:RUNNER_TEMP 'directx-diagnostic')
+      - name: Preserve DirectX response diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: directx-diagnostic-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/directx-diagnostic/response.json
+            ${{ runner.temp }}/directx-diagnostic/directx_Jun2010_redist.exe
+          if-no-files-found: error
+      - name: Set up pinned Rust for Windows checks
+        if: always()
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup run 1.95.0 rustc -Vv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compare Rust camera refresh with the production C++ body
         working-directory: rust
         env:

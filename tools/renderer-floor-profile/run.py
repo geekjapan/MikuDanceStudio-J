@@ -1808,12 +1808,17 @@ def source_commit(raw,revision,entries=None,parents=None):
     return trees[0]
 
 
+def source_history_bound(chain,head,admitted):
+    require(type(chain) is list and all(type(revision) is str for revision in chain),'typed generation ancestry')
+    fixed=chain.count(ACCEPTED_MAIN['merge']) if admitted else 0
+    require(0<len(chain)<=16+fixed and fixed==int(admitted) and len(set(chain))==len(chain) and chain[-1]==head,'bounded ordinary generation ancestry')
+
+
 def source_ancestry(m,commits):
     chain=m['generation_ancestry']
-    require(type(chain) is list and 0<len(chain)<=16 and all(type(revision) is str for revision in chain) and len(set(chain))==len(chain) and chain[-1]==m['head'],'bounded ordinary generation ancestry')
     admitted=m.get('source_admission')==SOURCE_ADMISSION
     require(m.get('source_admission') in (None,SOURCE_ADMISSION),'closed source admission tag')
-    if admitted:require(ACCEPTED_MAIN['merge'] in chain,'required accepted-main generation')
+    source_history_bound(chain,m['head'],admitted)
     parent=PARENT
     for revision in chain:
         require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'ancestry commit identity')
@@ -1927,6 +1932,10 @@ def acquire_source_admission(out,m,env):
 
 
 def finish_source_admission(out,m,env):
+    if env.get('MDS_CENSUS_CUSTODY'):
+        census_custody(out)
+        env=env.copy()
+        env['MDS_CENSUS_DEADLINE']=str(previous.time.monotonic()+600)
     for label,argv in [('controller-final-head',['git','rev-parse','HEAD']),('controller-final-status',['git','status','--porcelain']),('controller-final-tree',['git','ls-tree','-rz','--full-tree','HEAD'])]:
         require(record(out,label,argv,ROOT,env)['status']==0,'final controller source identity command')
     require((out/'controller-final-head.stdout').read_text().strip()==m['head'] and not (out/'controller-final-status.stdout').read_bytes(),'final clean exact workflow HEAD')
@@ -1934,6 +1943,9 @@ def finish_source_admission(out,m,env):
     entries=source_tree((out/'controller/head.tree').read_bytes())
     write_json(out/'controller-source-after.json',checkout_inventory(entries))
     retained_source_admission(out,m)
+    if env.get('MDS_CENSUS_CUSTODY'):
+        # Synchronous source reads share the success bound; they are not preempted.
+        require(previous.time.monotonic()<float(env['MDS_CENSUS_DEADLINE']),'diagnostic source finalization wall time ceiling reached')
 
 
 def verify_sources(out,m):
@@ -2058,7 +2070,7 @@ def run(out,build_root,toolchain,census_mode=False):
     for name in ('base','head'):shutil.copyfile(out/(name+'-commit.stdout'),out/(name+'.commit'))
     require(record(out,'git-first-parent-ancestry',['git','rev-list','--first-parent','--reverse',PARENT+'..HEAD'],ROOT,env)['status']==0,'first-parent renderer generation ancestry command')
     chain=(out/'git-first-parent-ancestry.stdout').read_text().splitlines();(out/'ancestry').mkdir()
-    require(0<len(chain)<=16 and len(set(chain))==len(chain) and chain[-1]==head and ACCEPTED_MAIN['merge'] in chain,'bounded acquired first-parent ancestry')
+    source_history_bound(chain,head,True)
     for revision in chain:
         require(re.fullmatch('[0-9a-f]{40}',revision),'producer ancestry commit identity')
         label='ancestor-'+revision

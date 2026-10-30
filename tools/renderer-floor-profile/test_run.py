@@ -1090,6 +1090,39 @@ class Controls(unittest.TestCase):
                 frames['head.commit']=raw;frames['head.tree']=tree(entries)
                 with self.subTest(kind=kind),self.assertRaises(ValueError):r.verify_source_data(*bad)
 
+    def test_source_history_counts_fixed_merge_separately(self):
+        args,patches,tree,commit=self.admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            entries=r.verify_source_data(*args)
+            m,frames=args[:2]
+            for ordinal in range(14):
+                head,raw=commit(entries,[m['head']],'ordinary '+str(ordinal))
+                m['generation_ancestry'].append(head);m['head']=head
+                frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                frames['head.commit']=raw;frames['head.tree']=tree(entries)
+            self.assertEqual(len(m['generation_ancestry']),17)
+            self.assertEqual(r.verify_source_data(*args),entries)
+            head,raw=commit(entries,[m['head']],'ordinary seventeen')
+            bad=copy.deepcopy(args);bad[0]['generation_ancestry'].append(head);bad[0]['head']=head
+            bad[1]['ancestry/'+head+'.commit']=raw;bad[1]['tail/'+head+'.tree']=tree(entries)
+            bad[1]['head.commit']=raw;bad[1]['head.tree']=tree(entries)
+            with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.verify_source_data(*bad)
+            for chain in (m['generation_ancestry'][1:],m['generation_ancestry'][::-1],
+                          [p for p in m['generation_ancestry'] if p!=r.ACCEPTED_MAIN['merge']],
+                          m['generation_ancestry'][:-1]+[r.ACCEPTED_MAIN['merge']]):
+                bad=copy.deepcopy(args);bad[0]['generation_ancestry']=chain
+                with self.assertRaises((ValueError,KeyError)):r.verify_source_data(*bad)
+            for parents in ([r.ACCEPTED_MAIN['main'],r.ACCEPTED_MAIN['renderer']],
+                            [r.ACCEPTED_MAIN['renderer'],r.ACCEPTED_MAIN['main'],r.PARENT],
+                            [r.ACCEPTED_MAIN['renderer'],r.PARENT]):
+                with self.assertRaises(ValueError):r.source_commit(frames['merge.commit'],r.ACCEPTED_MAIN['merge'],parents=parents)
+        chain=[];commits={};parent=r.PARENT
+        for ordinal in range(17):
+            head,raw=commit(entries,[parent],'legacy '+str(ordinal));chain.append(head);commits[head]=raw;parent=head
+        r.source_ancestry({'generation_ancestry':chain[:16],'head':chain[15]},commits)
+        with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.source_ancestry({'generation_ancestry':chain,'head':head},commits)
+
     def test_34_selected_range_capacity_preserves_byte_caps(self):
         raw,mapping,rows,_=code_fixture()
         for count in (128,129):
@@ -1821,7 +1854,8 @@ class CensusControls(unittest.TestCase):
                 self.assertFalse(any(item['kind']=='RequiredRuntimeImports' for item in result['unknowns']))
 
     def test_four_variants_continue_only_after_proven_writer_closure(self):
-        for failure_at in (None,'git-head','native-build'):
+        recorder=r.record
+        for failure_at in (None,'git-head','native-build','expired-fourth'):
             files={};calls=[];fixtures=[];acquired=[];saved={}
             out=Path('C:/runner/temp/closure-census-evidence');build=Path('C:/runner/temp/closure-census-build');toolchain=Path('C:/runner/temp/floor-profile-deps/build/generators/conan_toolchain.cmake')
             def save(path,value):saved[path]=copy.deepcopy(value);files[path]=json.dumps(value).encode()
@@ -1842,16 +1876,24 @@ class CensusControls(unittest.TestCase):
             def acquire(directory,*args):
                 acquired.append(directory.name)
                 if len(acquired)==1:raise ValueError('closed diagnostic failure')
+                if failure_at=='expired-fourth' and len(acquired)==4:clock['now']+=1201
                 return {'status':'CENSUS_INCOMPLETE_UNRESOLVED'}
             def glob(path,pattern):return [file for file in files if file.parent==path and file.suffix=='.json']
             def inventory(path):
                 self.assertNotIn(out/'writer-pending.json',files,'source read while writer closure unknown')
                 return {}
             recipe=r.recipe
+            clock={'now':0.};finalized=[];finalizer=r.finish_source_admission
+            def finish(directory,m,env):
+                if failure_at=='expired-fourth':
+                    self.assertGreater(clock['now'],float(env['MDS_CENSUS_DEADLINE']))
+                    error,launched,_,_,_,_=SourceFinalizationControls().exercise(out=directory,manifest=m,environment=env,finalizer=finalizer,recorder=recorder)
+                    if error is not None:raise error
+                    self.assertEqual(len(launched),3);finalized.append(True)
             def inert_recipe(*args):return {key:value.replace('\\','/') if isinstance(value,str) else value for key,value in recipe(*args).items()}
             patches=[
                 patch.object(r,'acquire_source_admission'),
-                patch.object(r,'finish_source_admission'),
+                patch.object(r,'finish_source_admission',side_effect=finish) if failure_at!='expired-fourth' else patch.object(r.previous.time,'monotonic',lambda:clock['now']),
                 patch.object(r,'recipe',inert_recipe),
                 patch.object(r.sys,'platform','win32'),
                 patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':r.ACCEPTED_MAIN['merge']}),
@@ -1880,8 +1922,11 @@ class CensusControls(unittest.TestCase):
             ]
             with ExitStack() as stack:
                 for context in patches:stack.enter_context(context)
-                if failure_at is None:
-                    result=r.run(out,build,toolchain,True)
+                if failure_at in (None,'expired-fourth'):
+                    if failure_at=='expired-fourth':
+                        with patch.object(r,'finish_source_admission',side_effect=finish):result=r.run(out,build,toolchain,True)
+                        self.assertEqual(finalized,[True])
+                    else:result=r.run(out,build,toolchain,True)
                     self.assertEqual(len(result['variants']),4)
                     self.assertEqual(len(acquired),4,{str(k):v for k,v in saved.items() if k.name=='variant-failure.json'});self.assertEqual(fixtures,['mesh_dump','x_files']*4)
                     self.assertNotIn(out/'seal.json',saved)
@@ -1906,6 +1951,122 @@ class CensusControls(unittest.TestCase):
         with patch.object(sys,'argv',['run.py','--closure-census','--out','/inert']),self.assertRaisesRegex(ValueError,'explicit hosted --run'):r.main()
         with patch.object(r,'load_json',return_value={'schema':r.CENSUS_SCHEMA}),patch.object(Path,'read_bytes',return_value=b'{}'),self.assertRaises((ValueError,KeyError)):
             r.replay(Path('/inert-census'))
+
+
+class SourceFinalizationControls(unittest.TestCase):
+    def exercise(self,failure=None,*,out=None,manifest=None,environment=None,finalizer=None,recorder=None):
+        from types import SimpleNamespace
+        args,anchors,_,_=Controls().admission_fixture()
+        m,frames,base,tooling,imports,current=args
+        m['base_inventory']={p:{'mode':0o644,'sha256':r.digest(raw)} for p,(_,raw) in base.items()}
+        if manifest is not None:manifest.update(m);m=manifest
+        out=out or Path('/owned-finalization')
+        files={out/'controller'/p:raw for p,raw in frames.items()}
+        files.update({out/'sources/base'/p:raw for p,(_,raw) in base.items()})
+        files.update({out/'tooling'/p:raw for p,raw in tooling.items()})
+        files.update({out/'controller/imports'/p:raw for p,raw in imports.items()})
+        bodies={p:raw for p,(_,raw) in base.items()}|tooling|imports
+        files.update({r.ROOT/p:raw for p,raw in bodies.items()})
+        files[out/'controller-source-before.json']=json.dumps(current).encode()
+        files[out/'writer-custody.json']=json.dumps({'schema':r.CUSTODY_SCHEMA,'state':'no_writer_started','receipts':[]}).encode()
+        if failure=='unknown-before':files[out/'writer-pending.json']=b'unknown'
+        env=environment if environment is not None else {'MDS_CENSUS_CUSTODY':str(out),'MDS_CENSUS_DEADLINE':'0','KEEP':'original'}
+        original=dict(env);clock={'now':1201.,'calls':0};launched=[];streams=[];events=[]
+        outputs=[(m['head']+'\n').encode(),b'',frames['head.tree']]
+        if failure=='head-drift':outputs[0]=b'wrong\n'
+        if failure=='status-drift':outputs[1]=b' M changed\n'
+        if failure=='tree-drift':outputs[2]+=b'wrong'
+        def monotonic():
+            clock['calls']+=1
+            if failure=='proof-overrun' and clock['calls']==8:clock['now']+=601
+            return clock['now']
+        def save(path,value):
+            events.append(path.name);files[path]=json.dumps(value).encode()
+        class Stream:
+            def __init__(self,path):self.path=path;self.closed=False;files[path]=b''
+            def close(self):self.closed=True
+        class Job:
+            def setup(self):pass
+            def assign(self,child):pass
+            def resume(self,child):pass
+            def terminate(self):pass
+            def accounting(self):return SimpleNamespace(active_processes=0)
+            def resources(self,accounting):return {'peak':1}
+            def close(self):
+                if failure=='unknown-final':raise OSError('inert unknown handle closure')
+        class Child:
+            pid=123
+            _handle=SimpleNamespace(Close=lambda:None)
+            def __init__(self,index):self.index=index;self.waits=0
+            def wait(self,timeout):
+                self.waits+=1
+                if self.waits==1:
+                    if failure=='timeout':raise subprocess.TimeoutExpired('inert metadata',timeout)
+                    if (failure,self.index) in (('before-second',0),('before-third',1)):clock['now']+=601
+                return 0
+            def kill(self):pass
+        def launch(argv,**kwargs):
+            index=len(launched);launched.append((list(argv),dict(kwargs['env'])))
+            self.assertIn(out/'writer-pending.json',files)
+            files[kwargs['stdout'].path]=outputs[index]
+            return Child(index)
+        def open_stream(path,mode):
+            self.assertEqual(mode,'xb');stream=Stream(path);streams.append(stream);return stream
+        def read(path):
+            if path.name.endswith(('.stdout','.stderr')):self.assertTrue(all(s.closed for s in streams))
+            return files[path]
+        ordinary=[]
+        def ordinary_record(directory,label,argv,cwd,env,timeout):
+            index=len(ordinary);ordinary.append(dict(env));files[directory/(label+'.stdout')]=outputs[index]
+            return {'status':0}
+        contexts=anchors+[
+            patch.object(r,'record',recorder or r.record),
+            patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true'}),
+            patch.object(r,'census_windows_job',lambda:Job()),patch.object(r.previous.subprocess,'Popen',launch),
+            patch.object(r.previous,'record',ordinary_record),patch.object(r.previous.time,'monotonic',monotonic),
+            patch.object(Path,'exists',lambda path:path in files),patch.object(Path,'is_file',lambda path:path in files),
+            patch.object(Path,'is_symlink',return_value=False),patch.object(Path,'stat',return_value=SimpleNamespace(st_mode=0o100644,st_nlink=1)),
+            patch.object(Path,'read_bytes',read),patch.object(Path,'read_text',lambda path:read(path).decode()),
+            patch.object(Path,'rglob',lambda path,pattern:[p for p in files if p!=path and p.is_relative_to(path)]),
+            patch.object(Path,'open',open_stream),patch.object(Path,'unlink',lambda path:files.pop(path)),patch.object(r,'write_json',save)]
+        error=None
+        with ExitStack() as stack:
+            for context in contexts:stack.enter_context(context)
+            try:(finalizer or r.finish_source_admission)(out,m,env)
+            except (ValueError,OSError,KeyError) as caught:error=caught
+        self.assertEqual(env,original)
+        return error,launched,clock,files,events,ordinary
+
+    def test_expired_variant_has_one_finite_closed_source_phase(self):
+        error,launched,clock,files,events,_=self.exercise()
+        self.assertIsNone(error)
+        self.assertEqual(len(launched),3)
+        self.assertEqual({env['MDS_CENSUS_DEADLINE'] for _,env in launched},{'1801.0'})
+        self.assertIn(Path('/owned-finalization/controller-source-after.json'),files)
+        self.assertEqual(clock['calls'],8)
+        for failure,count in [('before-second',1),('before-third',2)]:
+            error,launched,_,files,_,_=self.exercise(failure)
+            self.assertRegex(str(error),'wall time ceiling')
+            self.assertEqual(len(launched),count)
+            self.assertNotIn(Path('/owned-finalization/controller-source-after.json'),files)
+        error,_,_,files,_,_=self.exercise('proof-overrun')
+        self.assertRegex(str(error),'source finalization wall time ceiling')
+        self.assertIn(Path('/owned-finalization/controller-source-after.json'),files)
+
+    def test_unknown_closure_and_final_metadata_failure_never_complete(self):
+        error,launched,clock,files,events,_=self.exercise('unknown-before')
+        self.assertRegex(str(error),'unclosed diagnostic writers')
+        self.assertEqual((launched,clock['calls'],events),([],0,[]))
+        for failure in ('timeout','unknown-final','head-drift','status-drift','tree-drift'):
+            with self.subTest(failure=failure):
+                error,_,_,files,_,_=self.exercise(failure)
+                self.assertIsNotNone(error)
+                self.assertNotIn(Path('/owned-finalization/controller-source-after.json'),files)
+
+    def test_ordinary_source_finalization_keeps_environment_and_no_new_deadline(self):
+        error,launched,clock,_,_,ordinary=self.exercise(environment={'KEEP':'ordinary'})
+        self.assertIsNone(error);self.assertEqual(launched,[]);self.assertEqual(clock['calls'],0)
+        self.assertEqual(ordinary,[{'KEEP':'ordinary'}]*3)
 
 
 class ImportReachabilityControls(unittest.TestCase):

@@ -628,7 +628,7 @@ class SourceDataTests(unittest.TestCase):
         self.assertEqual(ast.dump(init), ast.dump(methods['__init__']))
         self.assertEqual(ast.dump(interrupt), ast.dump(methods['interrupt']))
         self.assertEqual(identities['product_sha256'], controls.FROZEN['run_cmp_input.py'])
-        self.assertEqual(identities['profile_ast_sha256'], controls.digest(ast.dump(profile).encode()))
+        self.assertEqual(identities['profile_ast_sha256'], controls.digest(controls.canonical_ast_dump(profile).encode()))
         control = next(node for node in ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text()).body
                        if isinstance(node, ast.FunctionDef) and node.name == 'profiler_observer_control')
         text = ast.unparse(control)
@@ -1234,6 +1234,43 @@ class SourceDataTests(unittest.TestCase):
         for candidate in (missing, extra, corrupt, mode, hidden, empty, nested_seal):
             with self.assertRaises(ValueError):
                 controls.validate_seal(original, candidate)
+
+
+class CanonicalAstDataTests(unittest.TestCase):
+    def test_canonical_legal_fields_and_optional_none(self):
+        node = ast.parse('def f(x: int = 1) -> str:\n    return x\n').body[0]
+        original = ast.dump(node)
+        expected = ("FunctionDef(name='f', args=arguments(posonlyargs=[], args=[arg(arg='x', annotation=Name(id='int', ctx=Load()))], "
+                    "kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=1)]), body=[Return(value=Name(id='x', ctx=Load()))], "
+                    "decorator_list=[], returns=Name(id='str', ctx=Load()), type_params=[])")
+        self.assertEqual(controls.canonical_ast_dump(node), expected)
+        self.assertEqual(ast.dump(node), original)
+        for text, kind in (('async def f():\n    pass\n', 'AsyncFunctionDef'), ('class C:\n    pass\n', 'ClassDef')):
+            dumped = controls.canonical_ast_dump(ast.parse(text).body[0])
+            self.assertTrue(dumped.startswith(kind + '('))
+            self.assertTrue(dumped.endswith('type_params=[])'))
+
+    def test_canonical_signature_body_annotation_and_type_params_change_identity(self):
+        legal = ast.parse('def f(x: int) -> str:\n    return x\n').body[0]
+        expected = controls.canonical_ast_dump(legal)
+        for text in ('def f(x: int, y=1) -> str:\n    return x\n',
+                     'def f(x: int) -> str:\n    return 2\n',
+                     'def f(x: bytes) -> str:\n    return x\n',
+                     'def f(x: int) -> bytes:\n    return x\n'):
+            self.assertNotEqual(controls.canonical_ast_dump(ast.parse(text).body[0]), expected)
+        changed = copy.deepcopy(legal)
+        changed.type_params = [ast.Name(id='T', ctx=ast.Load())]
+        if 'type_params' not in changed._fields:
+            changed._fields = changed._fields + ('type_params',)
+        self.assertIn("type_params=[Name(id='T', ctx=Load())]", controls.canonical_ast_dump(changed))
+        self.assertNotEqual(controls.canonical_ast_dump(changed), expected)
+        self.assertEqual(controls.canonical_ast_dump(legal), expected)
+
+    def test_canonical_observer_identities_use_shared_dump(self):
+        init, interrupt, profile, identities = controls.observer_definitions(SOURCE)
+        for name, node in (('init', init), ('interrupt', interrupt), ('profile', profile)):
+            self.assertEqual(identities[name + '_ast_sha256'],
+                             controls.digest(controls.canonical_ast_dump(node).encode()))
 
 
 if __name__ == '__main__':

@@ -41,8 +41,8 @@ FROZEN = {
 }
 PAIRS = ((2, 2), (15, 15), (2, 15), (15, 2))
 PHASES = ('entry', 'working-cleanup', 'published-unblocked', 'published-masked')
-WAIT_AST = {'wait': '32eb93a7f8a4c09e4ddd6126580dfc68120f54ecc23dcefab06fa156d0b4e427',
-            '_wait': 'dbe2e31be45022de935cb0d9fc9c1c33c5b99ef8ea54826342703afce9f605e5'}
+WAIT_AST = {'wait': 'eec6926bf3a5541accf2820f8094de8db2feab30731afa89b21c202ec916bdce',
+            '_wait': 'fa02e26272220a04c3a9032bbf96a32f2910551e4d090e21d8b60aa256e234c8'}
 CASES = [('baseline', 'baseline', 0, 0)] + [
     (f'{phase}-{first}-{second}', phase, first, second)
     for phase in PHASES for first, second in PAIRS] + [
@@ -224,6 +224,29 @@ def second_ack_diagnostic(sample):
         pass
 
 
+def canonical_ast_dump(node):
+    """Use CPython 3.12 dump semantics, including its empty type parameter fields."""
+    if isinstance(node, ast.AST):
+        fields = list(node._fields)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and 'type_params' not in fields:
+            fields.append('type_params')
+        members = []
+        for name in fields:
+            try:
+                value = getattr(node, name)
+            except AttributeError:
+                if name != 'type_params':
+                    continue
+                value = []
+            if value is None and getattr(type(node), name, ...) is None:
+                continue
+            members.append(name + '=' + canonical_ast_dump(value))
+        return type(node).__name__ + '(' + ', '.join(members) + ')'
+    if isinstance(node, list):
+        return '[' + ', '.join(canonical_ast_dump(member) for member in node) + ']'
+    return repr(node)
+
+
 def observer_definitions(source):
     product_path = Path(source) / PREFIX / 'run_cmp_input.py'
     controller_path = Path(__file__).resolve()
@@ -235,9 +258,9 @@ def observer_definitions(source):
     worker = next(node for node in controller.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
     profile = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'profile')
     receipt = dict(product_sha256=digest(product_raw), controller_sha256=digest(controller_raw),
-        init_ast_sha256=digest(ast.dump(methods['__init__']).encode()),
-        interrupt_ast_sha256=digest(ast.dump(methods['interrupt']).encode()),
-        profile_ast_sha256=digest(ast.dump(profile).encode()))
+        init_ast_sha256=digest(canonical_ast_dump(methods['__init__']).encode()),
+        interrupt_ast_sha256=digest(canonical_ast_dump(methods['interrupt']).encode()),
+        profile_ast_sha256=digest(canonical_ast_dump(profile).encode()))
     return methods['__init__'], methods['interrupt'], profile, receipt
 
 
@@ -296,7 +319,7 @@ def wait_provenance(popen):
         function = getattr(popen, name)
         raw = inspect.getsource(function)
         node = ast.parse(textwrap.dedent(raw)).body[0]
-        require(digest(ast.dump(node).encode()) == identity, 'hosted Popen wait AST differs from CPython v3.12.3')
+        require(digest(canonical_ast_dump(node).encode()) == identity, 'hosted Popen wait AST differs from CPython v3.12.3')
         records[name] = dict(ast_sha256=identity, source_sha256=digest(raw.encode()),
             code_sha256=digest(marshal.dumps(function.__code__)), filename=function.__code__.co_filename,
             firstlineno=function.__code__.co_firstlineno)

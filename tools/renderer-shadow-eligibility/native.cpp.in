@@ -1,0 +1,162 @@
+#include <d3d9.h>
+#include "mikudancestudio/model.hpp"
+#include "mikudancestudio/accessory_layout.hpp"
+#include <array>
+#include <charconv>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace mdl = mikudancestudio::mdl;
+constexpr int kModelSlotCount = 255;
+std::uint32_t ordinal = 0;
+
+struct Inputs {
+    std::array<std::unique_ptr<mdl::ModelRecord>, 255> models;
+    std::array<std::vector<mdl::ModelMaterialRecord>, 255> model_materials;
+    std::array<std::unique_ptr<mdl::AccessoryRecord>, 255> accessories;
+    std::array<std::vector<D3DMATERIAL9>, 255> accessory_materials;
+
+    unsigned char* ModelSlot(int slot) {
+        return reinterpret_cast<unsigned char*>(models.at(slot).get());
+    }
+    void* AccessorySlot(int slot) {
+        return accessories.at(slot).get();
+    }
+};
+
+std::uint32_t word(std::istream& in, std::uint32_t maximum = UINT32_MAX) {
+    std::string text;
+    if (!(in >> text)) throw std::runtime_error("missing input word");
+    std::uint32_t result = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || result > maximum)
+        throw std::runtime_error("invalid input word");
+    return result;
+}
+
+void tag(std::istream& in, const char* expected) {
+    std::string text;
+    if (!(in >> text) || text != expected) throw std::runtime_error("input tag");
+}
+
+float float_bits(std::istream& in) {
+    const auto bits = word(in);
+    float value;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&value, &bits, sizeof(value));
+    if (!std::isfinite(value)) throw std::runtime_error("nonfinite float bits");
+    return value;
+}
+
+void read_inputs(std::istream& in, Inputs& inputs) {
+    tag(in, "MDS_SHADOW_ELIGIBILITY_V1");
+    const auto model_count = word(in, 255);
+    const auto accessory_count = word(in, 255);
+    for (std::uint32_t n = 0; n < model_count; ++n) {
+        tag(in, "M");
+        const auto slot = word(in, 254);
+        if (inputs.models[slot]) throw std::runtime_error("duplicate model slot");
+        auto state = std::make_unique<mdl::ModelRecord>();
+        state->loadComplete = static_cast<std::uint8_t>(word(in, 1));
+        state->toonFlag = static_cast<std::uint8_t>(word(in, 1));
+        state->physicsMode = word(in, 2);
+        state->materialCount = word(in, 4096);
+        auto& materials = inputs.model_materials[slot];
+        materials.resize(state->materialCount);
+        std::uint64_t end = 0;
+        for (auto& material : materials) {
+            const auto count = word(in, INT32_MAX);
+            end += count;
+            if (end > UINT32_MAX || count % 3 != 0) throw std::runtime_error("model range");
+            material.faceVertexCount = count;
+            material.diffuse[3] = float_bits(in);
+            material.edgeColor[3] = float_bits(in);
+            material.flags = static_cast<std::uint8_t>(word(in, 255));
+            material.doubleSided = static_cast<std::uint8_t>(word(in, 1));
+        }
+        state->materials = materials.data();
+        inputs.models[slot] = std::move(state);
+    }
+    for (std::uint32_t n = 0; n < accessory_count; ++n) {
+        tag(in, "A");
+        const auto slot = word(in, 254);
+        if (inputs.accessories[slot]) throw std::runtime_error("duplicate accessory slot");
+        auto state = std::make_unique<mdl::AccessoryRecord>();
+        state->visible = static_cast<std::uint8_t>(word(in, 1));
+        state->shadowEnabled = static_cast<std::uint8_t>(word(in, 1));
+        state->additiveBlend = static_cast<std::uint8_t>(word(in, 1));
+        state->materialCount = word(in, 4096);
+        auto& materials = inputs.accessory_materials[slot];
+        materials.resize(state->materialCount);
+        for (auto& material : materials) material.Diffuse.a = float_bits(in);
+        state->materials = materials.data();
+        inputs.accessories[slot] = std::move(state);
+    }
+    std::string trailing;
+    if (in >> trailing) throw std::runtime_error("input trailing data");
+    if (!in.eof()) throw std::runtime_error("input stream failure");
+}
+
+void emit_accessory(int slot, DWORD material) {
+    std::cout << "CALL " << ordinal++ << " A " << slot << ' ' << material << " 0 0 0\n";
+}
+
+void evaluate_model(unsigned char* model, int slot) {
+@MODEL_LOAD@
+    auto* materials = mdl::Materials(model);
+    constexpr bool shadowOnly = true;
+@MODEL_MATERIALS@
+            const auto cull = @MODEL_CULL@;
+            std::cout << "CALL " << ordinal++ << " M " << slot << ' ' << i << ' '
+                      << firstIndex << ' ' << indexCount << ' ' << cull << '\n';
+        }
+@MODEL_ADVANCE@
+}
+
+void evaluate_accessories(Inputs* app) {
+@ACCESSORY_SLOTS@
+@ACCESSORY_MATERIALS@
+        mdl::Accessory(accessory)->currentMaterial = -1;
+    }
+}
+
+void evaluate_models(Inputs* app) {
+@MODEL_SLOTS@
+            evaluate_model(model, slot);
+        }
+}
+
+int main(int argc, char** argv) {
+    try {
+        if (argc != 2) throw std::runtime_error("one input path required");
+        std::ifstream in(argv[1], std::ios::binary);
+        if (!in) throw std::runtime_error("input open failed");
+        Inputs inputs;
+        read_inputs(in, inputs);
+        std::cout << "BEGIN MDS_SHADOW_ELIGIBILITY_V1\n";
+        for (int slot = 0; slot < 255; ++slot) {
+            if (inputs.models[slot])
+                for (std::uint32_t i = 0; i < inputs.models[slot]->materialCount; ++i)
+                    std::cout << "CANDIDATE M " << slot << ' ' << i << '\n';
+            if (inputs.accessories[slot])
+                for (std::uint32_t i = 0; i < inputs.accessories[slot]->materialCount; ++i)
+                    std::cout << "CANDIDATE A " << slot << ' ' << i << '\n';
+        }
+        evaluate_accessories(&inputs);
+        evaluate_models(&inputs);
+        std::cout << "END " << ordinal << '\n';
+        if (!std::cout) throw std::runtime_error("output write failed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 2;
+    }
+}

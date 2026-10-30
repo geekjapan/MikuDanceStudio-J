@@ -849,7 +849,7 @@ class Controls(unittest.TestCase):
         files={};captured=[];fixtures={label:fixture_output(label) for label in ('mesh_dump','x_files')}
         class Complete(Exception):pass
         def record(directory,label,argv,cwd,env,timeout=1200):
-            raw=(b'1'*40 if label=='git-head' else '\n'.join(r.PATHS).encode() if label=='git-paths' else
+            raw=(r.ACCEPTED_MAIN['merge'].encode() if label in ('git-head','git-first-parent-ancestry') else '\n'.join(r.PATHS).encode() if label=='git-paths' else
                  fixtures[label] if label in ('mesh_dump','x_files') else b'')
             files[directory/(label+'.stdout')]=raw;files[directory/(label+'.stderr')]=b''
             return {'status':0}
@@ -857,13 +857,13 @@ class Controls(unittest.TestCase):
             validator(label,stdout,stderr);captured.append(label)
             if label=='x_files':raise Complete()
         def parse(raw,language,observed):return {'dll':{'path':'synthetic-dll'}} if language=='native' else {}
-        with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}), \
+        with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':r.ACCEPTED_MAIN['merge']}), \
              patch.object(Path,'exists',return_value=False),patch.object(Path,'is_file',return_value=True),patch.object(Path,'mkdir'), \
              patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()),patch.object(Path,'write_bytes'), \
              patch.object(r,'record',record),patch.object(r.shutil,'copyfile'),patch.object(r.shutil,'copytree'),patch.object(r.c,'safe_tar',return_value={}), \
              patch.object(r.c,'source_inventory',return_value={}),patch.object(r,'inputs',return_value=[]),patch.object(r,'source_expected',return_value=({}, {}, {})), \
              patch.object(r,'native_commands',return_value=[]),patch.object(r,'parse',parse),patch.object(r,'cargo_binary',return_value='synthetic-cargo'), \
-             patch.object(r,'fixture_result',boundary),patch.object(r,'write_json'):
+             patch.object(r,'fixture_result',boundary),patch.multiple(r,write_json=unittest.mock.DEFAULT,acquire_source_admission=unittest.mock.DEFAULT):
             with self.assertRaises(Complete):r.run(out,build,toolchain)
         self.assertEqual(captured,['mesh_dump','x_files'])
 
@@ -998,6 +998,97 @@ class Controls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'ordinary linear descent'):r.generation_ancestry(directory,{'head':revision,'generation_ancestry':[chain[0],revision]})
             files[directory/'ancestry'/(chain[-1]+'.commit')]=raw+b'corrupt'
             with self.assertRaisesRegex(ValueError,'ancestry commit hash'):r.generation_ancestry(directory,manifest)
+
+    def admission_fixture(self):
+        def entry(raw):return ['100644',r.h.git_hash('blob',raw)]
+        def tree(entries):return b''.join((mode+' blob '+oid+'\t'+path).encode()+b'\0' for path,(mode,oid) in sorted(entries.items()))
+        def commit(entries,parents,message):
+            raw=('tree '+r.h.tree_hash(entries)+'\n'+''.join('parent '+p+'\n' for p in parents)+'author Test <test@example.invalid> 0 +0000\ncommitter Test <test@example.invalid> 0 +0000\n\n'+message+'\n').encode()
+            return r.h.git_hash('commit',raw),raw
+        common_bodies={'product/'+str(i):b'original '+str(i).encode() for i in range(9)}
+        common={p:entry(raw) for p,raw in common_bodies.items()}
+        tooling={p:b'frozen '+p.encode() for p in set(r.PATHS+r.CENSUS_PATHS)}
+        additions={**tooling,**{'renderer/'+str(i):b'renderer '+str(i).encode() for i in range(20)}}
+        renderer=common|{p:entry(raw) for p,raw in additions.items()}
+        imports={p:b'accepted main '+p.encode() for p in common}|{'main/'+str(i):b'new '+str(i).encode() for i in range(73)}
+        main={p:entry(raw) for p,raw in imports.items()}
+        merged=main|{p:entry(raw) for p,raw in additions.items()}
+        common_id,common_raw=commit(common,[],'common')
+        renderer_id,renderer_raw=commit(renderer,[r.PARENT],'renderer')
+        main_id,main_raw=commit(main,[common_id],'main')
+        merge_id,merge_raw=commit(merged,[renderer_id,main_id],'accepted merge')
+        base_bodies=common_bodies|{p:raw for p,raw in additions.items() if p not in tooling}
+        base={p:('100644',raw) for p,raw in base_bodies.items()}
+        base_entries={p:entry(raw) for p,raw in base_bodies.items()}
+        base_id,base_raw=commit(base_entries,[],'frozen product')
+        tooling['tools/renderer-floor-profile/run.py']=b'current reader'
+        final=merged|{p:entry(raw) for p,raw in tooling.items()}
+        head,head_raw=commit(final,[merge_id],'ordinary renderer followup')
+        anchors={'common':common_id,'renderer':renderer_id,'main':main_id,'merge':merge_id}
+        frames={name+'.tree':tree(entries) for name,entries in [('common',common),('renderer',renderer),('main',main),('merge',merged),('head',final)]}
+        frames.update({name+'.commit':raw for name,raw in [('common',common_raw),('renderer',renderer_raw),('main',main_raw),('merge',merge_raw),('base',base_raw),('head',head_raw)]})
+        frames.update({'ancestry/'+oid+'.commit':raw for oid,raw in [(renderer_id,renderer_raw),(merge_id,merge_raw),(head,head_raw)]})
+        frames['tail/'+head+'.tree']=tree(final);frames['paths']='\n'.join(sorted(set(imports)|set(r.CENSUS_PATHS))).encode()
+        bodies=base_bodies|imports|tooling
+        current={p:{'sha256':r.digest(raw),'mode':0o644} for p,raw in bodies.items()}
+        m={'head':head,'base':base_id,'paths':r.CENSUS_PATHS,'generation_ancestry':[renderer_id,merge_id,head],'source_admission':r.SOURCE_ADMISSION}
+        patches=[patch.object(r,'ACCEPTED_MAIN',anchors),patch.object(r,'ACCEPTED_MERGE_TREE',r.h.tree_hash(merged)),patch.object(r,'BASE',base_id),patch.object(r,'BASE_TREE',r.h.tree_hash(base_entries))]
+        return (m,frames,base,tooling,imports,current),patches,tree,commit
+
+    def test_source_admission_authenticates_full_union_and_current_bodies(self):
+        args,patches,_,_=self.admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            result=r.verify_source_data(*args)
+            self.assertEqual(set(result),set(args[-1]))
+            for index in (2,3,4,5):
+                for kind in ('missing','extra','changed'):
+                    bad=copy.deepcopy(args);mapping=bad[index];key=next(iter(mapping))
+                    if kind=='missing':del mapping[key]
+                    elif kind=='extra':mapping['unexpected']=copy.deepcopy(mapping[key])
+                    elif index==2:mapping[key]=('100755',mapping[key][1])
+                    elif index==5:mapping[key]['mode']=0o755
+                    else:mapping[key]+=b'corrupt'
+                    with self.subTest(index=index,kind=kind),self.assertRaises((ValueError,KeyError)):r.verify_source_data(*bad)
+
+    def test_source_admission_rejects_frames_tags_and_ancestry_drift(self):
+        args,patches,_,_=self.admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            r.verify_source_data(*args)
+            for name in args[1]:
+                for kind in ('missing','corrupt','duplicate'):
+                    bad=copy.deepcopy(args)
+                    if kind=='missing':del bad[1][name]
+                    elif kind=='corrupt':bad[1][name]+=b'corrupt'
+                    else:bad[1][name]+=bad[1][name]
+                    with self.subTest(frame=name,kind=kind),self.assertRaises((ValueError,KeyError,UnicodeError)):r.verify_source_data(*bad)
+            for tag in (None,'unknown',{},True):
+                bad=copy.deepcopy(args);bad[0]['source_admission']=tag
+                with self.subTest(tag=tag),self.assertRaises(ValueError):r.verify_source_data(*bad)
+            bad=copy.deepcopy(args);bad[1]['unexplained.tree']=bad[1]['main.tree']
+            with self.assertRaisesRegex(ValueError,'closed complete source frame'):r.verify_source_data(*bad)
+            chain=args[0]['generation_ancestry']
+            for ancestry in ([],chain[::-1],chain+chain,chain[1:],chain*6):
+                bad=copy.deepcopy(args);bad[0]['generation_ancestry']=ancestry
+                with self.subTest(ancestry=ancestry),self.assertRaises((ValueError,KeyError)):r.verify_source_data(*bad)
+
+    def test_source_admission_rejects_unapproved_tail_and_non_single_parent(self):
+        args,patches,tree,commit=self.admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            legal=r.verify_source_data(*args)
+            for kind in ('unapproved','second-parent','wrong-parent','deleted','mode'):
+                bad=copy.deepcopy(args);m,frames=bad[:2];entries=copy.deepcopy(legal);merge=r.ACCEPTED_MAIN['merge'];parents=[merge]
+                if kind=='unapproved':entries['main/0']=['100644',r.h.git_hash('blob',b'wrong')]
+                elif kind=='second-parent':parents.append(r.ACCEPTED_MAIN['main'])
+                elif kind=='wrong-parent':parents=[r.PARENT]
+                elif kind=='deleted':del entries['main/0']
+                else:entries['main/0'][0]='100755'
+                head,raw=commit(entries,parents,kind);m['generation_ancestry'][-1]=head;m['head']=head
+                frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                frames['head.commit']=raw;frames['head.tree']=tree(entries)
+                with self.subTest(kind=kind),self.assertRaises(ValueError):r.verify_source_data(*bad)
 
     def test_34_selected_range_capacity_preserves_byte_caps(self):
         raw,mapping,rows,_=code_fixture()
@@ -1736,7 +1827,7 @@ class CensusControls(unittest.TestCase):
             def save(path,value):saved[path]=copy.deepcopy(value);files[path]=json.dumps(value).encode()
             def record(directory,label,argv,cwd,env,timeout=1200):
                 calls.append((directory.name,label))
-                raw=b'1'*40 if label=='git-head' else '\n'.join(r.CENSUS_PATHS).encode() if label=='git-paths' else b''
+                raw=r.ACCEPTED_MAIN['merge'].encode() if label in ('git-head','git-first-parent-ancestry') else '\n'.join(r.CENSUS_PATHS).encode() if label=='git-paths' else b''
                 files[directory/(label+'.stdout')]=raw;files[directory/(label+'.stderr')]=b''
                 r.census_custody(out)
                 if label==failure_at:
@@ -1759,9 +1850,11 @@ class CensusControls(unittest.TestCase):
             recipe=r.recipe
             def inert_recipe(*args):return {key:value.replace('\\','/') if isinstance(value,str) else value for key,value in recipe(*args).items()}
             patches=[
+                patch.object(r,'acquire_source_admission'),
+                patch.object(r,'finish_source_admission'),
                 patch.object(r,'recipe',inert_recipe),
                 patch.object(r.sys,'platform','win32'),
-                patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}),
+                patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':r.ACCEPTED_MAIN['merge']}),
                 patch.object(Path,'exists',lambda path:path in files),
                 patch.object(Path,'is_file',return_value=True),
                 patch.object(Path,'mkdir'),

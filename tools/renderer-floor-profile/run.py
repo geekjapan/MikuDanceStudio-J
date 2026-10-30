@@ -25,6 +25,13 @@ CENSUS_PATHS = ['.github/workflows/renderer-closure-census.yml'] + [
     'tools/renderer-floor-profile/'+name for name in ('run.py','observer.rs','test_run.py')]
 CENSUS_LIMITS = {'ranges':4096,'bytes':16*1024*1024,'single':128*1024,'sections':96,'seconds':1200}
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
+SOURCE_ADMISSION = 'fixed-main-9df59aec-v1'
+ACCEPTED_MAIN = {
+    'common':'3cf0711d38f94e6be5c5d06129257d1c963f973a',
+    'renderer':'634a6d3c35cd0ea1229c56d9d2eb2b336a315f60',
+    'main':'816df8133b021359a2684c2ad5fd3666583c7c60',
+    'merge':'9df59aec035262382b5f96d100de00204f25a815'}
+ACCEPTED_MERGE_TREE = 'ffa0f0d5e9da6896b82d34bd91e98e9c3f3dd20b'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -1774,29 +1781,176 @@ def source_expected(base,observed,input_root,opt,census=False):
     return changes,patches,expected
 
 
-def generation_ancestry(out,m):
+def source_tree(raw):
+    require(type(raw) is bytes and raw.endswith(b'\0'),'complete source tree frame')
+    entries={}
+    for row in raw[:-1].split(b'\0'):
+        fields=row.split(b'\t');require(len(fields)==2,'source tree row framing')
+        meta,name=fields;parts=meta.split(b' ')
+        require(len(parts)==3,'source tree metadata framing')
+        mode,kind,oid=parts;path=name.decode('utf-8');h.safe_name(path)
+        require(mode in (b'100644',b'100755') and kind==b'blob' and re.fullmatch(b'[0-9a-f]{40}',oid) and path not in entries,'source tree mode/blob/unique path')
+        entries[path]=[mode.decode(),oid.decode()]
+    h.tree_hash(entries)
+    return entries
+
+
+def source_commit(raw,revision,entries=None,parents=None):
+    require(type(raw) is bytes and h.git_hash('commit',raw)==revision,'retained ancestry commit hash')
+    headers,separator,_=raw.partition(b'\n\n');require(separator,'source commit header termination')
+    lines=headers.decode('utf-8').splitlines()
+    trees=[line[5:] for line in lines if line.startswith('tree ')]
+    require(len(trees)==1 and lines[0]=='tree '+trees[0] and re.fullmatch('[0-9a-f]{40}',trees[0]),'source commit tree header')
+    actual=[line[7:] for line in lines if line.startswith('parent ')]
+    require(all(re.fullmatch('[0-9a-f]{40}',p) for p in actual),'source commit parent identity')
+    if entries is not None:require(trees==[h.tree_hash(entries)],'complete source commit/tree identity')
+    if parents is not None:require(actual==parents,'ordinary linear descent from frozen generation parent')
+    return trees[0]
+
+
+def source_ancestry(m,commits):
     chain=m['generation_ancestry']
-    require(type(chain) is list and 0<len(chain)<=16 and len(set(chain))==len(chain) and chain[-1]==m['head'],'bounded ordinary generation ancestry')
+    require(type(chain) is list and 0<len(chain)<=16 and all(type(revision) is str for revision in chain) and len(set(chain))==len(chain) and chain[-1]==m['head'],'bounded ordinary generation ancestry')
+    admitted=m.get('source_admission')==SOURCE_ADMISSION
+    require(m.get('source_admission') in (None,SOURCE_ADMISSION),'closed source admission tag')
+    if admitted:require(ACCEPTED_MAIN['merge'] in chain,'required accepted-main generation')
     parent=PARENT
     for revision in chain:
         require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'ancestry commit identity')
-        raw=(out/'ancestry'/(revision+'.commit')).read_bytes()
-        require(h.git_hash('commit',raw)==revision,'retained ancestry commit hash')
-        lines=raw.decode('utf-8').split('\n\n',1)[0].splitlines()
-        require(re.fullmatch('tree [0-9a-f]{40}',lines[0]) and [line for line in lines if line.startswith('parent ')]==['parent '+parent],'ordinary linear descent from frozen generation parent')
+        parents=[parent]
+        if admitted and revision==ACCEPTED_MAIN['merge']:
+            require(parent==ACCEPTED_MAIN['renderer'],'accepted renderer terminal generation')
+            parents.append(ACCEPTED_MAIN['main'])
+        source_commit(commits[revision],revision,parents=parents)
         parent=revision
 
 
+def generation_ancestry(out,m):
+    source_ancestry(m,{revision:(out/'ancestry'/(revision+'.commit')).read_bytes() for revision in m['generation_ancestry']})
+
+
+def verify_source_data(m,frames,base,tooling,imports,current):
+    require(m.get('source_admission')==SOURCE_ADMISSION,'required fixed source admission tag')
+    require(m['base']==BASE and m['paths'] in (PATHS,CENSUS_PATHS),'frozen measured source contract')
+    chain=m['generation_ancestry'];commits={revision:frames['ancestry/'+revision+'.commit'] for revision in chain}
+    source_ancestry(m,commits)
+    tail_revisions=chain[chain.index(ACCEPTED_MAIN['merge'])+1:]
+    expected_frames={name+suffix for name in ACCEPTED_MAIN for suffix in ('.commit','.tree')}|{'base.commit','head.commit','head.tree','paths'}|{'ancestry/'+revision+'.commit' for revision in chain}|{'tail/'+revision+'.tree' for revision in tail_revisions}
+    require(set(frames)==expected_frames,'closed complete source frame set')
+    trees={name:source_tree(frames[name+'.tree']) for name in ACCEPTED_MAIN}
+    for name,revision in ACCEPTED_MAIN.items():
+        source_commit(frames[name+'.commit'],revision,trees[name],
+                      [ACCEPTED_MAIN['renderer'],ACCEPTED_MAIN['main']] if name=='merge' else None)
+    require(h.tree_hash(trees['merge'])==ACCEPTED_MERGE_TREE,'fixed accepted merge tree')
+    delta=lambda a,b:{p for p in set(a)|set(b) if a.get(p)!=b.get(p)}
+    renderer=delta(trees['common'],trees['renderer'])
+    require(len(renderer)==27 and renderer<=trees['renderer'].keys() and not renderer&trees['main'].keys(),'complete disjoint renderer additions')
+    require(trees['merge']==trees['main']|{p:trees['renderer'][p] for p in renderer},'complete fixed parent union')
+    imported=delta(trees['renderer'],trees['merge'])
+    require(len(imported)==82 and len(imported-trees['renderer'].keys())==73 and imported<=trees['merge'].keys() and not imported&renderer,'complete main import additions/modifications')
+    require(set(imports)==imported,'complete main import bodies')
+    for path,raw in imports.items():require(h.git_hash('blob',raw)==trees['merge'][path][1],'authenticated main import body')
+    union=set(PATHS+CENSUS_PATHS)
+    paths=frames['paths'].decode('utf-8').splitlines()
+    require(len(paths)==len(set(paths)) and set(paths)==imported|(set(CENSUS_PATHS) if m['paths']==CENSUS_PATHS else union),'complete acquired source delta')
+    require(set(tooling)==union and union<=renderer,'complete seven current tooling bodies')
+    base_entries={p:[mode,h.git_hash('blob',raw)] for p,(mode,raw) in base.items()}
+    source_commit(frames['base.commit'],BASE,base_entries)
+    require(h.tree_hash(base_entries)==BASE_TREE,'frozen measured base tree')
+    require(trees['merge']==base_entries|{p:trees['merge'][p] for p in imported|union},'full frozen base/import/tooling provenance')
+    entries=base_entries|{p:trees['merge'][p] for p in imported}|{p:['100644',h.git_hash('blob',raw)] for p,raw in tooling.items()}
+    previous=trees['merge']
+    for revision in tail_revisions:
+        tail=source_tree(frames['tail/'+revision+'.tree'])
+        source_commit(commits[revision],revision,tail)
+        require(delta(previous,tail)<=set(m['paths']),'allowed ordinary renderer tail paths')
+        previous=tail
+    require(previous==entries,'complete current controller source bodies')
+    source_commit(frames['head.commit'],m['head'],entries)
+    require(source_tree(frames['head.tree'])==entries,'actual current HEAD tree frame')
+    bodies={p:raw for p,(_,raw) in base.items()}|imports|tooling
+    expected={p:{'sha256':digest(bodies[p]),'mode':int(mode,8)&0o777} for p,(mode,_) in entries.items()}
+    require(current==expected,'complete current checkout source identity')
+    return entries
+
+
+def retained_source_admission(out,m,complete=True):
+    root=out/'controller';frames={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file() and p.suffix in ('.commit','.tree')}
+    frames['paths']=(root/'paths').read_bytes()
+    base={p:('100755' if row['mode']&0o111 else '100644',(out/'sources/base'/p).read_bytes()) for p,row in m['base_inventory'].items()}
+    tooling={p:(out/'tooling'/p).read_bytes() for p in sorted(set(PATHS+CENSUS_PATHS))}
+    for p,raw in tooling.items():require(raw==(ROOT/p).read_bytes(),'source-bound current reader tooling')
+    imports={p.relative_to(root/'imports').as_posix():p.read_bytes() for p in (root/'imports').rglob('*') if p.is_file()}
+    before=load_json((out/'controller-source-before.json').read_bytes())
+    if complete:require(before==load_json((out/'controller-source-after.json').read_bytes()),'current source before/after identity')
+    entries=verify_source_data(m,frames,base,tooling,imports,before)
+    require(checkout_inventory(entries)==before,'source-bound current reader checkout')
+    return entries
+
+
+def checkout_inventory(entries):
+    result={}
+    for path,(mode,_) in entries.items():
+        source=ROOT/path
+        require(not source.is_symlink() and source.is_file() and source.stat().st_nlink==1,'ordinary current checkout member')
+        actual=source.stat().st_mode&0o777
+        if sys.platform=='win32':actual=int(mode,8)&0o777
+        result[path]={'sha256':digest(source.read_bytes()),'mode':actual}
+    return result
+
+
+def acquire_source_admission(out,m,env):
+    root=out/'controller';root.mkdir()
+    def acquire(label,argv,dest):
+        require(record(out,label,argv,ROOT,env)['status']==0,'controller source identity command')
+        dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(out/(label+'.stdout'),dest)
+    for name,revision in ACCEPTED_MAIN.items():
+        acquire('controller-'+name+'-commit',['git','cat-file','commit',revision],root/(name+'.commit'))
+        acquire('controller-'+name+'-tree',['git','ls-tree','-rz','--full-tree',revision],root/(name+'.tree'))
+    shutil.copyfile(out/'base.commit',root/'base.commit');shutil.copyfile(out/'head.commit',root/'head.commit')
+    shutil.copyfile(out/'git-paths.stdout',root/'paths')
+    acquire('controller-current-tree',['git','ls-tree','-rz','--full-tree','HEAD'],root/'head.tree')
+    for revision in m['generation_ancestry']:
+        dest=root/'ancestry'/(revision+'.commit');dest.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(out/'ancestry'/(revision+'.commit'),dest)
+    chain=m['generation_ancestry'];require(ACCEPTED_MAIN['merge'] in chain,'required accepted-main generation')
+    for revision in chain[chain.index(ACCEPTED_MAIN['merge'])+1:]:
+        acquire('controller-tail-'+revision,['git','ls-tree','-rz','--full-tree',revision],root/'tail'/(revision+'.tree'))
+    renderer=source_tree((root/'renderer.tree').read_bytes());merged=source_tree((root/'merge.tree').read_bytes())
+    for path in sorted(set(renderer)|set(merged)):
+        if renderer.get(path)!=merged.get(path):
+            require(path in merged,'main source deletion prohibited')
+            acquire('controller-import-'+digest(path.encode()),['git','cat-file','blob',merged[path][1]],root/'imports'/path)
+    entries=source_tree((root/'head.tree').read_bytes())
+    before=checkout_inventory(entries);write_json(out/'controller-source-before.json',before)
+    return retained_source_admission(out,m,False)
+
+
+def finish_source_admission(out,m,env):
+    for label,argv in [('controller-final-head',['git','rev-parse','HEAD']),('controller-final-status',['git','status','--porcelain']),('controller-final-tree',['git','ls-tree','-rz','--full-tree','HEAD'])]:
+        require(record(out,label,argv,ROOT,env)['status']==0,'final controller source identity command')
+    require((out/'controller-final-head.stdout').read_text().strip()==m['head'] and not (out/'controller-final-status.stdout').read_bytes(),'final clean exact workflow HEAD')
+    require((out/'controller-final-tree.stdout').read_bytes()==(out/'controller/head.tree').read_bytes(),'final actual HEAD tree unchanged')
+    entries=source_tree((out/'controller/head.tree').read_bytes())
+    write_json(out/'controller-source-after.json',checkout_inventory(entries))
+    retained_source_admission(out,m)
+
+
 def verify_sources(out,m):
+    require('source_admission' in m or not (out/'controller').exists(),'current source admission cannot fall back to legacy')
     base=out/'sources/base';base_inv=c.source_inventory(base)
     require(base_inv==m['base_inventory'],'complete base source closure')
     entries={name:['100755' if row['mode']&0o111 else '100644',h.git_hash('blob',(base/name).read_bytes())] for name,row in base_inv.items()}
     h.commit_proof(out/'base.commit',BASE,entries)
     commit=(out/'base.commit').read_text();require(commit.splitlines()[0]=='tree '+BASE_TREE,'base tree identity')
-    for path in PATHS:
-        raw=(out/'tooling'/path).read_bytes();require(raw==(ROOT/path).read_bytes() and path not in entries,'six new tooling paths')
-        entries[path]=['100644',h.git_hash('blob',raw)]
-    h.commit_proof(out/'head.commit',m['head'],entries)
+    if 'source_admission' in m:
+        entries=retained_source_admission(out,m)
+        h.commit_proof(out/'head.commit',m['head'],entries)
+    else:
+        for path in PATHS:
+            raw=(out/'tooling'/path).read_bytes();require(raw==(ROOT/path).read_bytes() and path not in entries,'six new tooling paths')
+            entries[path]=['100644',h.git_hash('blob',raw)]
+        h.commit_proof(out/'head.commit',m['head'],entries)
     generation_ancestry(out,m)
     require(input_manifest(inputs(lambda p:(base/p).read_bytes()))==m['inputs'],'closed input manifest')
     for row in inputs(lambda p:(base/p).read_bytes()):require((out/'inputs'/(row['id']+'.x')).read_bytes()==row['bytes'],'retained exact input bytes')
@@ -1898,25 +2052,26 @@ def run(out,build_root,toolchain,census_mode=False):
         require(record(out,label,argv,ROOT,env)['status']==0,'source identity command')
     head=(out/'git-head.stdout').read_text().strip()
     require(head==os.environ.get('GITHUB_SHA') and not (out/'git-status.stdout').read_bytes(),'clean exact workflow HEAD')
-    require(set((out/'git-paths.stdout').read_text().splitlines())==set(scope),'exact source paths')
     shutil.copyfile(out/'source-archive.stdout',out/'base-source.tar');base=out/'sources/base'
     base_modes=c.safe_tar(out/'base-source.tar',base)
     for path,row in base_modes.items():c.TRANSPORT_MODES[str((base/path).resolve())]=row['mode']
     for name in ('base','head'):shutil.copyfile(out/(name+'-commit.stdout'),out/(name+'.commit'))
-    require(record(out,'git-ancestry',['git','rev-list','--reverse',PARENT+'..HEAD'],ROOT,env)['status']==0,'ordinary generation ancestry command')
-    chain=(out/'git-ancestry.stdout').read_text().splitlines();(out/'ancestry').mkdir()
+    require(record(out,'git-first-parent-ancestry',['git','rev-list','--first-parent','--reverse',PARENT+'..HEAD'],ROOT,env)['status']==0,'first-parent renderer generation ancestry command')
+    chain=(out/'git-first-parent-ancestry.stdout').read_text().splitlines();(out/'ancestry').mkdir()
+    require(0<len(chain)<=16 and len(set(chain))==len(chain) and chain[-1]==head and ACCEPTED_MAIN['merge'] in chain,'bounded acquired first-parent ancestry')
     for revision in chain:
         require(re.fullmatch('[0-9a-f]{40}',revision),'producer ancestry commit identity')
         label='ancestor-'+revision
         require(record(out,label,['git','cat-file','commit',revision],ROOT,env)['status']==0,'ancestor source identity command')
         shutil.copyfile(out/(label+'.stdout'),out/'ancestry'/(revision+'.commit'))
-    for path in sorted(set(PATHS+scope)):
+    for path in sorted(set(PATHS+CENSUS_PATHS)):
         dest=out/'tooling'/path;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/path,dest)
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
     m={'schema':CENSUS_SCHEMA if census_mode else SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':scope,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
-       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,
+       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,'source_admission':SOURCE_ADMISSION,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
+    acquire_source_admission(out,m,env)
     parsed={};variant_results={}
     for opt in ('Od','O2'):
         for variant in ('control','observed'):
@@ -1989,6 +2144,7 @@ def run(out,build_root,toolchain,census_mode=False):
                     receipts=[name for name in custody['receipts'] if Path(name).parent==Path(id)]
                     write_json(directory/'variant-closure.json',{'schema':CENSUS_SCHEMA,'writers_closed':True,'command_count':len(receipts),'classification':'closed_commands' if receipts else 'no_writer_started','status':variant_results.get(id,'CENSUS_INCOMPLETE_UNRESOLVED')})
                     write_json(out/'manifest.json',m)
+    finish_source_admission(out,m,env)
     if census_mode:
         result={'schema':CENSUS_SCHEMA,'variants':variant_results,'expected_variants':['control-Od','observed-Od','control-O2','observed-O2'],
                 'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',

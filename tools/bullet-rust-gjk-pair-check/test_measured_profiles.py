@@ -319,7 +319,7 @@ class DynamicsC23RepairAdmissionTests(unittest.TestCase):
                 change(value)
                 with self.subTest(host=host, change=change), self.assertRaisesRegex(ValueError, 'schema'):
                     measured_profiles.load_manifest(SimpleNamespace(read_text=lambda: json.dumps(value)))
-                if value['schema_version'] == 12:
+                if value['schema_version'] == 13:
                     with self.subTest(composed=host, change=change), self.assertRaisesRegex(ValueError, 'schema'):
                         measured_profiles.approved_source_map(value, host)
 
@@ -589,6 +589,105 @@ class MeasuredProfileTests(unittest.TestCase):
             self.assertEqual(mutations.classify(SimpleNamespace(returncode=0, stdout=broken, stderr=''))['status'], 'validation-gap')
 
 
+class MacosSupplementalMeasurementTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
+
+    def load_changed(self, change):
+        value = copy.deepcopy(self.manifest)
+        change(value)
+        return measured_profiles.load_manifest(SimpleNamespace(read_text=lambda: json.dumps(value)))
+
+    def test_old_and_new_macos_tuples_select_exactly_one_record(self):
+        old = self.manifest['profiles']['macos-arm64']['measurements'][0]
+        new = self.manifest['supplemental_measurements'][1]
+        self.assertEqual(new['evidence_head'], '10bfc00bf80178818ca42cf316ed366a4fe435cf')
+        self.assertEqual((new['run_id'], new['job_id'], new['artifact_id']),
+                         (41028942175, 123978074629, 12966314066))
+        for measurement in [old, new]:
+            provenance = measurement['compiler_provenance']
+            for text in [provenance, provenance.replace('\n', '\r\n')]:
+                self.assertIs(measured_profiles.select_measurement(self.manifest, 'macos-arm64', text), measurement)
+            for broken in [provenance.replace('macOS-', 'macOS-unknown-'),
+                           provenance.replace('clang', 'unknown-clang'), provenance + 'extra\n',
+                           provenance.replace('\n', '\r\n', 1)]:
+                with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
+                    measured_profiles.select_measurement(self.manifest, 'macos-arm64', broken)
+        duplicate = copy.deepcopy(self.manifest)
+        duplicate['supplemental_measurements'].append(copy.deepcopy(new))
+        with self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
+            measured_profiles.select_measurement(duplicate, 'macos-arm64', new['compiler_provenance'])
+        for host in measured_profiles.HOSTS - {'macos-arm64'}:
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
+                measured_profiles.select_measurement(self.manifest, host, new['compiler_provenance'])
+
+    def test_new_record_amendments_and_global_duplicates_are_rejected(self):
+        def record(value):
+            return value['supplemental_measurements'][1]
+        def provenance(value):
+            record(value)['compiler_provenance'] += 'extra\n'
+            record(value)['provenance_sha256'] = measured_profiles.sha(record(value)['compiler_provenance'].encode())
+        changes = [lambda v: v.update(schema_version=12),
+                   lambda v: v['supplemental_measurements'].pop(),
+                   lambda v: v['supplemental_measurements'].reverse(),
+                   lambda v: v['supplemental_measurements'].append(copy.deepcopy(record(v))),
+                   lambda v: record(v).update(host='linux-arm64'),
+                   lambda v: record(v).update(host=[]), provenance,
+                   lambda v: record(v)['captured_verification_sha256'].pop(next(iter(record(v)['captured_verification_sha256']))),
+                   lambda v: record(v)['captured_verification_sha256'].update(extra='0' * 64),
+                   lambda v: record(v)['captured_verification_sha256'].update(
+                       {next(iter(record(v)['captured_verification_sha256'])): '0' * 64})]
+        for field in measured_profiles.MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'}:
+            changes.append(lambda v, field=field: record(v).pop(field))
+        for field in ['evidence_head', 'zip_sha256', 'capture_source_map_sha256',
+                      'source_before_sha256', 'source_after_sha256', 'provenance_sha256']:
+            changes.append(lambda v, field=field: record(v).update({field: '0' * (40 if field == 'evidence_head' else 64)}))
+        for field in ['run_id', 'job_id', 'artifact_id']:
+            for bad in [True, 0, '1', 1]:
+                changes.append(lambda v, field=field, bad=bad: record(v).update({field: bad}))
+        for field in ['job_id', 'artifact_id', 'compiler_provenance']:
+            for previous in [self.manifest['supplemental_measurements'][0],
+                             self.manifest['profiles']['macos-arm64']['measurements'][0]]:
+                changes.append(lambda v, field=field, previous=previous: record(v).update({field: previous[field]}))
+        def command(value):
+            commands = value['profiles']['macos-arm64']['commands']
+            commands[next(iter(commands))][0] = 'unmeasured-compiler'
+        def stream(value):
+            streams = value['profiles']['macos-arm64']['streams']
+            streams[next(iter(streams))]['raw_sha256'] = '0' * 64
+        changes.extend([command, stream])
+        for change in changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(change)
+
+    def test_fixed_capture_maps_preserve_history_and_ignore_current_generation(self):
+        protected = measured_profiles.macos_capture_protected_source_map(self.manifest)
+        self.assertEqual(len(protected), 472)
+        self.assertEqual(measured_profiles.source_map_digest(protected),
+                         '1e930187f12f91991098407bc79a1555735230a20c14272b3f62286fe87f8368')
+        captured = self.manifest['supplemental_measurements'][1]['captured_verification_sha256']
+        self.assertEqual(measured_profiles.source_map_digest({**protected, **captured}),
+                         'e5f99b38cdba3a16e5c396172971ce76c3f15db9045c4ab9bd2b98310cd07476')
+        self.assertEqual(measured_profiles.source_map_digest(self.manifest['supplemental_measurements'][:1]),
+                         '9ef6deafdf627e0e8df714ae0038af947127768ca9f5eb2e46d24a27d022c12c')
+        self.assertEqual(measured_profiles.source_map_digest({name: self.manifest[name]
+                         for name in ['profiles', 'frozen_fixtures']}),
+                         'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501')
+        changed = copy.deepcopy(self.manifest)
+        changed['verification_sha256'] = None
+        changed['future_source_admission'] = {'anything': '0' * 64}
+        with patch.object(measured_profiles, 'approved_source_map', side_effect=AssertionError('current source used')), \
+                patch.object(measured_profiles, 'current_verification_map', side_effect=AssertionError('current verification used')):
+            self.assertEqual(measured_profiles.macos_capture_protected_source_map(changed), protected)
+        path = next(iter(changed['mmd_collision_world_source_admission']['hosts']['macos-arm64']['additions']))
+        changed['mmd_collision_world_source_admission']['hosts']['macos-arm64']['additions'][path] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'immutable macOS captured protected source'):
+            measured_profiles.macos_capture_protected_source_map(changed)
+        with patch.object(measured_profiles, 'current_verification_map',
+                          side_effect=lambda manifest, host: {path: '1' * 64 for path in manifest['verification_sha256'][host]}):
+            self.assertEqual(measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json'), self.manifest)
+
+
 class FiniteMeasurementTests(unittest.TestCase):
     def setUp(self):
         self.manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
@@ -777,7 +876,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                             stream=check.stream, transport=check.transport)
 
     def test_supplemental_exact_selection_and_global_identities(self):
-        measurement, = self.manifest['supplemental_measurements']
+        measurement = self.manifest['supplemental_measurements'][0]
         self.assertEqual(measurement['evidence_head'], '46b54133d247322027915733b4acf51574298c68')
         self.assertEqual((measurement['run_id'], measurement['job_id'], measurement['artifact_id']),
                          (40550671157, 122353217320, 12755645749))
@@ -861,7 +960,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.load_changed(change)
 
     def test_captured_bridge_is_independent_of_current_format_and_verification(self):
-        measurement, = self.manifest['supplemental_measurements']
+        measurement = self.manifest['supplemental_measurements'][0]
         self.assertEqual(measured_profiles.source_map_digest(self.manifest['source_admission']),
                          'f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63')
         for host in measured_profiles.HOSTS:

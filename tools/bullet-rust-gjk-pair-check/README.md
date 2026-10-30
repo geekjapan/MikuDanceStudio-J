@@ -195,3 +195,29 @@ before its single replacement; the complete current closure must still match.
 The original schema 12 admission digest and historical measurements remain
 unchanged. `current_source.mmd_collision_world_format_admission` records this
 additional source-only contract with execution `UNRUN`.
+
+Schema 13 adds exactly one macOS ARM64 supplemental observation after the existing
+Linux ARM64 record. It retains source head
+`10bfc00bf80178818ca42cf316ed366a4fe435cf`, run `41028942175` attempt 1,
+job `123978074629` (`Existing collision gates (macos-15)`), and artifact
+`12966314066` (`mmd-regression-macos-15`). The ZIP SHA256 is
+`f59824334710948e05363504fae79d220c808be90096814cf69ef608796f8d62`.
+The sole provenance change is `macOS-15.7.9` to `macOS-15.8.2`. The remaining
+12 lines, all three canonical commands, and all twelve stream identities match
+the original macOS profile. The full Rust baseline passed, native and observer
+outputs match, the independent fallback matches, and source integrity is unchanged.
+
+The validator reconstructs this observation from the explicitly fixed admission
+layers through the MMD format replacement. Its 472 protected paths have canonical
+SHA256 `1e930187f12f91991098407bc79a1555735230a20c14272b3f62286fe87f8368`.
+The ten captured verification hashes have their own fixed digest. Together they
+produce `e5f99b38cdba3a16e5c396172971ce76c3f15db9045c4ab9bd2b98310cd07476`.
+Current verification and future admissions cannot rewrite these capture maps.
+The old supplemental projection, historical profiles, fixtures, and admissions
+retain their previous identities. Complete normalized provenance still selects
+exactly one record, with only CRLF transport normalization.
+
+This discovery run failed at the unknown provenance guard. Its mutation gate was
+`not-run`. The observation supplies no successful measured-profile receipt or
+final-head native acceptance. Fresh exact-head hosted capture, compiled mutations,
+suite baselines, final integrity, and independent acceptance remain `UNRUN`.

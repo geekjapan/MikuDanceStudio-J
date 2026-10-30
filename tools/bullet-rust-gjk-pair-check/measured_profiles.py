@@ -41,6 +41,10 @@ def canonical_command(command, root, output):
 
 MANIFEST_PATH = 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'
 SUPPLEMENTAL_SHA256 = '9ef6deafdf627e0e8df714ae0038af947127768ca9f5eb2e46d24a27d022c12c'
+MACOS_SUPPLEMENTAL_SHA256 = '2e189e3049060b4409f692d3cc94bb4f99cd24651b17fa941cecc7c5caff72a0'
+MACOS_CAPTURE_HEAD = '10bfc00bf80178818ca42cf316ed366a4fe435cf'
+MACOS_CAPTURE_PROTECTED_SHA256 = '1e930187f12f91991098407bc79a1555735230a20c14272b3f62286fe87f8368'
+MACOS_CAPTURE_VERIFICATION_SHA256 = 'e5194fbae277658529c65e7a5bb8f91aa6306f6ca105fc263a06c62952e39819'
 BRIDGE_SHA256 = 'f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63'
 REGISTRATION_FORMAT = {
     'kind': 'fixed-registration-leading-lf-removal',
@@ -182,7 +186,7 @@ def normalize_provenance(value):
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
     fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'mmd_collision_world_source_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 12, 'schema_version')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -273,18 +277,43 @@ def load_manifest(path):
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
-    schema(isinstance(supplemental, list) and len(supplemental) == 1, 'one supplemental measurement')
-    for measurement in supplemental:
+    schema(isinstance(supplemental, list) and len(supplemental) == 2, 'two supplemental measurements')
+    for host, measurement in zip(['linux-arm64', 'macos-arm64'], supplemental):
         fields(measurement, MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'}, 'supplemental measurement')
-        schema(measurement['host'] == 'linux-arm64', 'supplemental host')
+        schema(measurement['host'] == host, 'ordered supplemental host')
         captured = measurement['captured_verification_sha256']
         hash_map(captured, 10, 'captured verification')
         schema(set(captured) == verification_paths, 'captured verification paths')
-        protected = bridge_protected_source_map(manifest, measurement['host'])
+        if host == 'macos-arm64':
+            schema(measurement['evidence_head'] == MACOS_CAPTURE_HEAD, 'macOS captured source generation')
+            schema(source_map_digest(captured) == MACOS_CAPTURE_VERIFICATION_SHA256,
+                   'immutable macOS captured verification')
+            protected = macos_capture_protected_source_map(manifest)
+        else:
+            protected = bridge_protected_source_map(manifest, host)
         validate_measurement(measurement, source_map_digest({**protected, **captured}),
                              MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'})
-    schema(source_map_digest(supplemental) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
+    schema(source_map_digest(supplemental[:1]) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
+    schema(source_map_digest(supplemental[1]) == MACOS_SUPPLEMENTAL_SHA256, 'immutable macOS supplemental projection')
     return manifest
+
+
+def macos_capture_protected_source_map(manifest):
+    # Reconstruct the fixed 10bf generation without current verification or later admissions.
+    protected = bridge_protected_source_map(manifest, 'macos-arm64')
+    protected[REGISTRATION_FORMAT['path']] = REGISTRATION_FORMAT['new_sha256']
+    for name in ['broadphase_source_admission', 'discrete_world_source_admission',
+                 'dynamics_world_source_admission', 'dynamics_world_format_admission',
+                 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission',
+                 'mmd_collision_world_source_admission']:
+        delta = manifest[name]['hosts']['macos-arm64']
+        protected.update({path: identity['new_sha256'] for path, identity in delta['replacements'].items()})
+        protected.update(delta.get('additions', {}))
+    protected = apply_mmd_collision_format_admission(protected, 'macos-arm64')
+    hash_map(protected, 472, 'macOS captured protected source')
+    schema(source_map_digest(protected) == MACOS_CAPTURE_PROTECTED_SHA256,
+           'immutable macOS captured protected source')
+    return protected
 
 
 def bridge_protected_source_map(manifest, host):
@@ -307,7 +336,7 @@ def bridge_protected_source_map(manifest, host):
 
 
 def approved_source_map(manifest, host):
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 12, 'schema_version')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
     protected = bridge_protected_source_map(manifest, host)
     admission = manifest['registration_format_admission']
     schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')

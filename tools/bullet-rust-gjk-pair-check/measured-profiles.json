@@ -1,5 +1,5 @@
 {
-  "schema_version": 11,
+  "schema_version": 12,
   "status": "reviewed-current-source-expectation-execution-pending",
   "frozen_fixtures": {
     "fallback-inputs.tsv": {
@@ -4403,6 +4403,62 @@
             "old_sha256": "dd5e53d0c59deb88247d3239dc82b2ca8e888401b216e221aefec30021023fab",
             "new_sha256": "7180e5c3e6c26fa4580bb845bd2fc36683c37a2a5fbdb6b5b409263675d171ef"
           }
+        }
+      }
+    }
+  },
+  "mmd_collision_world_source_admission": {
+    "kind": "private-mmd-collision-world-source-only",
+    "base_head": "f6ab4feef335e76d590c3f8a9c5f532dec73ba70",
+    "base_tree": "005ae1183e9972df56689796cf87589117418e7d",
+    "execution": "UNRUN",
+    "hosts": {
+      "macos-arm64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "41b783538971780de3f5d4a0b0a8c112f128969ede559831370a482ed9d76c58",
+            "new_sha256": "0eed3be19462611221283dba7fa5b514bc07a751c6aa252d06fde32efe05b084"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/mmd_collision_world.rs": "7e676f31b294c6d30ed0d9d7e5a6bb0b3bc2e092292d240a02f7bd9abe56c01c",
+          "rust/crates/mds-bullet/tests/mmd_collision_world.rs": "e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd"
+        }
+      },
+      "linux-x64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "41b783538971780de3f5d4a0b0a8c112f128969ede559831370a482ed9d76c58",
+            "new_sha256": "0eed3be19462611221283dba7fa5b514bc07a751c6aa252d06fde32efe05b084"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/mmd_collision_world.rs": "7e676f31b294c6d30ed0d9d7e5a6bb0b3bc2e092292d240a02f7bd9abe56c01c",
+          "rust/crates/mds-bullet/tests/mmd_collision_world.rs": "e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd"
+        }
+      },
+      "linux-arm64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "41b783538971780de3f5d4a0b0a8c112f128969ede559831370a482ed9d76c58",
+            "new_sha256": "0eed3be19462611221283dba7fa5b514bc07a751c6aa252d06fde32efe05b084"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/mmd_collision_world.rs": "7e676f31b294c6d30ed0d9d7e5a6bb0b3bc2e092292d240a02f7bd9abe56c01c",
+          "rust/crates/mds-bullet/tests/mmd_collision_world.rs": "e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd"
+        }
+      },
+      "windows-x64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "fe99afac1dde790da8731a3ae9dc594f73df8e0b88a0ae04f3ed37b055e85696",
+            "new_sha256": "42ecdfc0ab768b3ed403d89617e056fd61e01ef9118426c7cdd1f81beecfc9c0"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/mmd_collision_world.rs": "fb6ab2fbb2ba6a62f37b2a0a4293d7262676cc4072134f2608f4f595d609407d",
+          "rust/crates/mds-bullet/tests/mmd_collision_world.rs": "e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd"
         }
       }
     }

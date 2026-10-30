@@ -156,7 +156,7 @@ def compiler_environment():
 
 def identity():
     event_path = os.environ.get('GITHUB_EVENT_PATH')
-    event = json.loads(Path(event_path).read_text()) if event_path else {}
+    event = json.loads(Path(event_path).read_text(encoding='utf-8')) if event_path else {}
     pr = event.get('pull_request', {})
     data = {k: os.environ.get(k) for k in ('GITHUB_EVENT_NAME', 'GITHUB_SHA', 'GITHUB_REF',
             'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB',

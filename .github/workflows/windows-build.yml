@@ -56,6 +56,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -O tools/bullet-rust-dbvt-check/test_check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test UTF-8 GitHub event identity
+        run: |
+          python -I tools/bullet-dbvt-cmake-reference/test_check.py Controls.test_identity_captures_checkout_and_pr_not_only_event_sha
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -O tools/bullet-dbvt-cmake-reference/test_check.py Controls.test_identity_captures_checkout_and_pr_not_only_event_sha
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build vendored Bullet and configure dependencies
         run: python -I tools/bullet-dbvt-cmake-reference/check.py prepare --out-dir out/ci/dbvt-reference
       - name: Configure Release

@@ -220,7 +220,7 @@ def capture(out, authority_path):
                              'object': obj.name, 'object_sha256': digest(recorder.read(obj))})
             if source.stem in {'btDbvt', 'btDbvtBroadphase'}:
                 flags = native_flags(ROOT)
-                expanded = recorder.run('expanded-' + source.stem,
+                expanded = recorder.run('expanded-' + source.stem.lower(),
                     [compiler, *flags, '/E', source] if os.name == 'nt' else [compiler, *flags, '-E', source],
                     cwd=ROOT / 'rust', inputs=[source])
                 observed_policy = policy(expanded.decode())

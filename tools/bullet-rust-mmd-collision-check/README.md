@@ -33,6 +33,9 @@ recipe checks command order, arguments, output roles, and corpus inputs. Rust
 and native linker identities are recorded before use. The driver selects the
 recorded Rust linker and the recorded non-Windows native linker explicitly.
 
+Expanded-policy command labels use lowercase source stems. Source paths and
+`policy-btDbvt.json` / `policy-btDbvtBroadphase.json` retain their exact casing.
+
 Compiled controls must exit normally, produce a complete valid lifetime trace,
 match a fresh same-host clean baseline, and differ in their intended semantic
 fields. Algorithm and manifold generations have separate lifetime checks. The

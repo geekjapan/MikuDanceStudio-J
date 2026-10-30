@@ -882,7 +882,7 @@ def command_schedule(context, sources, libraries):
         compile_object(source,obj,f'compile-{i:03d}')
         objects.append(obj)
         if source.stem in {'btDbvt','btDbvtBroadphase'}:
-            add('expanded-'+source.stem,[tools['compiler'],*flags(root),'/E' if win else '-E',source],[source])
+            add('expanded-'+source.stem.lower(),[tools['compiler'],*flags(root),'/E' if win else '-E',source],[source])
     macro, macro_obj, macro_exe = out / 'effective-macros.cpp', out / ('effective-macros'+extension), out / ('effective-macros'+suffix)
     compile_object(macro,macro_obj,'macro-build')
     add('macro-link',[tools['compiler'],'/nologo','/MD',macro_obj,'/Fe'+str(macro_exe)] if win else
@@ -1139,7 +1139,7 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
         require(path(raw('native-linker-path.stdout').decode().strip()).name == path(context['tools']['native_linker']).name,
                 'actual compiler-selected native linker binding')
     for stem in ['btDbvt','btDbvtBroadphase']:
-        observed = policy(raw('expanded-'+stem+'.stdout').decode())
+        observed = policy(raw('expanded-'+stem.lower()+'.stdout').decode())
         require(data('policy-'+stem+'.json') == observed and observed['policy'] == ('mmd-win64-sse' if win else 'generic-reference'),
                 'actual compiled native archive policy')
     archive_name = 'BulletMmd.lib' if win else 'libBulletMmd.a'

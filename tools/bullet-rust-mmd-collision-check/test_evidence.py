@@ -294,15 +294,24 @@ class CommandRecipeTests(unittest.TestCase):
     def test_inert_command_recipe_preserves_order_roles_and_generation(self):
         from evidence import command_schedule
         from hooks import MUTANTS
+        from pathlib import PureWindowsPath, PurePosixPath
         for system, root, out, exe in [('Linux','/source','/capture','/tool'),
                                       ('Darwin','/source','/capture','/tool'),
                                       ('Windows','C:/source','D:/capture','C:/tool.exe')]:
             context = {'schema':1,'system':system,'root':root,'out':out,
                        'tools':{name:exe for name in ['python','git','rustup','rustc','rust_linker','compiler','archiver','native_linker']}}
-            sources = ['recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp']
+            sources = ['recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/' + stem + '.cpp'
+                       for stem in ['btDbvt', 'btDbvtBroadphase']]
             recipe = command_schedule(context,sources,[])
             labels = [entry.label for entry in recipe]
             self.assertEqual(len(labels),len(set(labels)))
+            for label in labels:
+                self.assertRegex(label, r'^[a-z0-9-]+$')
+            for source, label in zip(sources, ['expanded-btdbvt', 'expanded-btdbvtbroadphase']):
+                expanded = next(entry for entry in recipe if entry.label == label)
+                path = PureWindowsPath if system == 'Windows' else PurePosixPath
+                self.assertEqual(expanded.inputs, (str(path(root) / source),))
+                self.assertEqual(expanded.argv[-1], expanded.inputs[0])
             self.assertEqual(labels[:2],['git-head','git-status'])
             self.assertLess(labels.index('compile-000-discovery'),labels.index('compile-000'))
             self.assertLess(labels.index('native-run'),labels.index('observed-run'))
@@ -318,6 +327,29 @@ class CommandRecipeTests(unittest.TestCase):
             self.assertTrue(next(entry for entry in recipe if entry.label == 'native-run').corpus)
             self.assertTrue(next(entry for entry in recipe if entry.label == 'observed-consumer-build').compile)
             self.assertTrue(all(len(entry.outputs)==1 for entry in recipe if entry.compile))
+
+    def test_expanded_policy_streams_keep_independent_semantic_binding(self):
+        import ast
+        from pathlib import Path
+        tree = ast.parse((Path(__file__).resolve().parent / 'evidence.py').read_text())
+        block = next(node for node in ast.walk(tree) if isinstance(node, ast.For)
+                     and isinstance(node.target, ast.Name) and node.target.id == 'stem'
+                     and ast.literal_eval(node.iter) == ['btDbvt', 'btDbvtBroadphase'])
+        code = compile(ast.Module(body=[block], type_ignores=[]), 'expanded-admission', 'exec')
+        for win in [False, True]:
+            policies = {'policy-btDbvt.json': {'policy': 'mmd-win64-sse' if win else 'generic-reference', 'source': 'tree'},
+                        'policy-btDbvtBroadphase.json': {'policy': 'mmd-win64-sse' if win else 'generic-reference', 'source': 'broadphase'}}
+            streams = {'expanded-btdbvt.stdout': b'tree', 'expanded-btdbvtbroadphase.stdout': b'broadphase'}
+            def policy(raw):
+                return {'policy': 'mmd-win64-sse' if win else 'generic-reference', 'source': raw}
+            def require(value, message):
+                if not value:
+                    raise ValueError(message)
+            bindings = dict(win=win, policy=policy, require=require, data=policies.__getitem__, raw=streams.__getitem__)
+            exec(code, bindings)
+            streams['expanded-btdbvt.stdout'], streams['expanded-btdbvtbroadphase.stdout'] = b'broadphase', b'tree'
+            with self.assertRaisesRegex(ValueError, 'actual compiled native archive policy'):
+                exec(code, bindings)
 
 
 if __name__ == '__main__':

@@ -23,6 +23,36 @@ class Memory:
 
 
 class CorpusTests(unittest.TestCase):
+    def test_expanded_commands_preserve_source_and_policy_names(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        tree = ast.parse((Path(__file__).resolve().parent / 'check.py').read_text())
+        block = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
+                     and ast.unparse(node.test) == "source.stem in {'btDbvt', 'btDbvtBroadphase'}")
+        code = compile(ast.Module(body=[block], type_ignores=[]), 'expanded-producer', 'exec')
+        labels = []
+        for stem, label in [('btDbvt', 'expanded-btdbvt'),
+                            ('btDbvtBroadphase', 'expanded-btdbvtbroadphase')]:
+            for system in ['posix', 'nt']:
+                source, root, out = Path('/source') / (stem + '.cpp'), Path('/source'), Path('/capture')
+                recorder = Mock()
+                recorder.run.return_value = b'inert-policy'
+                observed = {'policy': 'mmd-win64-sse' if system == 'nt' else 'generic-reference'}
+                def require(value, message):
+                    if not value:
+                        raise ValueError(message)
+                exec(code, dict(source=source, ROOT=root, out=out, recorder=recorder,
+                                native_flags=lambda root: [], compiler='/inert/compiler',
+                                os=SimpleNamespace(name=system), policy=lambda raw: observed, require=require))
+                args, kwargs = recorder.run.call_args
+                self.assertEqual(args[0], label)
+                self.assertRegex(args[0], r'^[a-z0-9-]+$')
+                self.assertEqual(args[1][-1], source)
+                self.assertEqual(kwargs['inputs'], [source])
+                recorder.save.assert_called_once_with(out / ('policy-' + stem + '.json'), observed)
+            labels.append(label)
+        self.assertEqual(len(labels), len(set(labels)))
+
     def test_generated_rust_literal_dependencies_are_in_source_closure(self):
         here = Path(__file__).resolve().parent
         root = here.parents[1]

@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+from common_plan_report import ReportValidation, seal_live_report, bounded_json, file_seal, parent_resources
 
 
 def sha(data):
@@ -22,60 +23,6 @@ def require(condition, message):
 def generated(root):
     return {p.relative_to(root).as_posix(): sha(p.read_bytes()) for p in sorted(root.rglob('*'))
             if p.is_file() and p.suffix in ('.rs', '.toml')}
-
-
-def validate_plan(plan, entries):
-    require(plan.get('status') == 'ClosedDiagnosticPlan' and plan.get('lowering') == 'not_authorized',
-            'compiler plan must remain diagnostic')
-    units = plan['units']
-    require(len(units) == len(entries), 'incomplete common-plan command universe')
-    expected = {}
-    for row in entries:
-        source = str((Path(row['directory']) / row['file']).resolve())
-        effective = dict(directory=str(Path(row['directory']).resolve()), file=source,
-                         arguments=row['arguments'], output=row.get('output'))
-        command = sha(canonical(dict(command=effective, extra=[])))
-        expected[command] = source
-    require(len(expected) == len(entries), 'duplicate effective command')
-    observed = set()
-    for unit in units:
-        identity = unit['identity']
-        command = identity['command']
-        require(command in expected and identity['source'] == expected[command] and command not in observed,
-                'source or effective-command binding differs')
-        observed.add(command)
-        require(unit['native_ast_exports'] == unit['typed_imports'] == 1, 'native export/import count differs')
-        require(len(identity['ast_instance']) == 64 and all(c in '0123456789abcdef' for c in identity['ast_instance']),
-                'missing actual native AST instance digest')
-        require(identity['target'] and len(identity['widths']) == 8 and all(identity['widths']), 'unresolved target facts')
-        require(identity['source'] in unit['source_sha256'], 'missing original main buffer seal')
-        for name, digest in unit['source_sha256'].items():
-            require(sha(Path(name).read_bytes()) == digest, 'original native source changed')
-        expected_key = sha(canonical(dict(command=command, domain=identity['domain'], target=identity['target'],
-                                         widths=identity['widths'], sources=unit['source_sha256'])))
-        require(identity['key'] == expected_key, 'semantic UnitKey differs')
-        declarations = {d['id']: d for d in unit['declarations']}
-        require(len(declarations) == len(unit['declarations']), 'duplicate authentic declaration ID')
-        calls = {c['id']: c for c in unit['calls']}
-        require(len(calls) == len(unit['calls']), 'duplicate authentic enclosing Call ID')
-        for declaration in declarations.values():
-            require(declaration['key'] == dict(unit=identity['key'], declaration=declaration['id']), 'declaration semantic scope differs')
-            require(set(declaration['blockers']).isdisjoint({'Lower', 'Permitted', 'Authorized'}), 'unexpected lowering authorization')
-            shape = declaration['signature']['shape']
-            if isinstance(shape, dict) and 'Unknown' in shape:
-                require('UnknownSignature' in declaration['blockers'], 'unknown signature lost its blocker')
-        for call in calls.values():
-            require(call['key'] == dict(unit=identity['key'], expression=call['id']), 'Call semantic scope differs')
-            require(call['owner'] is None or call['owner']['unit'] == identity['key']
-                    and call['owner']['declaration'] in declarations, 'Call owner scope differs')
-            require(call['direct'] is None or call['direct'] in declarations, 'Call references an unknown declaration')
-            require(call['disposition'] == 'Existing' or isinstance(call['disposition'], dict)
-                    and set(call['disposition']) == {'Deferred'}, 'unsupported call disposition')
-    return dict(units=len(units), declarations=sum(len(u['declarations']) for u in units),
-                calls=sum(len(u['calls']) for u in units),
-                unknown_definitions=[dict(unit=u['identity']['source'], id=d['id'], name=d['name'], blockers=d['blockers'])
-                    for u in units for d in u['declarations'] if d['definition'] and 'UnknownSignature' in d['blockers']])
-
 
 
 def unproved_reason(value):
@@ -118,8 +65,7 @@ def native_location(value):
             and 0 <= presumed['line'] < 2**63)
 
 
-def preserved_unknowns(reports, counts, sources):
-    independent = set()
+def preserved_unknowns(reports, validation, sources):
     for facts in reports:
         require(type(facts) is dict, 'independent unknown report must be an object')
         unit = facts.get('unit')
@@ -146,11 +92,10 @@ def preserved_unknowns(reports, counts, sources):
             require(type(symbol['unit']) is str and symbol['unit'] == unit
                     and type(symbol['static']) is str and bool(symbol['static']),
                     'unclassified definition static source identity differs')
-            independent.add((unit, symbol['static']))
-    require(independent, 'missing independent unknown-signature evidence')
-    plan_unknowns = {(d['unit'], d['name']) for d in counts['unknown_definitions']}
-    require(independent <= plan_unknowns, 'common plan lost an original unclassified definition')
-    return independent
+            validation.independent(unit, symbol['static'])
+    count = validation.independent_count()
+    require(count > 0, 'missing independent unknown-signature evidence')
+    return dict(status='PASS', count=count, join='full_source_and_name_bytes')
 
 
 def collect(tool, database, output, timeout):
@@ -181,8 +126,8 @@ def collect(tool, database, output, timeout):
         emitted.rename(output / mode)
     manifests = {mode: generated(output / mode) for mode in ('off', 'on')}
     require(manifests['off'] and manifests['off'] == manifests['on'], 'common-plan Rust or build bytes differ')
-    plan = json.loads((output / 'on/closed-variadic-plan.json').read_text())
-    counts = validate_plan(plan, entries)
+    authority = seal_live_report(output / 'on', receipts['on'])
+    (output / 'common-plan-authority.json').write_text(json.dumps(authority, indent=2) + '\n')
     log = (output / 'on.log').read_text()
     require(log.count('COMMON_PLAN_NATIVE_EXPORT ') == len(entries), 'actual native export trace count differs')
     require(log.count('COMMON_PLAN_TYPED_IMPORT ') == len(entries), 'actual typed import trace count differs')
@@ -194,12 +139,20 @@ def collect(tool, database, output, timeout):
             require(b'.c2rust-plan-' not in p.read_bytes(), 'staging path leaked into generated bytes')
     inventory = database.parent / 'closed-format-facts/inventory-plan.json'
     report_root = database.parent / 'closed-format-facts/on'
-    independent_unknowns = preserved_unknowns(
-        (json.loads(path.read_text()) for path in report_root.rglob('*.closed-format.json')),
-        counts, {unit['identity']['source'] for unit in plan['units']})
+    independent_authority = {path.relative_to(report_root).as_posix(): file_seal(path, 8 * 1024 * 1024)
+                             for path in report_root.rglob('*.closed-format.json')}
+    require(0 < len(independent_authority) <= 24, 'missing or excess independent unknown-signature reports')
+    (output / 'independent-report-authority.json').write_text(json.dumps(independent_authority, indent=2) + '\n')
+    with ReportValidation(output / 'on', entries, authority) as validation:
+        independent_unknowns = preserved_unknowns(
+            (bounded_json(report_root, name, independent_authority, 8 * 1024 * 1024)
+             for name in sorted(independent_authority)), validation, validation.sources)
+        counts = validation.counts
+        resources = parent_resources()
     controls = boundary_controls(tool, output / 'controls', timeout, diagnostic_run)
-    report = dict(status='PASS', authorization='diagnostic_only', lowering='not_authorized',
-                  generated=manifests, counts=counts, preserved_unknowns=sorted(independent_unknowns), executions=receipts, controls=controls,
+    report = dict(schema=2, status='PASS', authorization='diagnostic_only', lowering='not_authorized',
+                  generated=manifests, counts=counts, preserved_unknowns=independent_unknowns,
+                  parent_validation_resources=resources, executions=receipts, controls=controls,
                   source_receipt_sha256=sha((output / 'source-receipt.json').read_bytes()),
                   compiler_sha256=sha(tool.read_bytes()), native_preprocessing='optional_second_Tool_run_when_emit_c_decl_map',
                   stable_build='UNRUN', native_abi='UNRUN', cmp='UNRUN')
@@ -293,9 +246,13 @@ def check_test_receipts(source, listing, execution):
     paths = [source / 'c2rust-transpile/src/c_ast/closed_plan_tests.rs', source / 'c2rust-transpile/src/program.rs']
     expected = {name for path in paths for name in re.findall(r'fn (closed_variadic_plan_\w+)\(', path.read_text())}
     report_controls = {'closed_variadic_plan_command_reorder_preserves_owned_plan',
-                       'closed_variadic_plan_borrowed_report_matches_legacy_bytes',
-                       'closed_variadic_plan_borrowed_report_propagates_write_failure',
-                       'closed_variadic_plan_report_flush_failure_publishes_no_partial_output'}
+                       'closed_variadic_plan_paged_report_matches_legacy_logical',
+                       'closed_variadic_plan_test_only_oracle_propagates_write_failure',
+                       'closed_variadic_plan_report_flush_failure_publishes_no_partial_output',
+                       'closed_variadic_plan_paged_file_failures_publish_no_partial_output',
+                       'closed_variadic_plan_paged_report_giant_native_fact_is_lossless',
+                       'closed_variadic_plan_paged_report_giant_text_vectors_and_owner_are_lossless',
+                       'closed_variadic_plan_paged_report_caps_abort_before_index'}
     require(report_controls <= expected, 'focused report writer controls missing from compiler source')
     discovered = {line.removesuffix(': test').split('::')[-1] for line in listing.read_text().splitlines()
                   if line.endswith(': test') and 'closed_variadic_plan_' in line}

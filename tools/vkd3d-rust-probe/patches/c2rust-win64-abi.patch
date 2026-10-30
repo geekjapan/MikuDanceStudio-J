@@ -1015,10 +1015,12 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan.rs b/c2rust-transpile/src/c_
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan.rs
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,816 @@
 +use super::*;
 +use serde_derive::Serialize;
++#[cfg(test)]
 +use serde::ser::{SerializeMap, SerializeSeq};
++use std::io::{self, Write};
 +use std::collections::{BTreeMap, BTreeSet};
 +
 +#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -1462,7 +1464,8 @@ new file mode 100644
 +        Ok(())
 +    }
 +
-+    pub(crate) fn report(&self) -> impl serde::Serialize + '_ {
++    #[cfg(test)]
++    fn report(&self) -> impl serde::Serialize + '_ {
 +        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
 +        let report = PlanReport(self);
 +        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
@@ -1470,12 +1473,270 @@ new file mode 100644
 +    }
 +}
 +
++const REPORT_RECORD_BYTES: usize = 64 * 1024;
++const REPORT_TEXT_BYTES: usize = 8 * 1024;
++const REPORT_PAGE_BYTES: usize = 4 * 1024 * 1024;
++const REPORT_PAGE_RECORDS: usize = 4096;
++const REPORT_CATALOG_PAGES: usize = 4096;
++const REPORT_JSON_BYTES: usize = 8 * 1024 * 1024;
++const REPORT_MEMBERS: usize = 200_000;
++const REPORT_TOTAL_BYTES: u64 = 32 * 1024 * 1024 * 1024;
++
++#[cfg(all(test, target_os = "linux"))]
++thread_local! { pub(crate) static REPORT_TEST_FULL: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
++
++fn report_error(message: &str) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, message) }
++
++struct ReportWriter<'a> {
++    root: &'a Path,
++    page: Vec<u8>,
++    page_records: usize,
++    records: u64,
++    pages: usize,
++    pending: Vec<serde_json::Value>,
++    catalogs: Vec<serde_json::Value>,
++    bytes: u64,
++    members: usize,
++}
++
++impl<'a> ReportWriter<'a> {
++    fn new(root: &'a Path) -> io::Result<Self> {
++        std::fs::create_dir(root.join("closed-variadic-plan"))?;
++        Ok(Self { root, page: Vec::new(), page_records: 0, records: 0, pages: 0,
++            pending: Vec::new(), catalogs: Vec::new(), bytes: 0, members: 0 })
++    }
++
++    fn file(&mut self, name: &str, bytes: &[u8]) -> io::Result<serde_json::Value> {
++        let total = self.bytes.checked_add(bytes.len() as u64).ok_or_else(|| report_error("report byte overflow"))?;
++        if self.members >= REPORT_MEMBERS || total > REPORT_TOTAL_BYTES { return Err(report_error("report total bound")); }
++        #[cfg(all(test, target_os = "linux"))]
++        REPORT_TEST_FULL.with(|target| -> io::Result<()> {
++            if target.get() == Some(name) { std::os::unix::fs::symlink("/dev/full", self.root.join(name))?; }
++            Ok(())
++        })?;
++        {
++            let mut file = std::io::BufWriter::new(std::fs::File::create(self.root.join(name))?);
++            file.write_all(bytes)?;
++            file.flush()?;
++            let file = file.into_inner().map_err(|e| e.into_error())?;
++            if file.metadata()?.len() != bytes.len() as u64 { return Err(report_error("report written size differs")); }
++            drop(file);
++        }
++        self.bytes = total;
++        self.members += 1;
++        Ok(serde_json::json!({"path": name, "bytes": bytes.len(), "sha256": c2rust_ast_exporter::sha256(bytes)}))
++    }
++
++    fn catalog(&mut self) -> io::Result<()> {
++        if self.pending.is_empty() { return Ok(()); }
++        if self.catalogs.len() >= 49 { return Err(report_error("report catalog bound")); }
++        let first = self.pages - self.pending.len();
++        let count = self.pending.len();
++        let bytes = serde_json::to_vec(&serde_json::json!({"schema": 2, "first": first, "pages": self.pending}))?;
++        if bytes.len() > REPORT_JSON_BYTES { return Err(report_error("report catalog byte bound")); }
++        let name = format!("closed-variadic-plan/catalog-{:08}.json", self.catalogs.len());
++        let mut descriptor = self.file(&name, &bytes)?;
++        descriptor["first"] = serde_json::json!(first);
++        descriptor["count"] = serde_json::json!(count);
++        self.catalogs.push(descriptor);
++        self.pending.clear();
++        Ok(())
++    }
++
++    fn page(&mut self) -> io::Result<()> {
++        if self.page_records == 0 { return Ok(()); }
++        self.page.extend_from_slice(b"]}");
++        if self.page.len() > REPORT_PAGE_BYTES { return Err(report_error("report page byte bound")); }
++        let bytes = std::mem::take(&mut self.page);
++        let name = format!("closed-variadic-plan/page-{:08}.json", self.pages);
++        let mut descriptor = self.file(&name, &bytes)?;
++        descriptor["first"] = serde_json::json!(self.records - self.page_records as u64);
++        descriptor["count"] = serde_json::json!(self.page_records);
++        self.pending.push(descriptor);
++        self.pages += 1;
++        self.page_records = 0;
++        if self.pending.len() == REPORT_CATALOG_PAGES { self.catalog()?; }
++        Ok(())
++    }
++
++    fn record(&mut self, record: serde_json::Value) -> io::Result<()> {
++        // Every domain record has fixed arity and at most one bounded text part.
++        let mut pending = vec![&record];
++        let mut nodes = 0;
++        let mut string_bytes = 0;
++        while let Some(value) = pending.pop() {
++            nodes += 1;
++            if nodes > 40 { return Err(report_error("report record shape bound")); }
++            match value {
++                serde_json::Value::Array(values) if values.len() <= 14 => pending.extend(values),
++                serde_json::Value::String(text) if text.len() <= REPORT_TEXT_BYTES => {
++                    string_bytes += text.len();
++                    if string_bytes > REPORT_TEXT_BYTES + 1024 { return Err(report_error("report record text bound")); }
++                }
++                serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => (),
++                _ => return Err(report_error("report record payload bound")),
++            }
++        }
++        let bytes = serde_json::to_vec(&record)?;
++        if bytes.len() > REPORT_RECORD_BYTES { return Err(report_error("report record byte bound")); }
++        if self.page_records > 0 && (self.page_records == REPORT_PAGE_RECORDS || self.page.len() + bytes.len() + 3 > REPORT_PAGE_BYTES) { self.page()?; }
++        if self.page_records == 0 {
++            self.page = format!("{{\"schema\":2,\"first\":{},\"records\":[", self.records).into_bytes();
++        } else { self.page.push(b','); }
++        if self.records >= REPORT_TOTAL_BYTES / 2 { return Err(report_error("report record count bound")); }
++        self.page.extend_from_slice(&bytes);
++        self.records += 1;
++        self.page_records += 1;
++        Ok(())
++    }
++
++    fn text(&mut self, text: &str) -> io::Result<()> {
++        if text.len() <= REPORT_TEXT_BYTES { return self.record(serde_json::json!(["text", text])); }
++        let parts = || {
++            let mut rest = text;
++            std::iter::from_fn(move || {
++                if rest.is_empty() { return None; }
++                let mut end = rest.len().min(REPORT_TEXT_BYTES);
++                while !rest.is_char_boundary(end) { end -= 1; }
++                let (part, next) = rest.split_at(end);
++                rest = next;
++                Some(part)
++            })
++        };
++        self.record(serde_json::json!(["text-start", text.len(), parts().count()]))?;
++        for (ordinal, part) in parts().enumerate() { self.record(serde_json::json!(["text-part", ordinal, part]))?; }
++        self.record(serde_json::json!(["text-end"]))
++    }
++
++    fn identity(&mut self, identity: &RecordIdentity, depth: usize) -> io::Result<()> {
++        if depth > 32 { return Err(report_error("report record owner depth")); }
++        self.record(serde_json::json!(["record-identity", depth, identity.tag.is_some(), identity.line, identity.column, identity.owner.is_some()]))?;
++        self.text(&identity.kind)?;
++        if let Some(tag) = &identity.tag { self.text(tag)?; }
++        self.text(&identity.file)?;
++        if let Some(owner) = &identity.owner { self.identity(owner, depth + 1)?; }
++        Ok(())
++    }
++
++    fn typ(&mut self, typ: &TypeFact, depth: usize) -> io::Result<()> {
++        if depth > 33 { return Err(report_error("report type depth")); }
++        let q = typ.qualifiers;
++        match &typ.shape {
++            TypeShape::Scalar(kind, width) => {
++                self.record(serde_json::json!(["type", depth, q, "Scalar", width]))?;
++                self.text(kind)?;
++            }
++            TypeShape::Pointer(child) => {
++                self.record(serde_json::json!(["type", depth, q, "Pointer"]))?;
++                self.typ(child, depth + 1)?;
++            }
++            TypeShape::Array(child, length) => {
++                self.record(serde_json::json!(["type", depth, q, "Array", length]))?;
++                self.typ(child, depth + 1)?;
++            }
++            TypeShape::Unknown(issue) => self.record(serde_json::json!(["type", depth, q, "Unknown", issue]))?,
++            TypeShape::Function { result, parameters, variadic, prototype, noreturn, abi } => {
++                self.record(serde_json::json!(["type", depth, q, "Function", parameters.len(), variadic, prototype, noreturn]))?;
++                self.text(abi)?;
++                self.typ(result, depth + 1)?;
++                for (i, parameter) in parameters.iter().enumerate() {
++                    self.record(serde_json::json!(["parameter", i]))?;
++                    self.typ(parameter, depth + 1)?;
++                }
++            }
++            TypeShape::Record { identity, packed, manual_alignment, max_field_alignment, size, alignment, fields } => {
++                self.record(serde_json::json!(["type", depth, q, "Record", packed, manual_alignment, max_field_alignment, size, alignment, fields.len()]))?;
++                self.identity(identity, 0)?;
++                for (i, field) in fields.iter().enumerate() {
++                    self.record(serde_json::json!(["field", i, field.bitfield_width, field.bit_offset, field.type_bitwidth, field.alignment]))?;
++                    self.typ(&field.typ, depth + 1)?;
++                }
++            }
++        }
++        Ok(())
++    }
++
++    fn declaration(&mut self, ordinal: usize, f: &DeclFact) -> io::Result<()> {
++        self.record(serde_json::json!(["declaration", ordinal, f.id, f.key.declaration.0, f.definition, f.cursor_parameters,
++            f.aliases.len(), f.redeclarations.len(), f.visibility.len(), f.native_attributes.len(), f.blockers]))?;
++        self.text(&f.key.unit.0)?;
++        match &f.symbol {
++            SymbolKey::External { domain, linker } => { self.record(serde_json::json!(["symbol-external"]))?; self.text(domain)?; self.text(linker)?; }
++            SymbolKey::Internal { unit, name } => { self.record(serde_json::json!(["symbol-internal"]))?; self.text(&unit.0)?; self.text(name)?; }
++        }
++        self.text(&f.name)?;
++        self.typ(&f.signature, 0)?;
++        for (i, alias) in f.aliases.iter().enumerate() { self.record(serde_json::json!(["alias", i]))?; self.text(alias)?; }
++        for (i, typ) in f.redeclarations.iter().enumerate() { self.record(serde_json::json!(["redeclaration", i]))?; self.typ(typ, 0)?; }
++        for (i, (visible, text)) in f.visibility.iter().enumerate() { self.record(serde_json::json!(["visibility", i, visible]))?; self.text(text)?; }
++        for (i, text) in f.native_attributes.iter().enumerate() { self.record(serde_json::json!(["attribute", i]))?; self.text(text)?; }
++        self.record(serde_json::json!(["declaration-end"]))
++    }
++
++    fn call(&mut self, ordinal: usize, f: &CallFact) -> io::Result<()> {
++        let (disposition, blockers) = match &f.disposition { Disposition::Existing => ("Existing", BTreeSet::new()), Disposition::Deferred(b) => ("Deferred", b.clone()) };
++        self.record(serde_json::json!(["call", ordinal, f.id, f.key.expression.0, f.owner.as_ref().map(|o| o.declaration.0),
++            f.callee_expression, f.direct, f.arguments.len(), f.promoted_arguments.len(), disposition, blockers]))?;
++        self.text(&f.key.unit.0)?;
++        if let Some(owner) = &f.owner { self.text(&owner.unit.0)?; }
++        for (i, id) in f.arguments.iter().enumerate() { self.record(serde_json::json!(["argument", i, id]))?; }
++        for (i, typ) in f.promoted_arguments.iter().enumerate() { self.record(serde_json::json!(["promoted", i]))?; self.typ(typ, 0)?; }
++        self.record(serde_json::json!(["call-end"]))
++    }
++
++    fn finish(mut self, units: usize) -> io::Result<()> {
++        self.page()?;
++        self.catalog()?;
++        let index = serde_json::json!({"schema": 2, "logical_schema": 1, "status": "ClosedDiagnosticPlan", "lowering": "not_authorized",
++            "units": units, "records": self.records, "pages": self.pages, "bytes": self.bytes, "catalogs": self.catalogs});
++        let bytes = serde_json::to_vec(&index)?;
++        if bytes.len() > REPORT_JSON_BYTES { return Err(report_error("report index byte bound")); }
++        self.file("closed-variadic-plan.json", &bytes)?;
++        Ok(())
++    }
++}
++
++impl ClosedVariadicPlan {
++    pub(crate) fn write_report(&self, root: &Path) -> io::Result<()> {
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
++        let result = (|| {
++        if self.units.len() > 24 || self.units.values().any(|u| u.declarations.len() > 35_879 || u.calls.len() > 92_781)
++            || self.units.values().map(|u| u.declarations.len()).sum::<usize>() > 213_129
++            || self.units.values().map(|u| u.calls.len()).sum::<usize>() > 714_273 {
++            return Err(report_error("report fixed native fact ceiling"));
++        }
++        let mut writer = ReportWriter::new(root)?;
++        for (ordinal, u) in self.units.values().enumerate() {
++            writer.record(serde_json::json!(["unit", ordinal, u.identity.widths, 1, 1, u.sources.len(), u.declarations.len(), u.calls.len()]))?;
++            let source = u.identity.source.to_string_lossy();
++            for text in [u.identity.key.0.as_str(), u.identity.command.as_str(), u.identity.domain.as_str(), source.as_ref(), u.identity.ast_instance.as_str(), u.identity.target.as_str()] { writer.text(text)?; }
++            for (i, (path, bytes)) in u.sources.iter().enumerate() {
++                writer.record(serde_json::json!(["source", i, c2rust_ast_exporter::sha256(bytes)]))?;
++                writer.text(&path.to_string_lossy())?;
++            }
++            for (i, f) in u.declarations.values().enumerate() { writer.declaration(i, f)?; }
++            for (i, f) in u.calls.values().enumerate() { writer.call(i, f)?; }
++            writer.record(serde_json::json!(["unit-end"]))?;
++        }
++        writer.finish(self.units.len())
++        })();
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
++        result
++    }
++}
++
++#[cfg(test)]
 +struct PlanReport<'a>(&'a ClosedVariadicPlan);
++#[cfg(test)]
 +struct ReportUnits<'a>(&'a BTreeMap<UnitKey, UnitFacts>);
++#[cfg(test)]
 +struct ReportUnit<'a>(&'a UnitFacts);
++#[cfg(test)]
 +struct ReportFacts<'a, K, T>(&'a BTreeMap<K, T>);
++#[cfg(test)]
 +struct CanonicalFact<'a, T>(&'a T);
 +
++#[cfg(test)]
 +impl<T: serde::Serialize> serde::Serialize for CanonicalFact<'_, T> {
 +    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 +        // Preserve the legacy Value's recursive object-key order one fact at a time.
@@ -1484,6 +1745,7 @@ new file mode 100644
 +    }
 +}
 +
++#[cfg(test)]
 +impl<K, T: serde::Serialize> serde::Serialize for ReportFacts<'_, K, T> {
 +    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 +        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
@@ -1492,6 +1754,7 @@ new file mode 100644
 +    }
 +}
 +
++#[cfg(test)]
 +impl serde::Serialize for ReportUnit<'_> {
 +    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 +        let u = self.0;
@@ -1508,6 +1771,7 @@ new file mode 100644
 +    }
 +}
 +
++#[cfg(test)]
 +impl serde::Serialize for ReportUnits<'_> {
 +    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 +        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
@@ -1516,6 +1780,7 @@ new file mode 100644
 +    }
 +}
 +
++#[cfg(test)]
 +impl serde::Serialize for PlanReport<'_> {
 +    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 +        let mut map = serializer.serialize_map(Some(4))?;
@@ -1571,7 +1836,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,414 @@
+@@ -0,0 +1,623 @@
 +use super::*;
 +use crate::program::{command_identity, native_database_row, native_sources};
 +
@@ -1674,8 +1939,146 @@ new file mode 100644
 +        })).collect::<Vec<_>>()})
 +}
 +
++struct WireOracle { records: std::vec::IntoIter<serde_json::Value> }
++
++impl WireOracle {
++    fn row(&mut self, tag: &str) -> serde_json::Value {
++        let row = self.records.next().expect("wire record");
++        assert_eq!(row[0], tag);
++        row
++    }
++    fn text(&mut self) -> serde_json::Value {
++        let row = self.records.next().unwrap();
++        if row[0] == "text" { return row[1].clone(); }
++        assert_eq!(row[0], "text-start");
++        let mut text = String::new();
++        for i in 0..row[2].as_u64().unwrap() {
++            let part = self.row("text-part");
++            assert_eq!(part[1], i);
++            text.push_str(part[2].as_str().unwrap());
++        }
++        assert_eq!(text.len() as u64, row[1].as_u64().unwrap());
++        self.row("text-end");
++        serde_json::json!(text)
++    }
++    fn identity(&mut self) -> serde_json::Value {
++        let row = self.row("record-identity");
++        let kind = self.text();
++        let tag = if row[2] == true { self.text() } else { serde_json::Value::Null };
++        let file = self.text();
++        let owner = if row[5] == true { self.identity() } else { serde_json::Value::Null };
++        serde_json::json!({"kind":kind,"tag":tag,"file":file,"line":row[3],"column":row[4],"owner":owner})
++    }
++    fn typ(&mut self) -> serde_json::Value {
++        let row = self.row("type");
++        let kind = row[3].as_str().unwrap();
++        let value = match kind {
++            "Scalar" => serde_json::json!([self.text(), row[4]]),
++            "Unknown" => row[4].clone(),
++            "Pointer" => self.typ(),
++            "Array" => serde_json::json!([self.typ(),row[4]]),
++            "Function" => {
++                let abi = self.text();
++                let result = self.typ();
++                let mut parameters = Vec::new();
++                for i in 0..row[4].as_u64().unwrap() {
++                    assert_eq!(self.row("parameter")[1], i);
++                    parameters.push(self.typ());
++                }
++                serde_json::json!({"result":result,"parameters":parameters,"variadic":row[5],"prototype":row[6],"noreturn":row[7],"abi":abi})
++            }
++            "Record" => {
++                let identity = self.identity();
++                let mut fields = Vec::new();
++                for i in 0..row[9].as_u64().unwrap() {
++                    let field = self.row("field");
++                    assert_eq!(field[1], i);
++                    fields.push(serde_json::json!({"typ":self.typ(),"bitfield_width":field[2],"bit_offset":field[3],"type_bitwidth":field[4],"alignment":field[5]}));
++                }
++                serde_json::json!({"identity":identity,"packed":row[4],"manual_alignment":row[5],"max_field_alignment":row[6],"size":row[7],"alignment":row[8],"fields":fields})
++            }
++            _ => panic!("wire type variant"),
++        };
++        let mut shape = serde_json::Map::new();
++        shape.insert(kind.to_owned(), value);
++        serde_json::json!({"qualifiers":row[2],"shape":shape})
++    }
++    fn declaration(&mut self) -> serde_json::Value {
++        let row = self.row("declaration");
++        let unit = self.text();
++        let symbol = self.records.next().unwrap();
++        let symbol = if symbol[0] == "symbol-external" {
++            serde_json::json!({"External":{"domain":self.text(),"linker":self.text()}})
++        } else {
++            assert_eq!(symbol[0], "symbol-internal");
++            serde_json::json!({"Internal":{"unit":self.text(),"name":self.text()}})
++        };
++        let name = self.text();
++        let signature = self.typ();
++        let mut aliases = Vec::new();
++        for i in 0..row[6].as_u64().unwrap() { assert_eq!(self.row("alias")[1], i); aliases.push(self.text()); }
++        let mut redeclarations = Vec::new();
++        for i in 0..row[7].as_u64().unwrap() { assert_eq!(self.row("redeclaration")[1], i); redeclarations.push(self.typ()); }
++        let mut visibility = Vec::new();
++        for i in 0..row[8].as_u64().unwrap() { let v = self.row("visibility"); assert_eq!(v[1], i); visibility.push(serde_json::json!([v[2],self.text()])); }
++        let mut attrs = Vec::new();
++        for i in 0..row[9].as_u64().unwrap() { assert_eq!(self.row("attribute")[1], i); attrs.push(self.text()); }
++        self.row("declaration-end");
++        serde_json::json!({"id":row[2],"key":{"unit":unit,"declaration":row[3]},"symbol":symbol,"name":name,
++            "signature":signature,"definition":row[4],"cursor_parameters":row[5],"aliases":aliases,"redeclarations":redeclarations,
++            "visibility":visibility,"native_attributes":attrs,"blockers":row[10]})
++    }
++    fn call(&mut self) -> serde_json::Value {
++        let row = self.row("call");
++        let unit = self.text();
++        let owner = if row[4].is_null() { serde_json::Value::Null } else { serde_json::json!({"unit":self.text(),"declaration":row[4]}) };
++        let mut arguments = Vec::new();
++        for i in 0..row[7].as_u64().unwrap() { let a = self.row("argument"); assert_eq!(a[1], i); arguments.push(a[2].clone()); }
++        let mut promoted = Vec::new();
++        for i in 0..row[8].as_u64().unwrap() { assert_eq!(self.row("promoted")[1], i); promoted.push(self.typ()); }
++        self.row("call-end");
++        let disposition = if row[9] == "Existing" { serde_json::json!("Existing") } else { serde_json::json!({"Deferred":row[10]}) };
++        serde_json::json!({"id":row[2],"key":{"unit":unit,"expression":row[3]},"owner":owner,"callee_expression":row[5],"direct":row[6],
++            "arguments":arguments,"promoted_arguments":promoted,"disposition":disposition})
++    }
++    fn unit(&mut self) -> serde_json::Value {
++        let row = self.row("unit");
++        let identity = serde_json::json!({"key":self.text(),"command":self.text(),"domain":self.text(),"source":self.text(),
++            "ast_instance":self.text(),"target":self.text(),"widths":row[2]});
++        let mut sources = serde_json::Map::new();
++        for i in 0..row[5].as_u64().unwrap() { let s = self.row("source"); assert_eq!(s[1], i); sources.insert(self.text().as_str().unwrap().to_owned(), s[2].clone()); }
++        let declarations = (0..row[6].as_u64().unwrap()).map(|_| self.declaration()).collect::<Vec<_>>();
++        let calls = (0..row[7].as_u64().unwrap()).map(|_| self.call()).collect::<Vec<_>>();
++        self.row("unit-end");
++        serde_json::json!({"identity":identity,"source_sha256":sources,"native_ast_exports":row[3],"typed_imports":row[4],"declarations":declarations,"calls":calls})
++    }
++}
++
++fn wire_report(root: &Path) -> serde_json::Value {
++    let index: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("closed-variadic-plan.json")).unwrap()).unwrap();
++    let mut records = Vec::new();
++    for catalog in index["catalogs"].as_array().unwrap() {
++        let bytes = std::fs::read(root.join(catalog["path"].as_str().unwrap())).unwrap();
++        assert_eq!(c2rust_ast_exporter::sha256(&bytes), catalog["sha256"]);
++        let catalog: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
++        for page in catalog["pages"].as_array().unwrap() {
++            let bytes = std::fs::read(root.join(page["path"].as_str().unwrap())).unwrap();
++            assert!(bytes.len() <= REPORT_PAGE_BYTES);
++            assert_eq!(bytes.len() as u64, page["bytes"].as_u64().unwrap());
++            assert_eq!(c2rust_ast_exporter::sha256(&bytes), page["sha256"]);
++            let page: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
++            assert!(page["records"].as_array().unwrap().len() <= REPORT_PAGE_RECORDS);
++            for record in page["records"].as_array().unwrap() { assert!(serde_json::to_vec(record).unwrap().len() <= REPORT_RECORD_BYTES); records.push(record.clone()); }
++        }
++    }
++    let mut oracle = WireOracle { records: records.into_iter() };
++    let units = (0..index["units"].as_u64().unwrap()).map(|_| oracle.unit()).collect::<Vec<_>>();
++    assert!(oracle.records.next().is_none());
++    serde_json::json!({"schema":1,"status":"ClosedDiagnosticPlan","lowering":"not_authorized","units":units})
++}
++
 +#[test]
-+fn closed_variadic_plan_borrowed_report_matches_legacy_bytes() {
++fn closed_variadic_plan_paged_report_matches_legacy_logical() {
 +    let mut units = vec![native(
 +        "struct Inner { int values[2]; }; struct Outer { struct Inner nested; }; static int leaf(void){return 1;} static int target(struct Outer *p,...){return p->nested.values[0];} int run(struct Outer *p,int (*indirect)(void)){return leaf()+target(p,1)+indirect();}",
 +        "nested.c", &[]), native("int only;", "empty.c", &[]),
@@ -1687,6 +2090,9 @@ new file mode 100644
 +    }
 +    assert!(indirect > 0);
 +    let legacy = legacy_report(&p);
++    let directory = tempfile::tempdir().unwrap();
++    p.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy);
 +    let mut bytes = Vec::new();
 +    serde_json::to_writer_pretty(&mut bytes, &p.report()).unwrap();
 +    assert_eq!(bytes, serde_json::to_vec_pretty(&legacy).unwrap());
@@ -1701,11 +2107,73 @@ new file mode 100644
 +    let text = String::from_utf8(bytes).unwrap();
 +    for shape in ["\"Record\"", "\"Array\"", "\"Unknown\""] { assert!(text.contains(shape)); }
 +    let empty = ClosedVariadicPlan { units: BTreeMap::new() };
++    let directory = tempfile::tempdir().unwrap();
++    empty.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy_report(&empty));
 +    assert_eq!(serde_json::to_vec_pretty(&empty.report()).unwrap(), serde_json::to_vec_pretty(&legacy_report(&empty)).unwrap());
 +}
 +
 +#[test]
-+fn closed_variadic_plan_borrowed_report_propagates_write_failure() {
++fn closed_variadic_plan_paged_report_giant_native_fact_is_lossless() {
++    let linker = "giant_native_".repeat(700_000);
++    let text = format!("static int giant(void) __asm__(\"{linker}\"); static int giant(void){{return 1;}}");
++    let mut units = vec![native(&text, "giant_native.c", &[])];
++    let p = plan(&mut units);
++    let largest = p.units.values().flat_map(|u| u.declarations.values()).map(|f| serde_json::to_vec(f).unwrap().len()).max().unwrap();
++    assert!(largest > REPORT_JSON_BYTES, "real native linker fact must exceed the former reader cap: {largest}");
++    let directory = tempfile::tempdir().unwrap();
++    p.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy_report(&p));
++}
++
++#[test]
++fn closed_variadic_plan_paged_report_giant_text_vectors_and_owner_are_lossless() {
++    let mut units = vec![native("static int f(void){return 1;} int g(void){return f();}", "giant_text.c", &[])];
++    let mut p = plan(&mut units);
++    let f = p.units.values_mut().next().unwrap().declarations.values_mut().next().unwrap();
++    let text = format!("{}\"\\\n", "a界😀".repeat(1_100_000));
++    f.name = text.clone();
++    f.aliases = vec![String::new(), text.clone()];
++    f.visibility = vec![(false, text.clone()), (true, String::new())];
++    f.native_attributes = vec![text.clone()];
++    let mut owner = None;
++    let owner_text = "界".repeat(3000);
++    for i in 0..33 { owner = Some(Box::new(RecordIdentity { kind: "struct".into(), tag: Some(if i == 0 { String::new() } else { owner_text.clone() }), file: owner_text.clone(), line: i + 1, column: 1, owner })); }
++    let typ = TypeFact { qualifiers: (true, false, true), shape: TypeShape::Record { identity: *owner.unwrap(), packed: true,
++        manual_alignment: Some(0), max_field_alignment: None, size: 0, alignment: 0,
++        fields: vec![FieldFact { typ: TypeFact { qualifiers: (false,true,false), shape: TypeShape::Array(Box::new(f.signature.clone()), None) }, bitfield_width: Some(0), bit_offset: 0, type_bitwidth: 0, alignment: None }] } };
++    f.redeclarations = vec![typ; 2];
++    f.signature = TypeFact { qualifiers: (false, false, true), shape: TypeShape::Function {
++        result: Box::new(f.signature.clone()), parameters: (0..10_000).map(|_| TypeFact {
++            qualifiers: (true, false, false), shape: TypeShape::Scalar("s".repeat(1024), 32) }).collect(),
++        variadic: true, prototype: false, noreturn: true, abi: owner_text } };
++    assert!(serde_json::to_vec(&f.signature).unwrap().len() > REPORT_JSON_BYTES);
++    let directory = tempfile::tempdir().unwrap();
++    p.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy_report(&p));
++}
++
++#[test]
++fn closed_variadic_plan_paged_report_caps_abort_before_index() {
++    for which in ["record", "page", "catalog-bytes", "index", "total", "members", "catalog"] {
++        let directory = tempfile::tempdir().unwrap();
++        let mut writer = ReportWriter::new(directory.path()).unwrap();
++        let result = match which {
++            "record" => writer.record(serde_json::json!(["text", "x".repeat(REPORT_TEXT_BYTES + 1)])),
++            "page" => { writer.page = vec![b' '; REPORT_PAGE_BYTES]; writer.page_records = 1; writer.records = 1; writer.page() },
++            "catalog-bytes" => { writer.pending.push(serde_json::json!("x".repeat(REPORT_JSON_BYTES))); writer.pages = 1; writer.catalog() },
++            "index" => { writer.catalogs.push(serde_json::json!("x".repeat(REPORT_JSON_BYTES))); writer.finish(0) },
++            "total" => { writer.bytes = REPORT_TOTAL_BYTES; writer.file("closed-variadic-plan/page-00000000.json", b"[]").map(|_| ()) },
++            "members" => { writer.members = REPORT_MEMBERS; writer.file("closed-variadic-plan/page-00000000.json", b"[]").map(|_| ()) },
++            _ => { writer.catalogs = vec![serde_json::Value::Null;49]; writer.pending.push(serde_json::json!({})); writer.pages=1; writer.catalog() },
++        };
++        assert!(result.is_err());
++        assert!(!directory.path().join("closed-variadic-plan.json").exists());
++    }
++}
++
++#[test]
++fn closed_variadic_plan_test_only_oracle_propagates_write_failure() {
 +    struct FailingWrite { remaining: usize, written: usize }
 +    impl std::io::Write for FailingWrite {
 +        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -1776,6 +2244,9 @@ new file mode 100644
 +        native("long f(int *n,...){return *n;}","b.c",&[])];
 +    let p=plan(&mut units);
 +    assert!(reasons(&p,"f").contains(&Blocker::SignatureMismatch));
++    let directory = tempfile::tempdir().unwrap();
++    p.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy_report(&p));
 +    for u in units { emit(&p,u); }
 +}
 +
@@ -1878,6 +2349,9 @@ new file mode 100644
 +    let mut units=vec![first,second];
 +    let p=plan(&mut units);
 +    assert!(reasons(&p,"f").contains(&Blocker::SignatureMismatch));
++    let directory = tempfile::tempdir().unwrap();
++    p.write_report(directory.path()).unwrap();
++    assert_eq!(wire_report(directory.path()), legacy_report(&p));
 +    for u in units { emit(&p,u); }
 +}
 +
@@ -5099,12 +5573,13 @@ diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,574 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
 +use std::collections::{BTreeMap, BTreeSet};
-+use std::io::{BufWriter, Write};
++#[cfg(all(test, target_os = "linux"))]
++use std::io::BufWriter;
 +
 +struct OutputTransaction {
 +    temporary: TempDir,
@@ -5267,12 +5742,9 @@ new file mode 100644
 +        let root = tcfg.output_dir.as_ref().unwrap();
 +        fs::create_dir_all(root)?;
 +        {
-+            let report = plan.report();
 +            c2rust_ast_exporter::retention_diagnostics::observe(c2rust_ast_exporter::retention_diagnostics::Stage::Serialization,
-+                &report, |report| -> Result<(), Error> {
-+                    let mut writer = BufWriter::new(fs::File::create(root.join("closed-variadic-plan.json"))?);
-+                    serde_json::to_writer_pretty(&mut writer, report)?;
-+                    writer.flush()?;
++                &plan, |plan| -> Result<(), Error> {
++                    plan.write_report(root)?;
 +                    Ok(())
 +                })?;
 +        }
@@ -5417,7 +5889,22 @@ new file mode 100644
 +            } else {
 +                result.unwrap();
 +                assert!(destination.join("closed-variadic-plan.json").is_file());
-+                assert_eq!(fs::read_dir(destination).unwrap().count(),1);
++                assert!(destination.join("closed-variadic-plan").is_dir());
++                assert_eq!(fs::read_dir(&destination).unwrap().count(),2);
++                let index: serde_json::Value = serde_json::from_slice(&fs::read(destination.join("closed-variadic-plan.json")).unwrap()).unwrap();
++                let mut expected = BTreeSet::new();
++                for descriptor in index["catalogs"].as_array().unwrap() {
++                    let name = descriptor["path"].as_str().unwrap();
++                    expected.insert(PathBuf::from(name));
++                    let catalog: serde_json::Value = serde_json::from_slice(&fs::read(destination.join(name)).unwrap()).unwrap();
++                    for descriptor in catalog["pages"].as_array().unwrap() { expected.insert(PathBuf::from(descriptor["path"].as_str().unwrap())); }
++                }
++                let actual = fs::read_dir(destination.join("closed-variadic-plan")).unwrap().map(|entry| {
++                    let entry = entry.unwrap();
++                    assert!(entry.file_type().unwrap().is_file());
++                    entry.path().strip_prefix(&destination).unwrap().to_owned()
++                }).collect::<BTreeSet<_>>();
++                assert_eq!(actual, expected);
 +            }
 +        }
 +    }
@@ -5449,6 +5936,27 @@ new file mode 100644
 +        assert!(error.to_string().contains("No space left on device"));
 +        assert!(!destination.exists());
 +        assert!(!staged.exists());
++    }
++
++    #[test]
++    #[cfg(target_os="linux")]
++    fn closed_variadic_plan_paged_file_failures_publish_no_partial_output() {
++        for name in ["closed-variadic-plan/page-00000000.json", "closed-variadic-plan/catalog-00000000.json", "closed-variadic-plan.json"] {
++            let directory = tempfile::tempdir().unwrap();
++            let (_, database, _) = native_fixture(directory.path(), "int legal(void){return 1;}");
++            let destination = directory.path().join("output");
++            let mut c = config(destination.clone());
++            let transaction = OutputTransaction::new(&mut c).unwrap();
++            let staged = transaction.staged.clone();
++            let (links, args) = crate::transpile_inputs(&c, &database, &[]);
++            let args = args.iter().map(String::as_str).collect::<Vec<_>>();
++            crate::c_ast::closed_plan::REPORT_TEST_FULL.with(|target| target.set(Some(name)));
++            let result = PreparedProgram::prepare(&c, &database, &links, &args, transaction);
++            crate::c_ast::closed_plan::REPORT_TEST_FULL.with(|target| target.set(None));
++            assert!(result.err().unwrap().to_string().contains("No space left on device"));
++            assert!(!destination.exists());
++            assert!(!staged.exists());
++        }
 +    }
 +
 +    #[test]

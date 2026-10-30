@@ -4,9 +4,20 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 
-from check_common_plan import canonical, preserved_unknowns, validate_plan
+from check_common_plan import canonical, preserved_unknowns
+from common_plan_report import ReportValidation, file_seal, report_members
+from common_plan_fixture import plan_records, write_records, fixture_ledger
+
+
+def preserve_fixture(reports, counts, sources):
+    ledger = fixture_ledger(counts['unknown_definitions'])
+    try:
+        return preserved_unknowns(reports, ledger, sources)
+    finally:
+        ledger.close()
 
 
 class CommonPlanDataTests(unittest.TestCase):
@@ -23,27 +34,37 @@ class CommonPlanDataTests(unittest.TestCase):
                         target='fixture-target', widths=[8, 16, 32, 64, 64, 64, 32, 64])
         identity['key'] = hashlib.sha256(canonical(dict(command=command, domain='fixture', target=identity['target'],
                                                        widths=identity['widths'], sources=sources))).hexdigest()
-        declaration = dict(id=7, key=dict(unit=identity['key'], declaration=7), name='fixture', definition=True, signature=dict(shape={'Unknown': 'Attributed'}),
-                           blockers=['UnknownSignature'])
-        call = dict(id=9, key=dict(unit=identity['key'], expression=9), owner=dict(unit=identity['key'], declaration=7), direct=7, disposition={'Deferred': ['UnknownSignature']})
+        declaration = dict(id=7, key=dict(unit=identity['key'], declaration=7), name='fixture', definition=True,
+                           signature=dict(qualifiers=[False, False, False], shape={'Unknown': 'Attributed'}),
+                           symbol={'Internal': dict(unit=identity['key'], name='fixture')}, cursor_parameters=False,
+                           aliases=[], redeclarations=[], visibility=[], native_attributes=[], blockers=['UnknownSignature'])
+        call = dict(id=9, key=dict(unit=identity['key'], expression=9), owner=dict(unit=identity['key'], declaration=7), direct=7,
+                    callee_expression=8, arguments=[], promoted_arguments=[], disposition={'Deferred': ['UnknownSignature']})
         self.plan = dict(status='ClosedDiagnosticPlan', lowering='not_authorized', units=[dict(identity=identity,
             native_ast_exports=1, typed_imports=1, source_sha256=sources, declarations=[declaration], calls=[call])])
-        self.assertEqual(validate_plan(self.plan, [self.row])['units'], 1)
+        self.assertEqual(self.validate(self.plan)['units'], 1)
+
+    def validate(self, plan):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            directory = Path(directory)
+            write_records(directory, plan_records(plan), units=len(plan['units']))
+            authority = dict(authority='external_artifact_inventory', files={name: file_seal(directory / name, 8 * 1024 * 1024)
+                                                                          for name in report_members(directory)})
+            with ReportValidation(directory, [self.row], authority) as validation:
+                return validation.counts
 
     def cleanup_fixture(self):
-        for path in self.root.iterdir():
-            path.unlink()
-        self.root.rmdir()
+        shutil.rmtree(self.root)
 
     def reject(self, mutation, reason):
         changed = copy.deepcopy(self.plan)
         mutation(changed['units'][0])
         with self.assertRaisesRegex(ValueError, reason):
-            validate_plan(changed, [self.row])
+            self.validate(changed)
 
     def test_effective_command_and_source_binding(self):
         self.reject(lambda u: u['identity'].update(command='b' * 64), 'effective-command binding')
-        self.reject(lambda u: u['identity'].update(source='/different.c'), 'effective-command binding')
+        self.reject(lambda u: u['identity'].update(source='/different.c'), 'semantic text binding')
 
     def test_target_and_ast_instance_binding(self):
         self.reject(lambda u: u['identity'].update(target='other-target'), 'UnitKey differs')
@@ -53,19 +74,19 @@ class CommonPlanDataTests(unittest.TestCase):
     def test_original_buffer_is_checked_without_identity_mocks(self):
         Path(self.row['file']).write_text('changed\n')
         with self.assertRaisesRegex(ValueError, 'source changed'):
-            validate_plan(self.plan, [self.row])
+            self.validate(self.plan)
 
     def test_complete_universe_and_exact_node_membership(self):
         with self.assertRaisesRegex(ValueError, 'command universe'):
-            validate_plan(dict(self.plan, units=[]), [self.row])
+            self.validate(dict(self.plan, units=[]))
         self.reject(lambda u: u['declarations'].append(u['declarations'][0]), 'declaration ID')
         self.reject(lambda u: u['calls'][0].update(direct=99), 'unknown declaration')
-        self.reject(lambda u: u['declarations'][0]['key'].update(unit='other-unit'), 'semantic scope')
+        self.reject(lambda u: u['declarations'][0]['key'].update(unit='other-unit'), 'semantic text binding')
         self.reject(lambda u: u['calls'][0]['key'].update(expression=10), 'semantic scope')
 
     def test_unknown_signatures_remain_blocked(self):
         self.reject(lambda u: u['declarations'][0].update(blockers=[]), 'lost its blocker')
-        self.reject(lambda u: u['calls'][0].update(disposition='Lower'), 'call disposition')
+        self.reject(lambda u: u['calls'][0].update(disposition={'Lower': []}), 'call disposition')
 
     def test_native_counts_are_not_substituted_by_reimports(self):
         self.reject(lambda u: u.update(typed_imports=2), 'export/import count')
@@ -82,10 +103,10 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
         self.reports = json.loads(json.dumps([dict(unit=self.unit, unclassified_definitions=[definition])]))
         self.counts = dict(unknown_definitions=[dict(unit=self.unit, id=7, name='vkd3d_blob_Release',
                                                    blockers=['UnknownSignature'])])
-        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+        self.assertEqual(self.preserve()['count'], 1)
 
     def preserve(self):
-        return preserved_unknowns(self.reports, self.counts, {self.unit})
+        return preserve_fixture(self.reports, self.counts, {self.unit})
 
     def reject_definition(self, mutate, reason):
         mutate(self.reports[0]['unclassified_definitions'][0])
@@ -94,7 +115,7 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
 
     def test_static_source_name_is_preserved(self):
         self.counts['unknown_definitions'].append(dict(unit=self.unit, id=8, name='another_unknown'))
-        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+        self.assertEqual(self.preserve()['count'], 1)
 
     def test_missing_and_extra_record_fields_are_rejected(self):
         original = copy.deepcopy(self.reports)
@@ -177,10 +198,9 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
         counts = copy.deepcopy(self.counts)
         counts['unknown_definitions'].append(dict(unit=second['unit'], id=7, name='vkd3d_blob_Release'))
         sources = {self.unit, second['unit']}
-        self.assertEqual(preserved_unknowns(reports, counts, sources),
-                         {(unit, 'vkd3d_blob_Release') for unit in sources})
+        self.assertEqual(preserve_fixture(reports, counts, sources)['count'], 2)
         with self.assertRaisesRegex(ValueError, 'lost an original'):
-            preserved_unknowns(reports, self.counts, sources)
+            preserve_fixture(reports, self.counts, sources)
 
     def test_coordinated_flat_name_alias_is_rejected(self):
         self.counts['unknown_definitions'][0]['name'] = 'wrong_name'
@@ -196,9 +216,9 @@ class NestedUnknownEvidenceTests(IndependentUnknownSchemaTests):
         definition = self.reports[0]['unclassified_definitions'][0]
         definition.update(location=self.native_origin(), signature=dict(canonical={'unproved': 'unsupported type or wrapper limit'},
                           const=False, volatile=False, restrict=False))
-        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+        self.assertEqual(self.preserve()['count'], 1)
         definition['location']['spelling'] = {'unproved': 'invalid end of token'}
-        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+        self.assertEqual(self.preserve()['count'], 1)
 
     def test_empty_wrong_extra_and_mixed_evidence_tags(self):
         original = copy.deepcopy(self.reports)
@@ -295,9 +315,13 @@ class CommonPlanReceiptTests(unittest.TestCase):
     def test_report_writer_controls_require_source_discovery_and_execution(self):
         from check_common_plan import check_test_receipts
         names = ['closed_variadic_plan_command_reorder_preserves_owned_plan',
-                 'closed_variadic_plan_borrowed_report_matches_legacy_bytes',
-                 'closed_variadic_plan_borrowed_report_propagates_write_failure',
-                 'closed_variadic_plan_report_flush_failure_publishes_no_partial_output']
+                 'closed_variadic_plan_paged_report_matches_legacy_logical',
+                 'closed_variadic_plan_test_only_oracle_propagates_write_failure',
+                 'closed_variadic_plan_report_flush_failure_publishes_no_partial_output',
+                 'closed_variadic_plan_paged_file_failures_publish_no_partial_output',
+                 'closed_variadic_plan_paged_report_giant_native_fact_is_lossless',
+                 'closed_variadic_plan_paged_report_giant_text_vectors_and_owner_are_lossless',
+                 'closed_variadic_plan_paged_report_caps_abort_before_index']
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'c2rust-transpile/src'

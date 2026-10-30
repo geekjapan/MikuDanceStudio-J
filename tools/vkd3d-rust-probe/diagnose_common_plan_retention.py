@@ -124,7 +124,8 @@ class RetentionForwarder:
 def collect(tool, source, clang, output, timeout):
     from full_compiler import UNITS, verify_cursor_tool
     from probe import compilation_entries, run
-    from check_common_plan import sha, validate_plan
+    from check_common_plan import sha
+    from common_plan_report import ReportValidation, seal_live_report, parent_resources
     verify_cursor_tool(tool)
     require(output != source and source not in output.parents, 'diagnostic output must be outside source')
     require(timeout == 1800, 'diagnostic command ceiling is fixed')
@@ -147,7 +148,8 @@ def collect(tool, source, clang, output, timeout):
                         (copied / 'include', copied / 'libs', original.parent / 'hdr/include', original.parent / 'spv/include')
                         for p in sorted(directory.rglob('*.h'))})
     (output / 'input-identity.json').write_text(json.dumps(identity, indent=2) + '\n')
-    result = dict(authorization='diagnostic_only', paired_acceptance='UNRUN', status='incomplete')
+    result = dict(schema=2, authorization='diagnostic_only', paired_acceptance='UNRUN',
+                  independent_preservation='UNRUN', status='incomplete')
     summary = output / 'diagnostic.json'
     summary.write_text(json.dumps(result, indent=2) + '\n')
     phase = output / 'retention.jsonl'
@@ -161,7 +163,26 @@ def collect(tool, source, clang, output, timeout):
         retention_log=phase, diagnostics=dict(phase='retention-on', path=output / 'on.diagnostics.jsonl'))
     summary.write_text(json.dumps(result, indent=2) + '\n')
     require(result['execution']['exit_code'] == 0 and not result['execution']['timed_out'], 'ON diagnostic compiler failed')
-    result['plan_counts'] = validate_plan(json.loads((output / 'on/closed-variadic-plan.json').read_text()), entries)
+    try:
+        result['validation_stage'] = 'filesystem_seal'
+        summary.write_text(json.dumps(result, indent=2) + '\n')
+        authority = seal_live_report(output / 'on', result['execution'])
+        (output / 'common-plan-authority.json').write_text(json.dumps(authority, indent=2) + '\n')
+        result['validation_stage'] = 'bounded_structural_and_source_validation'
+        summary.write_text(json.dumps(result, indent=2) + '\n')
+        with ReportValidation(output / 'on', entries, authority) as validation:
+            result['plan_counts'] = validation.counts
+            result['parent_validation_resources'] = parent_resources()
+        result['validation_stage'] = 'complete'
+    except BaseException as error:
+        result['status'] = 'validation_failed'
+        result['validation_error'] = type(error).__name__
+        try:
+            result['parent_validation_resources'] = parent_resources()
+        except Exception as measurement_error:
+            result['parent_validation_resources'] = dict(status='unavailable', error=type(measurement_error).__name__)
+        summary.write_text(json.dumps(result, indent=2) + '\n')
+        raise
     log = (output / 'on.log').read_text()
     for marker in ('COMMON_PLAN_NATIVE_EXPORT ', 'COMMON_PLAN_TYPED_IMPORT ', 'COMMON_PLAN_EMIT '):
         require(log.count(marker) == len(UNITS), 'diagnostic all24 trace differs')

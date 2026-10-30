@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix, w4-shader-retention-diagnostic]
+    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix, w4-shader-retention-diagnostic, w4-shader-paged-plan-report]
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ defaults:
 
 jobs:
   arm64-ordinary-types:
-    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic'
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic' && github.ref != 'refs/heads/w4-shader-paged-plan-report'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     env:
@@ -91,6 +91,8 @@ jobs:
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan_report.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan_report.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_retention_diagnostics.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_retention_diagnostics.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
@@ -156,7 +158,7 @@ jobs:
           if-no-files-found: error
 
   extract:
-    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic'
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic' && github.ref != 'refs/heads/w4-shader-paged-plan-report'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 115
@@ -230,7 +232,7 @@ jobs:
           if-no-files-found: error
 
   retention-diagnostic:
-    if: github.ref == 'refs/heads/w4-shader-retention-diagnostic'
+    if: github.ref == 'refs/heads/w4-shader-retention-diagnostic' || github.ref == 'refs/heads/w4-shader-paged-plan-report'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 115

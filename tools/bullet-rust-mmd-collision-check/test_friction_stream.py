@@ -8,6 +8,70 @@ from friction_trace import Capture, compare_defined, compare_physical, parse
 class StreamTests(unittest.TestCase):
     inputs = 'H synthetic fixture-injection\nX\n'
 
+    def rust_original_stream(self):
+        inputs = 'H initialized fixture-injection\nN 0 1 0\nX\n'
+        sha = hashlib.sha256(inputs.encode()).hexdigest()
+        lines = [f'FH 3 rust-original ordinary {sha} 3']
+        for cp, op in ((0, 'H'), (1, 'N')):
+            if cp:
+                lines += ['K 1 1 1 00000000 00000000', 'Y 1 P 1 0',
+                          'Y 1 G 0 1 0 0 0', 'V 1 0 1', 'Y 1 A', 'R 1 1', 'STATUS 1 0']
+            lines += [f'O {cp} {op} 1 0 0',
+                      ' '.join(['B', str(cp), '0'] + ['0'] * 6 + ['00000000'] * 51 + ['0'] * 6),
+                      ' '.join(['W', str(cp), '0', '0', '0'] + ['00000000'] * 36)]
+            lines += [f'S {cp} {axis} 0' for axis in range(3)]
+            lines += [' '.join(['J', str(cp), '0', '-1', '0', '0'] + ['0', '00000000', '00000000'] * 6)]
+        lines += ['O 2 X 0 0 0', 'Z 3', 'FZ 0 3 0']
+        return ('\n'.join(lines) + '\n').encode(), inputs, sha
+
+    def test_rust_original_retains_actual_sap_joint_and_step_rows(self):
+        raw, inputs, sha = self.rust_original_stream()
+        capture = parse(raw, inputs, variant='rust-original', role='ordinary', corpus_sha=sha)
+        self.assertEqual({row[0] for row in capture.base}, {'O', 'B', 'W', 'S', 'J', 'R', 'K', 'Y', 'V', 'STATUS'})
+
+    def test_empty_w_requires_complete_fixture_boundaries_in_both_languages(self):
+        inputs = 'H initialized fixture-injection\nW\nX\n'
+        sha = hashlib.sha256(inputs.encode()).hexdigest()
+        for native in (False, True):
+            variant = 'native-observed' if native else 'rust-observed'
+            events = [('FG', 0, 'STARTUP')] if native else []
+            for cp, op in enumerate(('H', 'W', 'X')):
+                if native:
+                    events.append(('FG', cp, 'COMMAND_BEGIN'))
+                if op == 'W':
+                    if native:
+                        events.append(('FG', cp, 'FIXTURE_BEGIN'))
+                    events += [('FF', cp, 'FIXTURE_BEGIN'), ('FF', cp, 'FIXTURE_END')]
+                    if native:
+                        events.append(('FG', cp, 'FIXTURE_END'))
+                if native:
+                    events.append(('FG', cp, 'SNAPSHOT'))
+                events.append(('BASE', f'O {cp} {op} 0 0 0'))
+                if native:
+                    events.append(('FG', cp, 'COMMAND_END'))
+            events.append(('BASE', 'Z 3'))
+            def raw(selected):
+                lines, seq = [f'FH 3 {variant} ordinary {sha} 3'], 0
+                for event in selected:
+                    if event[0] == 'BASE':
+                        lines.append(event[1])
+                    else:
+                        tag, cp, site = event
+                        seq += 1
+                        tail = ' true true true true' if tag == 'FG' else ''
+                        lines.append(f'{tag} {cp} {seq} {site}{tail}')
+                return ('\n'.join(lines) + f'\nFZ {seq} 3 0\n').encode()
+            parse(raw(events), inputs, variant=variant, role='ordinary', corpus_sha=sha)
+            for index, event in enumerate(events):
+                if event[0] == 'FF' or event[0] == 'FG' and event[2].startswith('FIXTURE_'):
+                    for duplicate in (False, True):
+                        changed = events[:index] + ([event] if duplicate else []) + events[index + (not duplicate):]
+                        with self.subTest(native=native, event=event, duplicate=duplicate), self.assertRaises(ValueError):
+                            parse(raw(changed), inputs, variant=variant, role='ordinary', corpus_sha=sha)
+            with self.assertRaises(ValueError):
+                parse(raw([event for event in events if event[0] != 'FF']), inputs,
+                      variant=variant, role='ordinary', corpus_sha=sha)
+
     def stream(self, variant='native-original'):
         sha = hashlib.sha256(self.inputs.encode()).hexdigest()
         body = 'O 0 H 0 0 0\nO 1 X 0 0 0\nZ 2\n'
@@ -77,6 +141,13 @@ class StreamTests(unittest.TestCase):
             with self.subTest(variant=variant), self.assertRaisesRegex(ValueError, 'no fabricated observations'):
                 parse(raw, self.inputs, variant=variant, role='ordinary', corpus_sha=sha)
 
+    def test_originals_reject_fixture_records(self):
+        for variant in ('native-original', 'rust-original'):
+            raw, sha = self.stream(variant)
+            raw = raw.replace(b'O 0 H', b'FF 0 1 FIXTURE_BEGIN\nO 0 H')
+            with self.subTest(variant=variant), self.assertRaisesRegex(ValueError, 'no fabricated observations'):
+                parse(raw, self.inputs, variant=variant, role='ordinary', corpus_sha=sha)
+
     def contact_stream(self, native):
         variant = 'native-observed' if native else 'rust-observed'
         sha = hashlib.sha256(self.inputs.encode()).hexdigest()
@@ -94,8 +165,13 @@ class StreamTests(unittest.TestCase):
 
         guard(0, 'STARTUP')
         guard(0, 'COMMAND_BEGIN')
-        lines += ['E 0 A+ 9', 'E 0 M+ 1 0 1']
+        lines += ['E 0 A+ 9']
+        guard(0, 'MANIFOLD_ALLOC_ENTER')
+        for _ in range(4):
+            guard(0, 'CTOR_EXIT')
+        lines += ['E 0 M+ 1 0 1']
         event(0, 'FM', 'ALLOC', 1, 0, 1)
+        guard(0, 'MANIFOLD_ALLOC_EXIT')
         guard(0, 'RESULT_ENTER')
         guard(0, 'CTOR_EXIT')
         event(0, 'FC', 'CTOR_GEOMETRIC' if native else 'RUST_CONTACT_CREATE', 1)
@@ -116,7 +192,7 @@ class StreamTests(unittest.TestCase):
             lines.append(' '.join(['B', '0', str(index)] + ['0'] * 6 + ['00000000'] * 51 + ['0'] * 6))
             lines.append(' '.join(['W', '0', str(index), '0', '0'] + ['00000000'] * 36))
         lines += [f'S 0 {axis} 0' for axis in range(3)]
-        lines += ['P 0 0 0 1 9 0 0', 'M 0 0 1 9 0 1 00000000 00000000 1']
+        lines += ['P 0 0 0 1 9 0 9', 'M 0 0 1 9 0 1 00000000 00000000 1']
         event(0, 'FS', 'SNAPSHOT', 0, 1, 1)
         event(0, 'FL', 'SNAPSHOT', 0, 0, 1, 2, 0, False)
         lines.append(' '.join(['Q', '0', '0', '0'] + ['00000000'] * 21 + ['0', 'false']))

@@ -77,7 +77,9 @@ def _legacy_native(edit):
          'return dw_algorithm_alloc(btAlignedAlloc(static_cast<size_t>(size), 16));')
     edit(DISPATCHER, 'void btCollisionDispatcher::freeCollisionAlgorithm(void* ptr)\n{',
          'void btCollisionDispatcher::freeCollisionAlgorithm(void* ptr)\n{\n\tdw_algorithm_free(ptr);')
-    edit(DISPATCHER, '\treturn manifold;', '\tdw_manifold_alloc(manifold, b0, b1);\n\tfn_allocate(manifold,b0,b1);\n\treturn manifold;')
+    allocation = 'btPersistentManifold*\tbtCollisionDispatcher::getNewManifold(void* b0,void* b1) \n{ '
+    edit(DISPATCHER, allocation, allocation + '\n\tfn_guard("MANIFOLD_ALLOC_ENTER");')
+    edit(DISPATCHER, '\treturn manifold;', '\tdw_manifold_alloc(manifold, b0, b1);\n\tfn_allocate(manifold,b0,b1);\n\tfn_guard("MANIFOLD_ALLOC_EXIT");\n\treturn manifold;')
     edit(DISPATCHER, 'void btCollisionDispatcher::releaseManifold(btPersistentManifold* manifold)\n{',
          'void btCollisionDispatcher::releaseManifold(btPersistentManifold* manifold)\n{\n\tfn_guard("RELEASE_ENTER");')
     edit(DISPATCHER, '\tmanifold->~btPersistentManifold();',
@@ -109,8 +111,8 @@ def _legacy_native(edit):
 
 
 def _lifecycle(edit):
-    edit(POINT, '\t\t\t{\n\t\t\t}', '\t\t\t{\n\t\t\t\tfn_ctor(this);\n\t\t\t}')
-    edit(POINT, '\t\t\t{\n\t\t\t\t\n\t\t\t\t\t\n\t\t\t}', '\t\t\t{\n\t\t\t\tfn_ctor(this);\n\t\t\t}')
+    edit(POINT, '\t\t\t{\n\t\t\t}', '\t\t\t{\n\t\t\t\tfn_ctor(this,false);\n\t\t\t}')
+    edit(POINT, '\t\t\t{\n\t\t\t\t\n\t\t\t\t\t\n\t\t\t}', '\t\t\t{\n\t\t\t\tfn_ctor(this,true);\n\t\t\t}')
     signature = 'void btManifoldResult::addContactPoint(const btVector3& normalOnBInWorld,const btVector3& pointInWorld,btScalar depth)\n{'
     edit(RESULT, signature, signature + '\n\tfn_guard("RESULT_ENTER");')
     edit(RESULT, '\tif (depth > m_manifoldPtr->getContactBreakingThreshold())\n\t\treturn;',
@@ -221,8 +223,8 @@ def _consumer(edit, observed, corpus):
     if observed:
         w = 'p.m_lateralFrictionDir2=btVector3(0,0,1);'
         edit(CONSUMER, w, w + 'fn_write(&p,"FIXTURE_W",3);')
-        edit(CONSUMER, '        else if(op=="W") {', '        else if(op=="W") {\n            fn_guard("FIXTURE_BEGIN");')
-        edit(CONSUMER, '        } else if(op=="J")', '            fn_guard("FIXTURE_END");\n        } else if(op=="J")')
+        edit(CONSUMER, '        else if(op=="W") {', '        else if(op=="W") {\n            fn_guard("FIXTURE_BEGIN");\n            friction_native::fixture("FIXTURE_BEGIN");')
+        edit(CONSUMER, '        } else if(op=="J")', '            friction_native::fixture("FIXTURE_END");\n            fn_guard("FIXTURE_END");\n        } else if(op=="J")')
 
 
 def _refresh(edit):

@@ -70,6 +70,9 @@ class Hosted(unittest.TestCase):
                 self.assertNotIn('if p.lateral_initialized {for v in p.lateral_directions', runner)
                 self.assertIn('p.lateral_directions.map(|v|v.0.map(f32::to_bits))', runner)
                 self.assertEqual('friction_rust::incoming()' in (root / rust.CONTACT).read_text(), observed)
+                owner = (root / rust.OWNER).read_text()
+                self.assertEqual(owner.count('friction_rust::fixture_begin()'), int(observed))
+                self.assertEqual(owner.count('friction_rust::fixture_end()'), int(observed))
 
     def test_runtime_lifetimes_writes_and_physical_retention(self):
         here = Path(__file__).resolve().parent
@@ -80,7 +83,7 @@ class Hosted(unittest.TestCase):
             subprocess.run(['rustc', '--edition=2021', str(root / 'main.rs'), '-o', str(root / 'probe')], check=True)
             result = subprocess.run([str(root / 'probe')], check=True, capture_output=True, text=True)
             rows = [line.split() for line in result.stdout.splitlines()]
-            self.assertEqual(rows[0], ['FH', '3', 'rust-observed', 'ordinary', '0' * 64, '1'])
+            self.assertEqual(rows[0], ['FH', '3', 'rust-observed', 'ordinary', '0' * 64, '3'])
             self.assertEqual([row[3] for row in rows if row[0] == 'FW'], ['PLANE_BOTH', 'VELOCITY_DIR1', 'FIXTURE_W'])
             self.assertEqual(len([row for row in rows if row[0] == 'FP']), 4)
             self.assertEqual([row[8] for row in rows if row[0] == 'FD'], ['3', '3', '0', '0'])
@@ -94,7 +97,7 @@ RUNTIME_CONTROL = r'''
 mod friction_rust;
 use friction_rust as f;
 fn main() {
-    f::begin("rust-observed", "ordinary", &"0".repeat(64), 1); f::command(0, "D");
+    f::begin("rust-observed", "ordinary", &"0".repeat(64), 3); f::command(0, "D");
     f::allocate(7, [0, 1]); f::enter(7);
     f::incoming(); f::insert(0, 0, false); f::incoming(); f::insert(1, 1, false); f::leave(7);
     f::solver_map([7].into_iter());
@@ -107,7 +110,8 @@ fn main() {
     f::incoming(); f::insert(0, 1, true); f::leave(7);
     let mask = f::point(0, 0, 7, false); assert_eq!(mask, 0);
     f::directions(0, 0, mask, [[11,12,13],[14,15,16]]);
-    f::fixture(7, 0); f::enter(7); f::clear(1); f::leave(7); f::release(7);
+    f::command_end(); f::command(1, "W"); f::fixture_begin(); f::fixture(7, 0); f::fixture_end();
+    f::command_end(); f::command(2, "X"); f::enter(7); f::clear(1); f::leave(7); f::release(7);
     f::allocate(7, [0,1]); f::enter(7); f::clear(0); f::leave(7); f::release(7);
     f::command_end(); f::finish();
 }

@@ -132,6 +132,7 @@ def _resequence(rows):
 def runtime_controls(raw, captures, inputs, role):
     """Safe text/defined-value peers, each with a precise rejection witness."""
     from friction_trace import parse, compare_defined, compare_physical
+    from friction_compare import common_fields
     lines = ['MMD_FRICTION_RUNTIME_CONTROLS 1\n']
     native, rust_original, rust_observed = captures[1:]
     tokens = [line.split() for line in raw.decode('ascii').splitlines()]
@@ -149,6 +150,22 @@ def runtime_controls(raw, captures, inputs, role):
                 lines.append(f'S {kind} {tag} {site} {tokens[index][1]} {str(error).encode().hex()}\n')
             else:
                 raise ValueError(f'actual structural peer accepted: {kind} {tag} {site}')
+    for tag in ('S', 'J', 'R', 'K', 'Y', 'V'):
+        index = next((i for i, row in enumerate(rust_original.base) if row[0] == tag), None)
+        require(index is not None, 'actual initialized Rust common control row ' + tag)
+        row = rust_original.base[index]
+        for field_index in range(2, len(row)):
+            changed = list(row)
+            changed[field_index] = '1' if row[field_index] == '0' else '0'
+            peer = copy.copy(rust_original)
+            peer.base = list(rust_original.base)
+            peer.base[index] = tuple(changed)
+            try:
+                common_fields(peer, rust_observed)
+            except ValueError as error:
+                lines.append(f'C {tag} {row[1]} {field_index} {str(error).encode().hex()}\n')
+            else:
+                raise ValueError('actual initialized Rust common field peer accepted: ' + tag)
     numerical = 0
     for key, (state, words) in native.directions.items():
         if state != 'D':

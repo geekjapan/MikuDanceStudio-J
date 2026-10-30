@@ -13,7 +13,7 @@ struct State {
     live: [Manifold; LIMIT], solver: [u32; LIMIT], solver_count: usize,
     owner: Option<u32>, next_mid: u32, next_gid: u32, next_tx: u32,
     cp: usize, commands: usize, seq: u32, closed: u32, bytes: usize,
-    started: bool, observed: bool, command_open: bool, fixture_snapshot: bool, incoming: Option<u32>,
+    started: bool, observed: bool, command_open: bool, fixture_snapshot: bool, fixture_active: bool, incoming: Option<u32>,
     tx: Option<(u32, usize, u32, u32, bool, u8)>,
     refresh: Option<(u32, isize)>,
 }
@@ -21,7 +21,7 @@ impl State {
     fn new() -> Self { Self { live: [Manifold::default(); LIMIT], solver: [0; LIMIT],
         solver_count: 0, owner: None, next_mid: 0, next_gid: 0, next_tx: 0,
         cp: 0, commands: 0, seq: 0, closed: 0, bytes: 0,
-        started: false, observed: false, command_open: false, fixture_snapshot: false, incoming: None, tx: None, refresh: None } }
+        started: false, observed: false, command_open: false, fixture_snapshot: false, fixture_active: false, incoming: None, tx: None, refresh: None } }
     fn index(&self, key: u32) -> usize {
         self.live.iter().position(|m| m.mid != 0 && m.key == key).expect("live owner epoch")
     }
@@ -63,7 +63,7 @@ pub fn command(cp: usize, op: &str) { state(|s| {
     assert!(s.started && !s.command_open && cp == s.cp && cp < s.commands);
     assert!(s.owner.is_none() && s.tx.is_none() && s.incoming.is_none()); s.command_open = true; s.fixture_snapshot = op == "W";
 }); }
-pub fn command_end() { state(|s| { assert!(s.command_open && s.owner.is_none() && s.tx.is_none() && s.incoming.is_none() && s.refresh.is_none());
+pub fn command_end() { state(|s| { assert!(s.command_open && !s.fixture_active && s.owner.is_none() && s.tx.is_none() && s.incoming.is_none() && s.refresh.is_none());
     s.command_open = false; s.cp += 1; }); }
 pub fn finish() { state(|s| {
     assert!(s.started && !s.command_open && s.cp == s.commands && s.owner.is_none() && s.tx.is_none() && s.incoming.is_none() && s.refresh.is_none());
@@ -171,8 +171,15 @@ pub fn solver_end(flag: bool) { state(|s| {
     let site = if velocity { "VELOCITY_ONE" } else { "PLANE_ONE" };
     s.event("FE", format_args!("{site} {mid} {slot} {gid} {tx} {writes} {} {flag}", p.mask));
 }); }
+pub fn fixture_begin() { state(|s| {
+    assert!(s.observed && s.fixture_snapshot && !s.fixture_active && s.tx.is_none() && s.owner.is_none());
+    s.fixture_active = true; s.event("FF", format_args!("FIXTURE_BEGIN"));
+}); }
+pub fn fixture_end() { state(|s| {
+    assert!(s.fixture_active); s.fixture_active = false; s.event("FF", format_args!("FIXTURE_END"));
+}); }
 pub fn fixture(key: u32, slot: usize) { state(|s| {
-    assert!(s.tx.is_none() && s.owner.is_none()); let i = s.index(key); let m = s.live[i]; assert!(slot < m.count);
+    assert!(s.fixture_active && s.tx.is_none() && s.owner.is_none()); let i = s.index(key); let m = s.live[i]; assert!(slot < m.count);
     let p = m.points[slot]; s.live[i].points[slot].mask |= 3;
     s.event("FW", format_args!("FIXTURE_W {} {slot} {} 0 3", m.mid, p.gid));
 }); }

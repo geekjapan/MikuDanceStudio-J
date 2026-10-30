@@ -55,6 +55,8 @@ def observed_bijection(native, rust):
         elif tag == 'FR':
             expected = (_mapped(maps['mid'], av[0]), av[1],
                         _mapped(maps['gid'], av[2], site != 'REFRESH_POINT'), *av[3:])
+        elif tag == 'FF':
+            expected = ()
         else:
             require(tag in ('FB', 'FT', 'FW', 'FE'), 'complete known event correspondence')
             if tag == 'FB':
@@ -95,8 +97,11 @@ def _snapshot_binding(mapping, left, right):
 
 def common_fields(left, right, *, observed_maps=None):
     require(left.role == right.role and left.corpus_sha == right.corpus_sha, 'same role/corpus common fields')
-    arows = left.base if observed_maps is not None else [row for row in left.base if row[0] in COMMON]
-    brows = right.base if observed_maps is not None else [row for row in right.base if row[0] in COMMON]
+    rust_pair = left.variant.startswith('rust-') and right.variant.startswith('rust-')
+    def visible(row):
+        return row[0] != 'E' if rust_pair else row[0] in COMMON
+    arows = left.base if observed_maps is not None else [row for row in left.base if visible(row)]
+    brows = right.base if observed_maps is not None else [row for row in right.base if visible(row)]
     require(len(arows) == len(brows), 'full common base row lengths')
     checkpoint = None
     local_mid, local_alg = {}, {}

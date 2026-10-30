@@ -11,7 +11,8 @@ GUARDS = frozenset('STARTUP COMMAND_BEGIN COMMAND_END CTOR_EXIT ADD_ENTER ADD_EX
                    'REPLACE_ENTER REPLACE_EXIT REMOVE_ENTER REMOVE_EXIT CLEAR_ENTER CLEAR_EXIT '
                    'RELEASE_ENTER RELEASE_EXIT USERCACHE_ENTER USERCACHE_EXIT ADDED_PRECALL '
                    'PROCESSED_PRECALL DESTROYED_PRECALL SOLVER_BEGIN SOLVER_END '
-                   'FIXTURE_BEGIN FIXTURE_END RESULT_ENTER RESULT_EXIT REFRESH_ENTER REFRESH_EXIT SNAPSHOT'.split())
+                   'FIXTURE_BEGIN FIXTURE_END RESULT_ENTER RESULT_EXIT REFRESH_ENTER REFRESH_EXIT '
+                   'MANIFOLD_ALLOC_ENTER MANIFOLD_ALLOC_EXIT SNAPSHOT'.split())
 SITES = {
     'FG': GUARDS,
     'FM': frozenset(('ALLOC', 'CLEAR_BEGIN', 'CLEAR_END', 'RELEASE')),
@@ -21,6 +22,7 @@ SITES = {
     'FX': frozenset(('TEMP_END', 'REMOVE', 'CLEAR_POINT', 'RELEASE_POINT')),
     'FV': frozenset(('REMOVE_MOVE',)),
     'FR': frozenset(('REFRESH_BEGIN', 'REFRESH_POINT', 'REFRESH_END')),
+    'FF': frozenset(('FIXTURE_BEGIN', 'FIXTURE_END')),
     'FB': frozenset(('SOLVER_BEGIN',)),
     'FT': frozenset(('SOLVER_CHOICE',)),
     'FW': frozenset(('DIR1_RAW', 'VELOCITY_DIR1', 'VELOCITY_DIR2', 'PLANE_BOTH',
@@ -33,7 +35,7 @@ SITES = {
 }
 # Fields after cp, seq and site. z permits zero; i is a nonzero identity.
 FIELDS = {
-    'FG': 'bbbb', 'FM': 'iuu', 'FC': 'i', 'FPY': 'iim',
+    'FG': 'bbbb', 'FM': 'iuu', 'FC': 'i', 'FPY': 'iim', 'FF': '',
     'FI': 'isziim', 'FX': 'zsi', 'FV': 'issi', 'FR': 'iszbb', 'FB': 'isiiub',
     'FT': 'isiibbb', 'FW': 'isizm', 'FE': 'isiimmb',
     'FS': 'uic', 'FL': 'us iimb'.replace(' ', ''),

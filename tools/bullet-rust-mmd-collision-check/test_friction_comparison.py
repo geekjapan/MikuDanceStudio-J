@@ -6,6 +6,37 @@ from friction_trace import Capture
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_rust_original_compares_every_actual_extra_row_and_field(self):
+        original = Capture('rust-original', 'ordinary', 'a' * 64)
+        observed = Capture('rust-observed', 'ordinary', 'a' * 64)
+        rows = [('S', '0', '0', '1', '1', '0'), ('J', '0', '0', '0'),
+                ('R', '0', '1'), ('K', '0', '1', '1', '00000000', '00000000'),
+                ('Y', '0', 'P', '2', '1'), ('V', '0', '0', '2')]
+        original.base = list(rows)
+        observed.base = [('E', '0', 'A+', '1'), *rows]
+        common_fields(original, observed)
+        for index, row in enumerate(rows):
+            for field_index in range(2, len(row)):
+                changed = list(row)
+                changed[field_index] += '1'
+                observed.base = [*rows[:index], tuple(changed), *rows[index + 1:]]
+                with self.subTest(tag=row[0], field=field_index), self.assertRaises(ValueError):
+                    common_fields(original, observed)
+            for changed in (rows[:index] + rows[index + 1:], rows[:index] + [row] + rows[index:]):
+                observed.base = changed
+                with self.subTest(tag=row[0], length=len(changed)), self.assertRaisesRegex(ValueError, 'row lengths'):
+                    common_fields(original, observed)
+
+    def test_fixture_boundaries_and_every_write_are_compared(self):
+        n = Capture('native-observed', 'ordinary', 'a' * 64)
+        r = Capture('rust-observed', 'ordinary', 'a' * 64)
+        n.history = r.history = [(0, 'FF', 'FIXTURE_BEGIN', ()), (0, 'FF', 'FIXTURE_END', ())]
+        observed_bijection(n, r)
+        for changed in (r.history[:1], r.history * 2, r.history[::-1]):
+            r.history = changed
+            with self.assertRaises(ValueError):
+                observed_bijection(n, r)
+
     def test_all_generation_events_bind_independent_local_ids(self):
         n = Capture('native-observed', 'ordinary', 'a' * 64)
         r = Capture('rust-observed', 'ordinary', 'a' * 64)

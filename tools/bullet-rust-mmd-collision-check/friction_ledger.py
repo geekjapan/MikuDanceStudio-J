@@ -29,6 +29,15 @@ class Ledger:
         self.pending_added = None
         self.pending_added_exit = None
         self.result_inserted = False
+        self.result_constructed = False
+        self.allocation = None
+        self.ctor_pending = False
+        self.operation = None
+        self.previous_snapshot = None
+        self.snapshot_order = []
+        self.fixture = None
+        self.fixture_expected = None
+        self.fixture_checkpoint = None
         self.refresh = None
         self.refresh_expected = None
         self.cache_closures = 0
@@ -63,8 +72,54 @@ class Ledger:
             require(name in self.scopes, 'required native guard scope ' + name)
 
     def order(self, tag, site=None):
+        if self.operation == 'W':
+            require(tag not in ('FM', 'FC', 'FPY', 'FI', 'FX', 'FV', 'FR', 'FB', 'FT', 'FE', 'E')
+                    and (tag != 'FW' or site == 'FIXTURE_W')
+                    and (tag != 'FG' or site in ('COMMAND_BEGIN', 'COMMAND_END', 'FIXTURE_BEGIN',
+                                                'FIXTURE_END', 'SNAPSHOT')),
+                    'actual W has no intervening contact mutation')
         require(self.refresh_expected is None or self.refresh_expected == (tag, site),
                 'exact refresh source order: expected ' + repr(self.refresh_expected))
+        require(self.fixture_expected is None or self.fixture_expected == (tag, site),
+                'exact fixture source order: expected ' + repr(self.fixture_expected))
+        require(not self.ctor_pending or (tag, site) == ('FC', 'CTOR_GEOMETRIC'),
+                'geometric constructor immediately binds FC')
+        if self.allocation is not None:
+            expected = ('FG', 'CTOR_EXIT') if self.allocation < 4 else (
+                ('FG', 'MANIFOLD_ALLOC_EXIT') if self.allocation == 5 else ('FM', 'ALLOC'))
+            require((tag, site) == expected or self.allocation == 4 and tag == 'E',
+                    'exact four backing constructors and single allocation order')
+
+    def complete_snapshot(self):
+        require(len(self.snapshot_order) == len(self.manifolds)
+                and set(self.snapshot_order) == set(self.manifolds), 'complete dispatcher snapshot order')
+        self.previous_snapshot = tuple((mid, slot, gid) for mid in self.snapshot_order
+                                       for slot, gid in enumerate(self.manifolds[mid][1]))
+        self.snapshot_order = []
+
+    def _fixture_event(self, cp, site):
+        if site == 'FIXTURE_BEGIN':
+            require(self.operation == 'W' and self.fixture_checkpoint != cp
+                    and self.fixture is None and self.previous_snapshot is not None
+                    and not self.transactions and not self.clearing and self.pending_move is None
+                    and self.refresh is None, 'fixture BEGIN binds actual W and preceding complete snapshot')
+            require(set(self.previous_snapshot) == {(mid, slot, gid) for mid, (_, slots) in self.manifolds.items()
+                                                     for slot, gid in enumerate(slots)},
+                    'fixture freezes every current live contact without intervening mutation')
+            if self.native:
+                require(self.scopes == ['FIXTURE'] and self.last_guard == 'FIXTURE_BEGIN',
+                        'native fixture guard immediately wraps FF BEGIN')
+            self.fixture = list(self.previous_snapshot)
+            self.fixture_checkpoint = cp
+        else:
+            require(self.fixture == [], 'fixture END requires all exact ordered visits once')
+            if self.native:
+                self.fixture_expected = ('FG', 'FIXTURE_END')
+                return
+            self.fixture = None
+            self.fixture_expected = None
+            return
+        self.fixture_expected = ('FW', 'FIXTURE_W') if self.fixture else ('FF', 'FIXTURE_END')
 
     def _refresh_next(self):
         self.refresh['pending'] = None
@@ -143,12 +198,22 @@ class Ledger:
                 elif site == 'SNAPSHOT':
                     require(not self.scopes and not self.snapshot_guard and self.pending_added is None
                             and self.cache_closures == 0, 'one snapshot guard outside mutation')
+                    require(self.operation != 'W' or self.fixture_checkpoint == cp and self.fixture is None
+                            and self.fixture_expected is None, 'complete fixture before W snapshot')
                     self.snapshot_guard = True
                 elif site.endswith('_ENTER') or site in ('SOLVER_BEGIN', 'FIXTURE_BEGIN'):
                     scope = site.rsplit('_', 1)[0]
                     if scope == 'RESULT':
                         require('RESULT' not in self.scopes, 'single actual Result scope')
                         self.result_inserted = False
+                        self.result_constructed = False
+                    elif scope == 'MANIFOLD_ALLOC':
+                        require(self.allocation is None, 'single manifold allocation scope')
+                        self.allocation = 0
+                    elif scope == 'FIXTURE':
+                        require(self.operation == 'W' and not self.scopes and self.fixture is None,
+                                'fixture guard in actual W')
+                        self.fixture_expected = ('FF', 'FIXTURE_BEGIN')
                     elif scope == 'REFRESH':
                         require(self.refresh is None and self.refresh_expected is None
                                 and self.cache_closures == 0, 'single idle native refresh entry')
@@ -163,13 +228,29 @@ class Ledger:
                     if scope == 'USERCACHE':
                         self.cache_closures += 1
                     elif scope == 'RESULT':
-                        require(self.pending_added is None, 'Result exit consumes insertion callback')
+                        require(self.pending_added is None and self.result_constructed == self.result_inserted,
+                                'Result exit consumes constructor and insertion callback')
+                    elif scope == 'MANIFOLD_ALLOC':
+                        require(self.allocation == 5, 'allocation exit after four constructors and single FM')
+                        self.allocation = None
+                    elif scope == 'FIXTURE':
+                        require(self.fixture == [] and self.fixture_expected == ('FG', site),
+                                'native fixture exit after complete FF END')
+                        self.fixture = self.fixture_expected = None
                     elif scope == 'REFRESH':
                         require(self.refresh is not None and self.refresh_expected == ('FG', 'REFRESH_EXIT'),
                                 'refresh exit after complete END')
                         self.refresh = self.refresh_expected = None
                 elif site == 'CTOR_EXIT':
-                    pass
+                    if self.scopes and self.scopes[-1] == 'MANIFOLD_ALLOC':
+                        require(self.allocation is not None and self.allocation < 4,
+                                'exact four backing constructors')
+                        self.allocation += 1
+                    else:
+                        require(self.scopes == ['RESULT'] and not self.result_constructed,
+                                'one geometric constructor inside actual Result call')
+                        self.result_constructed = True
+                        self.ctor_pending = True
                 else:
                     if site == 'ADDED_PRECALL':
                         require(self.pending_added is not None, 'Added precall binds immediately preceding insertion')
@@ -198,11 +279,17 @@ class Ledger:
             require(self.pending_added is None, 'mandatory post-insertion Added precall guard')
         if self.pending_move is not None:
             require(tag == 'FV', 'immediate mandatory remove/move-last event')
-        if tag == 'FR':
+        if tag == 'FF':
+            self._fixture_event(cp, site)
+        elif tag == 'FR':
             self._refresh_event(site, v)
         elif tag == 'FM':
             mid, a, b = v
             if site == 'ALLOC':
+                if self.native:
+                    require(self.scopes and self.scopes[-1] == 'MANIFOLD_ALLOC' and self.allocation == 4,
+                            'allocation requires four actual backing constructors')
+                    self.allocation = 5
                 require(a != b and len(self.manifolds) < 4096, 'bounded manifold with distinct body pair')
                 self._fresh(mid, self.used_mid, 'manifold')
                 self.manifolds[mid] = ((a, b), [])
@@ -229,7 +316,9 @@ class Ledger:
         elif tag == 'FC':
             require((site != 'RUST_CONTACT_CREATE') == self.native, 'language-specific contact construction')
             if self.native:
-                require(self.last_guard == 'CTOR_EXIT', 'initialized constructor exit guard before incoming generation')
+                require(site == 'CTOR_GEOMETRIC' and self.ctor_pending and self.last_guard == 'CTOR_EXIT'
+                        and self.scopes == ['RESULT'], 'initialized geometric constructor exit immediately before incoming generation')
+                self.ctor_pending = False
             self._open(v[0], 0, True)
         elif tag == 'FPY':
             source, copied, mask = v
@@ -332,6 +421,10 @@ class Ledger:
                 self._scope('FIXTURE')
                 require(transaction == 0 and v[4] == 3 and gid not in self.transactions,
                         'fixture write outside solver transaction')
+                require(self.fixture and self.fixture[0] == (mid, slot, gid),
+                        'fixture write matches next exact dispatcher/slot/generation visit')
+                self.fixture.pop(0)
+                self.fixture_expected = ('FW', 'FIXTURE_W') if self.fixture else ('FF', 'FIXTURE_END')
                 self.points[gid] |= 3
             else:
                 self._scope('SOLVER')
@@ -395,12 +488,16 @@ class Ledger:
                 'snapshot matches complete ordered live manifold')
         if self.native:
             require(self.snapshot_guard and not self.scopes, 'guard before safe native snapshot')
+        require(mid not in self.snapshot_order, 'one manifold in dispatcher snapshot order')
+        self.snapshot_order.append(mid)
 
     def finish(self, commands):
         require(not self.manifolds and not self.points and not self.temporary and not self.transactions
                 and not self.clearing and not self.releasing and self.pending_move is None and not self.scopes,
                 'closed manifold/generation/temporary/transaction lifetimes')
         require(self.refresh is None and self.refresh_expected is None, 'closed refresh lifetime')
+        require(self.allocation is None and not self.ctor_pending and self.fixture is None
+                and self.fixture_expected is None, 'closed allocation/constructor/fixture lifetime')
         if self.native:
             require(self.started and self.command is None and self.command_ended == commands - 1,
                     'complete guarded command schedule')

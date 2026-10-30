@@ -44,6 +44,7 @@ class GrammarTests(unittest.TestCase):
             'FI 0 1 ADD 1 0 0 1 2 0', 'FX 0 1 TEMP_END 0 0 1',
             'FV 0 1 REMOVE_MOVE 1 3 1 2', 'FB 0 1 SOLVER_BEGIN 1 0 2 1 260 false',
             'FR 0 1 REFRESH_BEGIN 1 0 0 false false',
+            'FF 0 1 FIXTURE_BEGIN',
             'FT 0 1 SOLVER_CHOICE 1 0 2 1 true false false',
             'FW 0 1 PLANE_BOTH 1 0 2 1 3', 'FE 0 1 PLANE_ONE 1 0 2 1 3 3 true',
             'FS 0 1 SNAPSHOT 0 1 1', 'FL 0 1 SNAPSHOT 0 0 1 2 3 false',
@@ -224,7 +225,12 @@ class RefreshTests(unittest.TestCase):
         if native:
             self.guard('STARTUP')
             self.guard('COMMAND_BEGIN')
+            self.guard('MANIFOLD_ALLOC_ENTER')
+            for _ in range(4):
+                self.guard('CTOR_EXIT')
         self.emit('FM', 'ALLOC', 1, 0, 1)
+        if native:
+            self.guard('MANIFOLD_ALLOC_EXIT')
         for slot in range(count):
             if native:
                 self.guard('RESULT_ENTER')
@@ -395,11 +401,170 @@ class RefreshTests(unittest.TestCase):
 
     def test_insertion_without_result_call_is_rejected(self):
         self.prepare()
-        self.guard('CTOR_EXIT')
-        self.emit('FC', 'CTOR_GEOMETRIC', 1)
-        self.guard('ADD_ENTER')
         with self.assertRaisesRegex(ValueError, 'actual Result call'):
-            self.emit('FI', 'ADD', 1, 0, 0, 1, 2, 0)
+            self.guard('CTOR_EXIT')
+
+
+class ConstructorTests(unittest.TestCase):
+    def check(self, rows):
+        ledger = Ledger(True)
+        for site in ('STARTUP', 'COMMAND_BEGIN'):
+            ledger.guard(0, site, (True,) * 4)
+        for tag, site, values in rows:
+            if tag == 'FG':
+                ledger.guard(0, site, (True,) * 4)
+            else:
+                ledger.event(0, tag, site, values)
+        return ledger
+
+    def test_allocation_requires_exact_four_backing_constructors(self):
+        rows = [('FG', 'MANIFOLD_ALLOC_ENTER', ())] + [('FG', 'CTOR_EXIT', ())] * 4 + [
+            ('FM', 'ALLOC', (1, 0, 1)), ('FG', 'MANIFOLD_ALLOC_EXIT', ())]
+        self.assertEqual(self.check(rows).manifolds, {1: ((0, 1), [])})
+        for index in range(len(rows)):
+            for duplicate in (False, True):
+                changed = rows[:index] + ([rows[index]] if duplicate else []) + rows[index + (not duplicate):]
+                with self.subTest(index=index, duplicate=duplicate), self.assertRaises(ValueError):
+                    ledger = self.check(changed)
+                    # A missing final exit must also fail before serialization.
+                    ledger.guard(0, 'SNAPSHOT', (True,) * 4)
+        for rows in ([('FG', 'CTOR_EXIT', ())], [('FC', 'CTOR_DEFAULT', (1,))],
+                     [('FM', 'ALLOC', (1, 0, 1))]):
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.check(rows)
+
+    def test_geometric_constructor_requires_immediate_single_fc_in_result(self):
+        prefix = [('FG', 'RESULT_ENTER', ()), ('FG', 'CTOR_EXIT', ()), ('FC', 'CTOR_GEOMETRIC', (1,))]
+        self.assertEqual(self.check(prefix).temporary, {1: 0})
+        for rows in (prefix[:1] + prefix[2:], prefix[:2] + prefix[1:], prefix + prefix[2:],
+                     prefix[:2] + [('FG', 'RESULT_EXIT', ())],
+                     prefix[:2] + [('FC', 'CTOR_DEFAULT', (1,))],
+                     prefix + [('FG', 'RESULT_EXIT', ())], prefix[:1] + prefix[1:] * 2):
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.check(rows)
+
+
+class FixtureTests(unittest.TestCase):
+    def test_native_guards_wrap_exact_visits_even_after_mask_three(self):
+        helper = RefreshTests()
+        helper.prepare(True, 2)
+        ledger = helper.ledger
+        helper.guard('SNAPSHOT')
+        ledger.snapshot(1, [2, 4], (0, 1))
+        ledger.complete_snapshot()
+        helper.guard('COMMAND_END')
+        for cp in (1, 2):
+            ledger.operation = 'W'
+            guard = lambda site: ledger.guard(cp, site, (True,) * 4)
+            emit = lambda tag, site, values=(): ledger.event(cp, tag, site, values)
+            guard('COMMAND_BEGIN')
+            with self.assertRaisesRegex(ValueError, 'complete fixture'):
+                guard('SNAPSHOT')
+            guard('FIXTURE_BEGIN')
+            emit('FF', 'FIXTURE_BEGIN')
+            with self.assertRaises(ValueError):
+                emit('FF', 'FIXTURE_END')
+            for slot, gid in ((0, 2), (1, 4)):
+                emit('FW', 'FIXTURE_W', (1, slot, gid, 0, 3))
+                with self.assertRaises(ValueError):
+                    emit('FW', 'FIXTURE_W', (1, slot, gid, 0, 3))
+            emit('FF', 'FIXTURE_END')
+            guard('FIXTURE_END')
+            guard('SNAPSHOT')
+            ledger.snapshot(1, [2, 4], (0, 1))
+            ledger.complete_snapshot()
+            guard('COMMAND_END')
+        self.assertEqual(ledger.points, {2: 3, 4: 3})
+
+    def test_snapshot_dispatcher_order_precedes_numeric_manifold_order(self):
+        self.prepare(1)
+        ledger = self.ledger
+        ledger.operation = 'H'
+        ledger.event(0, 'FM', 'ALLOC', (9, 0, 1))
+        ledger.event(0, 'FC', 'RUST_CONTACT_CREATE', (3,))
+        ledger.event(0, 'FI', 'ADD', (9, 0, 0, 3, 4, 0))
+        ledger.snapshot(9, [4], (0, 1))
+        ledger.snapshot(1, [2], (0, 1))
+        ledger.complete_snapshot()
+        ledger.operation = 'W'
+        self.begin()
+        with self.assertRaisesRegex(ValueError, 'next exact'):
+            self.write(0, 2)
+        self.emit('FW', 'FIXTURE_W', 9, 0, 4, 0, 3)
+        self.write(0, 2)
+        self.emit('FF', 'FIXTURE_END')
+
+    def prepare(self, count=2, defined=False):
+        helper = RefreshTests()
+        helper.prepare(False, count)
+        self.ledger = helper.ledger
+        if count and defined:
+            self.ledger.event(0, 'FB', 'SOLVER_BEGIN', (1, 0, 2, 1, 260, False))
+            self.ledger.event(0, 'FT', 'SOLVER_CHOICE', (1, 0, 2, 1, True, False, False))
+            self.ledger.event(0, 'FW', 'PLANE_BOTH', (1, 0, 2, 1, 3))
+            self.ledger.event(0, 'FE', 'PLANE_ONE', (1, 0, 2, 1, 3, 3, True))
+        # Actual snapshot order is independent of numeric manifold IDs.
+        self.ledger.snapshot(1, list(self.ledger.manifolds[1][1]), (0, 1))
+        self.ledger.complete_snapshot()
+        self.ledger.operation = 'W'
+
+    def emit(self, tag, site, *values):
+        self.ledger.event(1, tag, site, values)
+
+    def begin(self):
+        self.emit('FF', 'FIXTURE_BEGIN')
+
+    def write(self, slot, gid):
+        self.emit('FW', 'FIXTURE_W', 1, slot, gid, 0, 3)
+
+    def test_empty_and_complete_mixed_already_defined_visits(self):
+        for count in (0, 2):
+            self.prepare(count, defined=True)
+            self.begin()
+            for slot in range(count):
+                self.write(slot, 2 * slot + 2)
+            self.emit('FF', 'FIXTURE_END')
+            self.assertIsNone(self.ledger.fixture)
+            self.assertEqual(list(self.ledger.points.values()), [3] * count)
+
+    def test_duplicate_omitted_reordered_wrong_generation_and_mutation(self):
+        self.prepare()
+        self.begin()
+        for slot, gid in ((1, 4), (0, 4), (0, 999)):
+            with self.subTest(slot=slot, gid=gid), self.assertRaises(ValueError):
+                self.write(slot, gid)
+        with self.assertRaisesRegex(ValueError, 'exact fixture source order'):
+            self.emit('FF', 'FIXTURE_END')
+        self.write(0, 2)
+        with self.assertRaisesRegex(ValueError, 'next exact'):
+            self.write(0, 2)
+        for tag, site, values in (('FI', 'REPLACE', (1, 0, 2, 3, 4, 0)),
+                                  ('FX', 'REMOVE', (1, 1, 4)), ('FF', 'FIXTURE_BEGIN', ())):
+            with self.subTest(site=site), self.assertRaises(ValueError):
+                self.emit(tag, site, *values)
+        self.write(1, 4)
+        with self.assertRaises(ValueError):
+            self.write(1, 4)
+        self.emit('FF', 'FIXTURE_END')
+        with self.assertRaises(ValueError):
+            self.emit('FF', 'FIXTURE_END')
+        with self.assertRaises(ValueError):
+            self.begin()
+
+    def test_fixture_requires_actual_w_preceding_snapshot_and_ff(self):
+        self.prepare()
+        self.ledger.operation = 'N'
+        with self.assertRaises(ValueError):
+            self.begin()
+        self.ledger.operation = 'W'
+        with self.assertRaises(ValueError):
+            self.write(0, 2)
+        self.ledger.previous_snapshot = None
+        with self.assertRaises(ValueError):
+            self.begin()
+        for raw in ('FF 0 1 FIXTURE_BEGIN extra', 'FF 0 1 FIXTURE_END 0', 'FF 0 1 UNKNOWN'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                diagnostic(raw.split())
 
 
 if __name__ == '__main__':

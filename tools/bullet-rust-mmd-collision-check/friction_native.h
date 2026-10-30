@@ -5,7 +5,7 @@ class btManifoldPoint;
 class btPersistentManifold;
 extern "C" {
 void fn_guard(const char*, const btManifoldPoint* = nullptr);
-void fn_ctor(const btManifoldPoint*);
+void fn_ctor(const btManifoldPoint*, bool);
 void fn_incoming(const btManifoldPoint*);
 void fn_allocate(btPersistentManifold*, const void*, const void*);
 void fn_release(btPersistentManifold*);
@@ -44,6 +44,10 @@ static const char* scopes[256];
 static unsigned depth;
 static std::streambuf* original_output;
 static unsigned result_counter, active_result, pending_result;
+static unsigned backing_ctors;
+static bool allocating, allocated, fixture_active;
+static const btManifoldPoint* constructed_incoming;
+static_assert(MANIFOLD_CACHE_SIZE == 4, "reviewed four backing constructors");
 struct Point {
     unsigned gid=0, mask=0, tx=0, branch=0, writes=0;
     bool recompute=false, velocity=false, two=false, chosen=false;
@@ -121,10 +125,16 @@ static void start(bool obs,const char* role,const char* sha,unsigned count) {
 }
 static void command_begin(unsigned cp) {need(running && cp<commands && !depth && !pending_stage);checkpoint=cp;fn_guard("COMMAND_BEGIN");}
 static void command_end() {fn_guard("COMMAND_END");need(!depth && !pending_stage);}
+static void fixture(const char* site) {
+    need(observed && depth && std::strcmp(scopes[depth-1],"FIXTURE_BEGIN")==0);
+    const bool begin=std::strcmp(site,"FIXTURE_BEGIN")==0;
+    need(begin?!fixture_active:fixture_active);fixture_active=begin;
+    raw("FF %u %u %s\n",checkpoint,seq(),site);
+}
 static void finish(unsigned actual) {
     need(actual==commands && !depth && !pending_stage);
     for(auto& m:manifold_slots)need(!m.pointer);for(auto& t:temporary)need(!t.pointer);
-    need(!refresh.pointer && !active_result);
+    need(!refresh.pointer && !active_result && !allocating && !constructed_incoming && !fixture_active);
     raw("FZ %u %u %u\n",sequence,commands,closed);std::cout.flush();need(bool(std::cout));std::cout.rdbuf(original_output);running=false;
 }
 static void snapshot_manifold(btPersistentManifold* p,unsigned mi) {
@@ -152,6 +162,8 @@ static void directions(btPersistentManifold* m,unsigned mi,unsigned slot,bool im
 } // namespace friction_native
 extern "C" void fn_guard(const char* site,const btManifoldPoint* p) {
     using namespace friction_native;caches(p);if(!observed)return;
+    if(std::strcmp(site,"MANIFOLD_ALLOC_ENTER")==0){need(!allocating);allocating=true;allocated=false;backing_ctors=0;}
+    if(std::strcmp(site,"MANIFOLD_ALLOC_EXIT")==0){need(allocating && allocated && backing_ctors==4);allocating=false;}
     if(std::strcmp(site,"RESULT_ENTER")==0){need(!active_result);active_result=fresh(result_counter);}
     if(std::strcmp(site,"RESULT_EXIT")==0){need(active_result && !pending_stage);active_result=0;}
     if(std::strcmp(site,"PROCESSED_PRECALL")==0){
@@ -166,15 +178,20 @@ extern "C" void fn_guard(const char* site,const btManifoldPoint* p) {
     else if(pending_stage==2){need(std::strcmp(site,"ADDED_PRECALL")==0);pending_stage=0;}
     scope(site);raw("FG %u %u %s true true true true\n",checkpoint,guard_seq(),site);
 }
-extern "C" void fn_ctor(const btManifoldPoint* p) {fn_guard("CTOR_EXIT",p);}
+extern "C" void fn_ctor(const btManifoldPoint* p,bool geometric) {
+    using namespace friction_native;need(observed && depth);
+    if(geometric){need(active_result && !constructed_incoming && std::strcmp(scopes[depth-1],"RESULT_ENTER")==0);constructed_incoming=p;}
+    else {need(allocating && !allocated && backing_ctors<4 && std::strcmp(scopes[depth-1],"MANIFOLD_ALLOC_ENTER")==0);++backing_ctors;}
+    fn_guard("CTOR_EXIT",p);
+}
 extern "C" void fn_incoming(const btManifoldPoint* p) {
-    using namespace friction_native;need(observed);caches(p);
+    using namespace friction_native;need(observed && active_result && constructed_incoming==p);constructed_incoming=nullptr;caches(p);
     for(auto& t:temporary)need(t.pointer!=p);
     unsigned live=0;for(auto& m:manifold_slots)if(m.pointer)live+=m.count;for(auto& t:temporary)if(t.pointer)++live;need(live<16384);
     for(auto& t:temporary)if(!t.pointer){t={p,fresh(next_gid)};raw("FC %u %u CTOR_GEOMETRIC %u\n",checkpoint,seq(),t.gid);return;}need(false);
 }
 extern "C" void fn_allocate(btPersistentManifold* p,const void* a,const void* b) {
-    using namespace friction_native;caches(nullptr);for(auto& m:manifold_slots)need(m.pointer!=p);
+    using namespace friction_native;need(allocating && !allocated && backing_ctors==4);allocated=true;caches(nullptr);for(auto& m:manifold_slots)need(m.pointer!=p);
     for(auto& m:manifold_slots)if(!m.pointer){m=Manifold{};m.pointer=p;m.mid=::manifolds.at(p);need(m.mid==fresh(next_mid));m.a=owner(a);m.b=owner(b);need(m.a!=m.b && m.a<=limit && m.b<=limit && p->getNumContacts()==0);raw("FM %u %u ALLOC %u %u %u\n",checkpoint,seq(),m.mid,m.a,m.b);return;}need(false);
 }
 extern "C" void fn_release(btPersistentManifold* p) {
@@ -227,7 +244,7 @@ extern "C" void fn_choice(btManifoldPoint* p,bool recompute,bool velocity,bool t
 extern "C" void fn_write(btManifoldPoint* p,const char* site,unsigned mask) {
     using namespace friction_native;Manifold* m;unsigned slot;auto& x=binding(p,m,slot);
     const bool fixture=std::strcmp(site,"FIXTURE_W")==0;
-    if(fixture)need(!x.tx && mask==3 && depth && std::strcmp(scopes[depth-1],"FIXTURE_BEGIN")==0);
+    if(fixture)need(fixture_active && !x.tx && mask==3 && depth && std::strcmp(scopes[depth-1],"FIXTURE_BEGIN")==0);
     else {
         need(x.tx);const char* expected=x.writes==0?"DIR1_RAW":x.writes==1?(x.velocity?"VELOCITY_DIR1":"PLANE_BOTH"):"VELOCITY_DIR2";
         need(std::strcmp(site,expected)==0 && (x.writes==0?!x.chosen:x.chosen&&x.recompute));

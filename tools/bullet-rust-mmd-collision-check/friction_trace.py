@@ -153,8 +153,12 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
             return
         require(not pending and fl is None, 'complete contact direction/physical rows')
         if observed:
+            require(commands[index].split()[0] != 'W' or ledger.fixture_checkpoint == index
+                    and ledger.fixture is None and ledger.fixture_expected is None,
+                    'actual W has one complete fixture BEGIN/END and every write')
             require(set(ledger.manifolds) == snapshot_mids, 'complete ordered friction manifold snapshot')
             require(set(base_manifolds) == snapshot_mids, 'base lifecycle and friction manifold snapshot agree')
+            ledger.complete_snapshot()
         if commands[index].split()[0] == 'X' and observed:
             require(not ledger.manifolds and not ledger.points and not ledger.temporary and not ledger.transactions,
                     'command X closes all logical generations')
@@ -166,6 +170,9 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
         require(not ended, 'no trailing data after footer')
         tag = row[0]
         if observed:
+            if tag not in ('FZ', 'Z'):
+                at = unsigned(row[1], 0, len(commands) - 1)
+                ledger.operation = commands[at].split()[0]
             ledger.order(tag, row[3] if tag.startswith('F') and len(row) >= 4 else None)
         if observed and not rust and ledger.pending_added is not None:
             require(tag == 'FG', 'no base/sidecar events between insertion exit and Added precall')
@@ -196,6 +203,8 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
                 require(at == cp + 1, 'complete checkpoint schedule')
                 cp = at
             seq = order
+            if observed:
+                ledger.operation = commands[at].split()[0]
             if not observed:
                 require(tag in ('FD', 'FP'), 'original has no fabricated observations')
             if pending:
@@ -280,6 +289,9 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
         require(at >= last_base_cp, 'nondecreasing actual base checkpoint')
         last_base_cp = at
         _base_types(row)
+        if tag == 'O' and observed and commands[at].split()[0] == 'W':
+            require(ledger.fixture_checkpoint == at and ledger.fixture is None
+                    and ledger.fixture_expected is None, 'complete fixture before actual W snapshot')
         if tag == 'Q':
             require(len(row) == 27 and row[26] in ('true', 'false'), 'safe27 Q with actual boolean')
             mi, slot = unsigned(row[2]), unsigned(row[3], 0, 3)
@@ -337,7 +349,8 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
     require(ended and base_end, 'complete diagnostic/base footer')
     require(fs is None or fs[3] == fs[2], 'last manifold has complete contact rows')
     require(not observed or not algorithms and not base_manifolds and not manifold_owners, 'complete base lifetime closure')
-    frames(('\n'.join(base_raw) + '\n').encode('ascii'), inputs, observed=observed, dynamics=True)
+    # Rust's unchanged runner already emits initialized SAP/joint/step rows.
+    frames(('\n'.join(base_raw) + '\n').encode('ascii'), inputs, observed=observed or rust, dynamics=True)
     if rust:
         require(set(capture.physical) == set(capture.directions), 'full Rust physical direction coverage')
     else:

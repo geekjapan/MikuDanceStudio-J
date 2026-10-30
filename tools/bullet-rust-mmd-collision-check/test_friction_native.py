@@ -52,6 +52,15 @@ class HostedNativeGeneration(unittest.TestCase):
                 self.assertIn('friction_native::directions(m,i,j,op=="W")', consumer)
                 self.assertEqual(any(change['path'] == native.SHIM for change in edits), observed)
                 self.assertFalse(any(change['path'].endswith('.rs') for change in edits))
+                self.assertEqual('friction_native::fixture("FIXTURE_BEGIN")' in consumer, observed)
+                self.assertEqual('friction_native::fixture("FIXTURE_END")' in consumer, observed)
+                if observed:
+                    dispatcher = (root / native.DISPATCHER).read_text()
+                    self.assertEqual(dispatcher.count('fn_guard("MANIFOLD_ALLOC_ENTER")'), 1)
+                    self.assertEqual(dispatcher.count('fn_guard("MANIFOLD_ALLOC_EXIT")'), 1)
+                    point = (root / native.POINT).read_text()
+                    self.assertEqual(point.count('fn_ctor(this,false)'), 1)
+                    self.assertEqual(point.count('fn_ctor(this,true)'), 1)
 
 
 if __name__ == '__main__':

@@ -143,8 +143,15 @@ def instrument(root, here):
     edit(OWNER, old, '''        for m in self.collision.dispatcher.manifolds_mut() {
             let friction_key = m.owner().0;
             for (friction_slot, p) in m.manifold.contacts_mut().iter_mut().enumerate() {''')
+    old = '    pub(crate) fn fixture_warmstart(&mut self) {'
+    edit(OWNER, old, old + '\n        crate::friction_rust::fixture_begin();')
     old = '                p.lateral_directions = [Vec3([1.0, 0.0, 0.0]), Vec3([0.0, 0.0, 1.0])];'
     edit(OWNER, old, old + '\n                crate::friction_rust::fixture(friction_key, friction_slot);')
+    old = '''                crate::friction_rust::fixture(friction_key, friction_slot);
+            }
+        }
+    }'''
+    edit(OWNER, old, old[:-5] + '        crate::friction_rust::fixture_end();\n    }')
     return changes
 
 
@@ -227,6 +234,7 @@ identity AlgorithmKey allocation-epoch-mid
 owner_scope dispatcher near_pair-process release-clear
 solver_map mmd_dynamics_world before-contact-view-collection
 writers contact_solver velocity-dir1 plane-both; fixture warmstart-both
+fixture FF entry/exit actual fixture_warmstart; independent dispatcher/increasing-slot visits
 refresh contact.rs actual descending branch-taken FR; no Rust callback FG
 physical original observed all-six-words every-Q
 inverse hooks.inverse complete-original-bytes

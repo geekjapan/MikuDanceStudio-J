@@ -134,3 +134,30 @@ the new broadphase module through `core/mod.rs`. The whole-pure test registers
 new broadphase tests and requires fresh execution. Source equality of the direct
 comparison programs does not accept whole-pure, broadphase, DBVT, General,
 Shipping, public World cutover or native dependency removal.
+## Private dynamics source admission
+
+Schema 8 appends a fixed source-only dynamics layer at base `816df8133b021359a2684c2ad5fd3666583c7c60`, tree `ef7ae5c209fa4cdc5669a3757effe770f8f19df0`. It replaces the current identities of `core/mod.rs`, `core/world_objects.rs`, and `core/discrete_collision_world.rs`, and adds the private dynamics owner and its dedicated tests. Every previous admission, measurement, compiler profile, and numerical policy remains historical and unchanged.
+
+Each host has exact old and new hashes. Windows source uses the existing CRLF checkout projection while Rust test sources retain binary LF transport. The complete layer is canonically pinned. Missing or extra fields, paths or hosts, overlap, wrong old identity, equal old and new identities, and base or execution drift are rejected. Verification helper identities are refreshed separately. Execution remains `UNRUN` in this source admission. New dynamics behavior requires its own genuine native-step capture and independent acceptance.
+
+Schema 9 adds one fixed `dynamics_world_format_admission` after the dynamics
+source layer and before the ten current verification identities. It binds base
+`cdfd6d19f2e46a2526f61a4dff49a2065da767ef` and tree
+`b51ac697c13fcddce69ee99ebdae4091698521f7`. Its four host entries replace only
+the private dynamics owner and dedicated test hashes. The closed hosted fmt
+output supplies six edits. Only the Workspace field's trailing comma is removed;
+all other tokens and literal/comment bytes remain unchanged. This is an exact
+source replacement, with no general whitespace or punctuation normalization.
+Windows core remains CRLF and the dedicated Rust test remains binary LF.
+
+The layer has an independent canonical digest, requires each old hash to equal
+the preceding dynamics map, and leaves all 480 paths in place. Every historical
+admission, captured bridge, compiler profile, numeric field and measurement
+reference remains unchanged. Receipts add only current-source format metadata.
+Execution remains `UNRUN`. Fresh exact-head formatting, lint, full helpers,
+native/replay destinations and affected CI still require hosted execution and
+independent acceptance.
+
+Schema 10 adds one immutable `dynamics_world_c23_repair_admission` after the complete schema 9 format layer and before current verification. Its base is `c23bdf22be1de8a25db62c0be758b8aa93f0cc7e`, tree `5aa95cc9f23054b68b4a7055d2995a044c74923e`. It replaces exactly the collision owner's borrowed tuple signature and the dedicated dynamics test. Core source uses Windows CRLF; test source retains binary LF. All four maps retain 480 members. The layer is source-only with execution `UNRUN`. Historical admissions, all measured numerics and compiler identities remain unchanged. Dynamics helper source and protocol changes have their separate source proof; this GJK layer grants no producer or execution waiver.
+
+Schema 11 adds the immutable `dynamics_world_c23_test_format_admission` after c23 repair and before current verification. Base `487959db4546d5f71bfafa552f85ccada42073ee`, tree `5b36d3c3ce0b673ba3d7f78de6b0da320255d4ea`, admits only the hosted formatter assertion split in `tests/discrete_dynamics_world.rs`. All four hosts retain binary LF and 480 members. The replacements-only layer is source-only with execution `UNRUN`; it appears only in the current-source receipt. Historical objects, measurements, compiler identities and frozen bridge hashes remain unchanged. The corrected contact-only mutation recipe has a separate source proof and still requires compiled execution.

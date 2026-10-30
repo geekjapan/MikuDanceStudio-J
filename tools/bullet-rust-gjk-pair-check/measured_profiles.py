@@ -34,6 +34,17 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256 = '795b2906a053fabc3e9728c575bd3372c564abfa52700223da18f8158e03ae5c'
+DYNAMICS_WORLD_C23_TEST_FORMAT_REPLACEMENTS = {'rust/crates/mds-bullet/tests/discrete_dynamics_world.rs'}
+DYNAMICS_WORLD_C23_REPAIR_SHA256 = '803c1e31e1bfbcfc805f0559c00bbd2f76a0101a76c603d29922150cb39e03ee'
+DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
+                                           ['src/core/discrete_collision_world.rs', 'tests/discrete_dynamics_world.rs']}
+DYNAMICS_WORLD_FORMAT_SHA256 = 'afff937521417b8c762b4c485417b374be72f26499fb71294cc85b741f658128'
+DYNAMICS_WORLD_SHA256 = 'a978d073cff65ea0f017924e245697202bf8763eef79895bf1e2b5ee5c407c06'
+DYNAMICS_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
+                           ['src/core/discrete_dynamics_world.rs', 'tests/discrete_dynamics_world.rs']}
+DYNAMICS_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/' + path for path in
+                             ['mod.rs', 'world_objects.rs', 'discrete_collision_world.rs']}
 BROADPHASE_SHA256 = '539ad318be991f1b55770363f2698f08cd86f85280d8b46e0600ec44df32d53d'
 BROADPHASE_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                         ['src/core/dbvt_broadphase.rs', 'tests/pure_bullet/dbvt_broadphase.rs']}
@@ -97,8 +108,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 7, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 11, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -178,6 +189,14 @@ def load_manifest(path):
            'immutable broadphase source admission')
     schema(source_map_digest(manifest['discrete_world_source_admission']) == DISCRETE_WORLD_SHA256,
            'immutable discrete world source admission')
+    schema(source_map_digest(manifest['dynamics_world_source_admission']) == DYNAMICS_WORLD_SHA256,
+           'immutable dynamics world source admission')
+    schema(source_map_digest(manifest['dynamics_world_format_admission']) == DYNAMICS_WORLD_FORMAT_SHA256,
+           'immutable dynamics world format admission')
+    schema(source_map_digest(manifest['dynamics_world_c23_repair_admission']) == DYNAMICS_WORLD_C23_REPAIR_SHA256,
+           'immutable dynamics world c23 repair admission')
+    schema(source_map_digest(manifest['dynamics_world_c23_test_format_admission']) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
+           'immutable dynamics world c23 test format admission')
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
@@ -215,6 +234,7 @@ def bridge_protected_source_map(manifest, host):
 
 
 def approved_source_map(manifest, host):
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 11, 'schema_version')
     protected = bridge_protected_source_map(manifest, host)
     admission = manifest['registration_format_admission']
     schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')
@@ -254,7 +274,84 @@ def approved_source_map(manifest, host):
         schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
                'discrete world new identity')
         protected[path] = identity['new_sha256']
-    return {**protected, **delta['additions'], **manifest['verification_sha256'][host]}
+    protected = {**protected, **delta['additions']}
+    admission = manifest['dynamics_world_source_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world admission')
+    schema(admission['kind'] == 'private-dynamics-world-source-only'
+           and admission['base_head'] == '816df8133b021359a2684c2ad5fd3666583c7c60'
+           and admission['base_tree'] == 'ef7ae5c209fa4cdc5669a3757effe770f8f19df0'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements', 'additions'}, 'dynamics world delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_REPLACEMENTS, 'dynamics world replacements')
+    hash_map(delta['additions'], len(DYNAMICS_WORLD_ADDITIONS), 'dynamics world additions')
+    schema(set(delta['additions']) == DYNAMICS_WORLD_ADDITIONS, 'dynamics world addition paths')
+    schema(not DYNAMICS_WORLD_ADDITIONS & (set(protected) | set(manifest['verification_sha256'][host])),
+           'dynamics world additions must be absent')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world new identity')
+        protected[path] = identity['new_sha256']
+    protected = {**protected, **delta['additions']}
+    admission = manifest['dynamics_world_format_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world format admission')
+    schema(admission['kind'] == 'private-dynamics-world-format-source-only'
+           and admission['base_head'] == 'cdfd6d19f2e46a2526f61a4dff49a2065da767ef'
+           and admission['base_tree'] == 'b51ac697c13fcddce69ee99ebdae4091698521f7'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world format base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world format hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements'}, 'dynamics world format delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_ADDITIONS, 'dynamics world format replacements')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world format replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world format old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world format new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == DYNAMICS_WORLD_FORMAT_SHA256,
+           'immutable dynamics world format admission')
+    admission = manifest['dynamics_world_c23_repair_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world c23 repair admission')
+    schema(admission['kind'] == 'private-dynamics-world-c23-repair-source-only'
+           and admission['base_head'] == 'c23bdf22be1de8a25db62c0be758b8aa93f0cc7e'
+           and admission['base_tree'] == '5aa95cc9f23054b68b4a7055d2995a044c74923e'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world c23 repair base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world c23 repair hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements'}, 'dynamics world c23 repair delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS, 'dynamics world c23 repair replacements')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world c23 repair replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world c23 repair old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world c23 repair new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_REPAIR_SHA256,
+           'immutable dynamics world c23 repair admission')
+    schema('dynamics_world_c23_test_format_admission' in manifest, 'required dynamics world c23 test format admission')
+    admission = manifest['dynamics_world_c23_test_format_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world c23 test format admission')
+    schema(admission['kind'] == 'private-dynamics-world-c23-test-format-source-only'
+           and admission['base_head'] == '487959db4546d5f71bfafa552f85ccada42073ee'
+           and admission['base_tree'] == '5b36d3c3ce0b673ba3d7f78de6b0da320255d4ea'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world c23 test format base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world c23 test format hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements'}, 'dynamics world c23 test format delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_C23_TEST_FORMAT_REPLACEMENTS, 'dynamics world c23 test format replacements')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world c23 test format replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world c23 test format old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world c23 test format new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
+           'immutable dynamics world c23 test format admission')
+    return {**protected, **manifest['verification_sha256'][host]}
 
 
 def select_measurement(manifest, host, provenance):
@@ -333,6 +430,14 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['broadphase_source_admission'].items() if name != 'hosts'},
                 'discrete_world_source_admission': {name: value for name, value in
                     manifest['discrete_world_source_admission'].items() if name != 'hosts'},
+                'dynamics_world_source_admission': {name: value for name, value in
+                    manifest['dynamics_world_source_admission'].items() if name != 'hosts'},
+                'dynamics_world_format_admission': {name: value for name, value in
+                    manifest['dynamics_world_format_admission'].items() if name != 'hosts'},
+                'dynamics_world_c23_repair_admission': {name: value for name, value in
+                    manifest['dynamics_world_c23_repair_admission'].items() if name != 'hosts'},
+                'dynamics_world_c23_test_format_admission': {name: value for name, value in
+                    manifest['dynamics_world_c23_test_format_admission'].items() if name != 'hosts'},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

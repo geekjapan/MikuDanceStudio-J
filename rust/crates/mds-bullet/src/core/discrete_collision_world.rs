@@ -3,14 +3,25 @@
 
 use std::collections::BTreeMap;
 
-use super::activation::ActivationState;
+use super::activation::{ActivationState, DeactivationSettings};
+use super::body::RigidBody;
 use super::dbvt::{Aabb, DbvtPolicy};
 use super::dbvt_broadphase::DbvtBroadphase;
 use super::dispatcher::{CollisionDispatcher, DispatcherManifold};
+use super::islands::IslandObject;
 use super::math::{Transform, Vec3};
 use super::pair_cache::ProxyKey;
+use super::solver::Joint;
 use super::world_objects::{BodyDesc, BodyHandle, JointDesc, Pose, WorldObjects};
 use super::InvalidArgument;
+
+pub(crate) type DynamicsParts<'a, P> = (
+    &'a mut [RigidBody],
+    &'a mut [IslandObject],
+    &'a mut [Joint],
+    P,
+    &'a mut [DispatcherManifold],
+);
 
 pub struct DiscreteCollisionWorld {
     objects: WorldObjects,
@@ -41,6 +52,50 @@ impl DiscreteCollisionWorld {
 
     pub fn manifolds(&self) -> &[DispatcherManifold] {
         self.dispatcher.manifolds()
+    }
+
+    pub(crate) fn dynamics_parts(
+        &mut self,
+    ) -> DynamicsParts<'_, impl Iterator<Item = [usize; 2]> + '_> {
+        let (bodies, objects, joints) = self.objects.solver_parts();
+        let broadphase = &self.broadphase;
+        (
+            bodies,
+            objects,
+            joints,
+            broadphase
+                .pairs()
+                .iter()
+                .map(move |pair| pair.proxies.map(|key| broadphase.owner(key))),
+            self.dispatcher.manifolds_mut(),
+        )
+    }
+
+    pub(crate) fn prepare_dynamics_step(&mut self, dt: f32) {
+        self.objects.save_kinematic_state(dt);
+        self.objects.apply_gravity();
+    }
+
+    pub(crate) fn predict_dynamics_motion(&mut self, dt: f32) {
+        self.objects.predict_unconstraint_motion(dt);
+    }
+
+    pub(crate) fn finish_dynamics_substep(&mut self, dt: f32, remainder: f32) {
+        self.objects.integrate_transforms(dt);
+        self.objects
+            .update_activation_state(dt, DeactivationSettings::default());
+        self.objects.synchronize_motion_states(remainder, false);
+    }
+
+    pub(crate) fn finish_dynamics_step(&mut self, remainder: f32, synchronize: bool) {
+        if synchronize {
+            self.objects.synchronize_motion_states(remainder, false);
+        }
+        self.objects.clear_forces();
+    }
+
+    pub(crate) fn set_dynamics_gravity(&mut self, gravity: Vec3) -> Result<(), InvalidArgument> {
+        self.objects.set_gravity(gravity)
     }
 
     pub fn create_body(&mut self, desc: BodyDesc) -> Result<BodyHandle, InvalidArgument> {

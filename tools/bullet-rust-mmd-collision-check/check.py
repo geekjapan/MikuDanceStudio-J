@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Genuine MMD collision diagnostic scaffold. Captures remain UNADMITTED."""
+"""Hosted genuine MMD collision capture, strict admission, and Rust replay."""
 import argparse
 import os
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Diagnostic command custody. This module does not admit native captures."""
+"""Closed native capture and Rust replay custody and admission."""
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -326,7 +326,7 @@ def selected_members(raw, system, library):
 
 
 def admit_capture(directory, **expected):
-    require(bool(expected), 'strict capture context is required; source-only admission is not implemented')
+    require(bool(expected), 'strict current source/head/corpus/host context is required')
     fields(expected,['expected_head','canonical_sources','inputs','cases','expected_host'],'external strict admission context')
     return _admit_capture(directory, **expected)
 
@@ -537,7 +537,7 @@ class Capture:
 
 @dataclass(frozen=True)
 class VerifiedCapture:
-    """Only the unfinished strict admit_capture boundary may construct this value."""
+    """Carries the checked producer input and ordered output."""
     head: str
     inputs: str
     cases: tuple

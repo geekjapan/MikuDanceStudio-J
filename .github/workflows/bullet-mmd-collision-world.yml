@@ -135,6 +135,7 @@ jobs:
         shell: bash
         run: rustup toolchain install 1.95.0 --profile minimal
       - name: Require strict Windows source admission before replay
+        if: runner.os != 'Windows'
         shell: bash
         env:
           AUTHORITY_SIZE: ${{ needs.windows_native.outputs.authority_size }}
@@ -142,6 +143,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world-replay" --replay-dir "$RUNNER_TEMP/windows-mmd-collision-world" --authority "$RUNNER_TEMP/windows-mmd-authority/mmd-collision-authority.json" --authority-size "$AUTHORITY_SIZE" --authority-sha256 "$AUTHORITY_SHA256"
+      - name: Require strict Windows source admission before replay with MSVC
+        if: runner.os == 'Windows'
+        shell: cmd
+        env:
+          AUTHORITY_SIZE: ${{ needs.windows_native.outputs.authority_size }}
+          AUTHORITY_SHA256: ${{ needs.windows_native.outputs.authority_sha256 }}
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-mmd-collision-check\check.py --out-dir "%RUNNER_TEMP%\mmd-collision-world-replay" --replay-dir "%RUNNER_TEMP%\windows-mmd-collision-world" --authority "%RUNNER_TEMP%\windows-mmd-authority\mmd-collision-authority.json" --authority-size "%AUTHORITY_SIZE%" --authority-sha256 "%AUTHORITY_SHA256%"
+          exit /b %ERRORLEVEL%
       - name: Save strict replay and compiled semantic controls
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

@@ -7,6 +7,7 @@ only on the reviewed GHA runtime. --source-only and --upload-gate are read-only 
 import argparse
 import ast
 import copy
+from typing import NamedTuple
 import datetime
 import hashlib
 import importlib.util
@@ -44,6 +45,104 @@ CASES = [('baseline', 'baseline', 0, 0)] + [
     for kind in ('blocked', 'pending') for sig in (2, 15)]
 ADAPTERS = ('reviewed_contract', 'verify_tool', 'verify_evidence', 'retain_tool_identity',
             'validate_result', 'Popen-command-only')
+class SecondAck(NamedTuple):
+    count: int
+    signals: tuple
+    pending: tuple
+    pair: tuple
+    phase: str
+    owner_phase: str
+    case: str
+    interpreter: tuple
+
+
+def second_ack_snapshot(events, pending, first, second, phase, owner_phase, case, interpreter):
+    signals = tuple(event['signal'] for event in events)
+    return SecondAck(len(signals), signals, tuple(pending), (first, second), phase, owner_phase, case, tuple(interpreter))
+
+
+def second_ack_diagnostic(sample):
+    try:
+        record = sample._asdict()
+        record.update(signals=sample.signals[:8], pending=sample.pending[:64],
+                      signals_omitted=max(0, sample.count - 8), pending_omitted=max(0, len(sample.pending) - 64))
+        record['interpreter'] = [str(value)[:240] for value in sample.interpreter]
+        record['phase'], record['case'] = sample.phase[:64], sample.case[:96]
+        record['owner_phase'] = sample.owner_phase[:64]
+        raw = json.dumps(record, sort_keys=True, ensure_ascii=True)
+        require(len(raw) <= 4096, 'second ACK diagnostic bound exceeded')
+        print('SECOND_ACK_FAILURE ' + raw, file=sys.stderr, flush=True)
+    except BaseException:
+        pass
+
+
+def observer_definitions(source):
+    """Extract only pure owner setup/interrupt and the genuine observer; do not import product setup."""
+    product_path = Path(source) / PREFIX / 'run_cmp_input.py'
+    controller_path = Path(__file__).resolve()
+    product_raw, controller_raw = product_path.read_bytes(), controller_path.read_bytes()
+    require(digest(product_raw) == FROZEN['run_cmp_input.py'], 'observer fixed product differs')
+    product, controller = ast.parse(product_raw), ast.parse(controller_raw)
+    owner = next(node for node in product.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
+    methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)}
+    worker = next(node for node in controller.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
+    profile = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'profile')
+    receipt = dict(product_sha256=digest(product_raw), controller_sha256=digest(controller_raw),
+        init_ast_sha256=digest(ast.dump(methods['__init__']).encode()),
+        interrupt_ast_sha256=digest(ast.dump(methods['interrupt']).encode()),
+        profile_ast_sha256=digest(ast.dump(profile).encode()))
+    return methods['__init__'], methods['interrupt'], profile, receipt
+
+
+def profiler_observer_control(source):
+    """Hosted observer-only counterexample with no signal delivery or product registration."""
+    require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
+            and sys.implementation.name == 'cpython' and sys.version_info[:3] == (3, 12, 3),
+            'observer control requires hosted Linux CPython 3.12.3')
+    require(sys.getprofile() is None, 'observer control requires no existing profile')
+    init, interrupt, profile, identities = observer_definitions(source)
+    namespace = dict(require=require)
+    definitions = ast.ClassDef(name='WrapperRun', bases=[], keywords=[], decorator_list=[],
+        body=copy.deepcopy([init, interrupt]))
+    factory = ast.parse('def make_profile():\n    cancelled_seen = False\n    return profile\n').body[0]
+    factory.body.insert(1, copy.deepcopy(profile))
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[definitions, factory], type_ignores=[])),
+                 '<observer-only-extracted-definitions>', 'exec'), namespace)
+    owner = namespace['WrapperRun']()
+    owner.phase = 'installing'
+    events, sends, nested = [], [], []
+    def send(kind, **record):
+        sends.append(dict(kind=kind, **record))
+        if len(sends) == 1:
+            owner.cancelled = False
+            owner.interrupt(15, None)
+            nested.append(dict(signal=15, cancelled=owner.cancelled, accounted=len(events)))
+    # Inert collaborators satisfy identity checks without installing a signal handler.
+    namespace.update(wrapper=type('Wrapper', (), {'WrapperRun': namespace['WrapperRun']}), owner=owner,
+        signal=type('Signal', (), {'getsignal': staticmethod(lambda sig: owner.interrupt)}),
+        channel=type('Channel', (), {'send': staticmethod(send)}), handler_events=events,
+        module_file='<unmatched-observer-product-file>', counts={}, active={}, max_active={},
+        in_followon=False, wait_code=None, processes=[])
+    callback = namespace['make_profile']()
+    failure = None
+    try:
+        sys.setprofile(callback)
+        owner.interrupt(2, None)
+    except BaseException as error:
+        failure = error
+    finally:
+        sys.setprofile(None)
+    report = dict(kind='observer-only; no OS delivery/custody acceptance', source=SOURCE_COMMIT,
+        identities=identities, interpreter=dict(implementation=sys.implementation.name, version=sys.version,
+        executable=sys.executable, optimize=sys.flags.optimize), outside=list(events), sends=sends, inside=nested,
+        error=None if failure is None else dict(type=type(failure).__name__, message=str(failure)[:240]))
+    print('PROFILER_OBSERVER_CONTROL ' + json.dumps(report, sort_keys=True), flush=True)
+    if failure is not None:
+        raise failure
+    require(len(events) == len(sends) == len(nested) == 1 and events[0]['signal'] == 2
+            and events[0]['cancelled'] is True and nested[0] == dict(signal=15, cancelled=True, accounted=1)
+            and owner.cancelled, 'genuine profiler observer counterexample differs')
+    return report
 
 
 def require(value, message):
@@ -580,7 +679,12 @@ def worker_body(args, channel, state):
         if masked:
             require(second in pending, 'second signal not kernel pending')
         else:
-            require(len(handler_events) == 2 and not set(owner.signals) & set(pending), 'second handler ACK missing')
+            sample = second_ack_snapshot(handler_events, pending, first, second, phase, owner.phase, args.case,
+                (sys.implementation.name, sys.version, sys.executable, sys.flags.optimize))
+            completed = sample.count == 2 and not set(owner.signals) & set(sample.pending)
+            if not completed:
+                second_ack_diagnostic(sample)
+            require(completed, 'second handler ACK missing')
 
     def install(sig, callback):
         nonlocal first_rendezvous
@@ -1061,6 +1165,7 @@ def main():
     parser.add_argument('--source-checkout', type=Path)
     choices = parser.add_mutually_exclusive_group(required=True)
     choices.add_argument('--source-only', action='store_true')
+    choices.add_argument('--profiler-observer-control', action='store_true')
     choices.add_argument('--real-os', type=Path)
     choices.add_argument('--upload-gate', type=Path)
     choices.add_argument('--worker-output', type=Path)
@@ -1074,6 +1179,8 @@ def main():
     args = parser.parse_args()
     if args.source_only:
         print(json.dumps(source_only_check(args.source_checkout), sort_keys=True))
+    elif args.profiler_observer_control:
+        profiler_observer_control(args.source_checkout)
     elif args.upload_gate:
         upload_gate(args.upload_gate)
         print('closed=true')

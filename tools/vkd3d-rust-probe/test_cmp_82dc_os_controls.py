@@ -62,6 +62,7 @@ for namespace, names in ((signal, ('signal', 'pthread_sigmask', 'sigpending', 's
     for name in names:
         if hasattr(namespace, name):
             setattr(namespace, name, deny_kernel(name))
+sys.setprofile = deny_kernel('sys.setprofile')
 if FIXTURE_WRITES:
     fixture_root.mkdir()
     (fixture_root / '.git').mkdir()
@@ -233,7 +234,156 @@ def handoff_ast_fixture():
                            harness_path=harness_path)
 
 
+def second_ack_fixture(events, pending, *, masked=False, old=False):
+    deliver_second = len(events) == 2
+    events[:] = [dict(signal=2)]
+    tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+    worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
+    pause = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'pause_second')
+    if old:
+        pause.body[-1].orelse = ast.parse("require(len(handler_events) == 2 and not set(owner.signals) & set(pending), 'second handler ACK missing')").body
+    factory = ast.parse('def make_pause():\n    second_rendezvous = False\n    return pause_second\n').body[0]
+    factory.body.insert(1, copy.deepcopy(pause))
+    queries, diagnostics, kernel = [], [], []
+    owner = SimpleNamespace(signals=(2, 15), phase='installing')
+    def query():
+        queries.append(len(queries))
+        return set() if len(queries) <= 2 else set(pending)
+    def continuation(*args, **kwargs):
+        if deliver_second:
+            events.append(dict(signal=15))
+    namespace = dict(require=controls.require, handler_events=events, first=2, second=15, phase='entry',
+        real={'pending': query}, channel=SimpleNamespace(pause=continuation), owner=owner,
+        args=SimpleNamespace(case='entry-2-15'), kernel_events=kernel,
+        second_ack_snapshot=controls.second_ack_snapshot, second_ack_diagnostic=diagnostics.append,
+        sys=SimpleNamespace(implementation=SimpleNamespace(name='cpython'), version='inert-version',
+                            executable='/inert/python', flags=SimpleNamespace(optimize=0)))
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[factory], type_ignores=[])), '<inert-second-ack>', 'exec'), namespace)
+    return SimpleNamespace(run=lambda: namespace['make_pause']()(masked), queries=queries,
+                           diagnostics=diagnostics, kernel=kernel, events=events)
+
+
 class SourceDataTests(unittest.TestCase):
+    def test_hosted_control_inert_missing_profile_events_refuses_and_restores(self):
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        control = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'profiler_observer_control')
+        registrations, reports = [], []
+        inert_sys = SimpleNamespace(platform='linux', implementation=SimpleNamespace(name='cpython'),
+            version_info=(3, 12, 3), version='inert-only', executable='/inert/python', flags=SimpleNamespace(optimize=0),
+            getprofile=lambda: None, setprofile=registrations.append)
+        namespace = dict(ast=ast, copy=copy, require=controls.require, SOURCE_COMMIT=controls.SOURCE_COMMIT,
+            observer_definitions=controls.observer_definitions, sys=inert_sys,
+            os=SimpleNamespace(environ={'GITHUB_ACTIONS': 'true'}), json=json,
+            print=lambda value, **kwargs: reports.append(value))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[control], type_ignores=[])), '<inert-hosted-control>', 'exec'), namespace)
+        with self.assertRaisesRegex(ValueError, 'genuine profiler observer counterexample differs'):
+            namespace['profiler_observer_control'](SOURCE)
+        self.assertEqual(len(registrations), 2)
+        self.assertTrue(callable(registrations[0]))
+        self.assertIsNone(registrations[1])
+        report = json.loads(reports[0].split(' ', 1)[1])
+        self.assertEqual((report['outside'], report['inside'], report['sends']), ([], [], []))
+        self.assertEqual(report['identities']['product_sha256'], controls.FROZEN['run_cmp_input.py'])
+
+    def test_second_ack_old_code_counterfactual_loses_deciding_evidence(self):
+        for old in (False, True):
+            fixture = second_ack_fixture([dict(signal=2)], [], old=old)
+            with self.assertRaisesRegex(ValueError, '^second handler ACK missing$'):
+                fixture.run()
+            self.assertEqual(len(fixture.diagnostics), 0 if old else 1)
+            self.assertEqual(len(fixture.queries), 3)
+
+    def test_second_ack_snapshot_frozen_and_failure_decision_sampled_once(self):
+        events, pending = [dict(signal=2)], []
+        sample = controls.second_ack_snapshot(events, pending, 2, 15, 'entry', 'installing', 'entry-2-15', ('cpython', 'v', 'p', 0))
+        events.append(dict(signal=15))
+        pending.append(15)
+        self.assertEqual((sample.count, sample.signals, sample.pending), (1, (2,), ()))
+        with self.assertRaises(AttributeError):
+            sample.count = 2
+        fixture = second_ack_fixture([dict(signal=2)], [])
+        with self.assertRaisesRegex(ValueError, '^second handler ACK missing$'):
+            fixture.run()
+        self.assertEqual(len(fixture.queries), 3)
+        self.assertEqual(fixture.diagnostics, [sample._replace(interpreter=('cpython', 'inert-version', '/inert/python', 0))])
+        self.assertEqual(fixture.kernel, [dict(point='second-after-send', pending=[])])
+
+    def test_second_ack_pending_failure_and_success_keep_broad_predicate(self):
+        for pending in ([], [15]):
+            fixture = second_ack_fixture([dict(signal=2), dict(signal=15)], pending)
+            if pending:
+                with self.assertRaisesRegex(ValueError, '^second handler ACK missing$'):
+                    fixture.run()
+                self.assertEqual(fixture.diagnostics[0].signals, (2, 15))
+                self.assertEqual(fixture.diagnostics[0].pending, (15,))
+            else:
+                fixture.run()
+                self.assertEqual(fixture.diagnostics, [])
+            self.assertEqual(len(fixture.queries), 3)
+
+    def test_second_ack_diagnostic_bounds_and_original_failure_survives_output_error(self):
+        class Stream:
+            def __init__(self, fail=False):
+                self.text, self.fail = '', fail
+            def write(self, text):
+                if self.fail:
+                    raise OSError('inert stderr failure')
+                self.text += text
+            def flush(self):
+                pass
+        original = controls.sys.stderr
+        sample = controls.second_ack_snapshot([dict(signal=2)] * 1000, list(range(1000)), 2, 15,
+                                              'p' * 1000, 'p' * 1000, 'c' * 1000, ('v' * 1000,) * 4)
+        try:
+            stream = Stream()
+            controls.sys.stderr = stream
+            controls.second_ack_diagnostic(sample)
+            self.assertLessEqual(len(stream.text), 4117)
+            record = json.loads(stream.text.split(' ', 1)[1])
+            self.assertEqual((record['count'], record['signals_omitted'], record['pending_omitted']), (1000, 992, 936))
+            tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+            worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
+            pause = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'pause_second')
+            decision = pause.body[-1].orelse
+            controls.sys.stderr = Stream(fail=True)
+            with self.assertRaisesRegex(ValueError, '^second handler ACK missing$') as caught:
+                exec(compile(ast.fix_missing_locations(ast.Module(body=copy.deepcopy(decision), type_ignores=[])), '<inert-decision>', 'exec'),
+                    dict(sample=sample, second_ack_snapshot=lambda *args: sample, handler_events=[], pending=[],
+                         first=2, second=15, phase='entry', owner=SimpleNamespace(signals=(2, 15), phase='installing'),
+                         args=SimpleNamespace(case='entry-2-15'), sys=sys, require=controls.require,
+                         second_ack_diagnostic=controls.second_ack_diagnostic))
+            self.assertIsNone(caught.exception.__cause__)
+        finally:
+            controls.sys.stderr = original
+
+    def test_hosted_observer_extracts_exact_genuine_definitions_without_execution(self):
+        init, interrupt, profile, identities = controls.observer_definitions(SOURCE)
+        product = ast.parse((HERE / 'run_cmp_input.py').read_text())
+        owner = next(node for node in product.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
+        methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)}
+        self.assertEqual(ast.dump(init), ast.dump(methods['__init__']))
+        self.assertEqual(ast.dump(interrupt), ast.dump(methods['interrupt']))
+        self.assertEqual(identities['product_sha256'], controls.FROZEN['run_cmp_input.py'])
+        self.assertEqual(identities['profile_ast_sha256'], controls.digest(ast.dump(profile).encode()))
+        control = next(node for node in ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text()).body
+                       if isinstance(node, ast.FunctionDef) and node.name == 'profiler_observer_control')
+        text = ast.unparse(control)
+        self.assertIn('sys.setprofile(callback)', text)
+        self.assertIn('sys.setprofile(None)', text)
+        self.assertIn('owner.interrupt(15, None)', text)
+        self.assertIn('owner.interrupt(2, None)', text)
+        self.assertNotIn('signal.signal(', text)
+        self.assertNotIn('load_source(', text)
+
+    def test_hosted_observer_workflow_before_real_cases_and_both_modes(self):
+        workflow = (SOURCE / '.github/workflows/vkd3d-cmp-os-controls.yml').read_text()
+        self.assertLess(workflow.index('Hosted genuine profiler observer control'), workflow.index('Actual normal OS controls'))
+        self.assertEqual(workflow.count('--profiler-observer-control'), 2)
+        observer = workflow.split('- name: Hosted genuine profiler observer control', 1)[1].split('- name: Actual normal OS controls', 1)[0]
+        self.assertIn('python3 -B -O ', observer)
+        self.assertIn('--source-checkout "$GITHUB_WORKSPACE/source82dc"', observer)
+        self.assertEqual(tuple(controls.CASES), EXPECTED_CASES)
+
     @classmethod
     def setUpClass(cls):
         controls.source_only_check(SOURCE)

@@ -20,7 +20,6 @@ import time
 
 
 def _diagnostic_read(path, limit):
-    """Read one bounded absolute file without following any symlink component."""
     path = Path(path)
     if not path.is_absolute() or any(part in ('.', '..') for part in path.parts[1:]):
         raise ValueError('unsafe diagnostic path')

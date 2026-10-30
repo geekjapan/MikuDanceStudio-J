@@ -1,4 +1,3 @@
-"""Inert checks of the real foreground run loop; no process or kernel fixtures."""
 import contextlib
 import io
 import json

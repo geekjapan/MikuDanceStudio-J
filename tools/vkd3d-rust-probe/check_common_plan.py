@@ -78,6 +78,47 @@ def validate_plan(plan, entries):
 
 
 
+def unproved_reason(value):
+    return (type(value) is dict and set(value) == {'unproved'}
+            and type(value['unproved']) is str and bool(value['unproved'].strip()))
+
+
+def unknown_signature(value):
+    if unproved_reason(value):
+        return True
+    # shortcut: only canonical unproved types are mapped here; other producer shapes fail closed.
+    return (type(value) is dict and set(value) == {'canonical', 'const', 'volatile', 'restrict'}
+            and all(type(value[key]) is bool for key in ('const', 'volatile', 'restrict'))
+            and unproved_reason(value['canonical']))
+
+
+def native_location(value):
+    if unproved_reason(value):
+        return True
+    if type(value) is not dict or set(value) != {'spelling', 'expansion', 'presumed'}:
+        return False
+    for key in ('spelling', 'expansion'):
+        position = value[key]
+        if unproved_reason(position):
+            continue
+        if type(position) is not dict or set(position) != {'path', 'buffer_sha256', 'begin', 'end', 'bytes_hex'}:
+            return False
+        if not (type(position['path']) is str and bool(position['path'])
+                and type(position['begin']) is int and type(position['end']) is int
+                and 0 <= position['begin'] <= position['end'] < 2**63):
+            return False
+        digest, text = position['buffer_sha256'], position['bytes_hex']
+        if not (type(digest) is str and len(digest) == 64
+                and all(c in '0123456789abcdef' for c in digest)
+                and type(text) is str and len(text) == 2 * (position['end'] - position['begin'])
+                and all(c in '0123456789abcdef' for c in text)):
+            return False
+    presumed = value['presumed']
+    return (type(presumed) is dict and set(presumed) == {'path', 'line'}
+            and type(presumed['path']) is str and type(presumed['line']) is int
+            and 0 <= presumed['line'] < 2**63)
+
+
 def preserved_unknowns(reports, counts, sources):
     independent = set()
     for facts in reports:
@@ -96,6 +137,10 @@ def preserved_unknowns(reports, counts, sources):
             require(definition['state'] == 'Unproved'
                     and definition['reason'] == 'native attributed function signature unclassified',
                     'unclassified definition evidence differs')
+            require(native_location(definition['location']),
+                    'unclassified definition location evidence differs or is unsupported')
+            require(unknown_signature(definition['signature']),
+                    'unclassified definition signature must remain unproved; unsupported evidence shape')
             symbol = definition['symbol']
             require(type(symbol) is dict and set(symbol) == {'unit', 'static'},
                     'unclassified definition requires static C source identity')

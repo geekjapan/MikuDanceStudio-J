@@ -187,5 +187,109 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
         self.reject_definition(lambda d: d.update(name='wrong_name'), 'schema differs')
 
 
+class NestedUnknownEvidenceTests(IndependentUnknownSchemaTests):
+    def native_origin(self):
+        position = dict(path=self.unit, buffer_sha256='a' * 64, begin=0, end=1, bytes_hex='66')
+        return dict(spelling=position, expansion=copy.deepcopy(position), presumed=dict(path=self.unit, line=1))
+
+    def test_legitimate_nested_unproved_signature_and_native_origin(self):
+        definition = self.reports[0]['unclassified_definitions'][0]
+        definition.update(location=self.native_origin(), signature=dict(canonical={'unproved': 'unsupported type or wrapper limit'},
+                          const=False, volatile=False, restrict=False))
+        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+        definition['location']['spelling'] = {'unproved': 'invalid end of token'}
+        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+
+    def test_empty_wrong_extra_and_mixed_evidence_tags(self):
+        original = copy.deepcopy(self.reports)
+        for field in ('location', 'signature'):
+            for value in ({}, {'Unproved': 'reason'}, {'unproved': 'reason', 'extra': 1},
+                          {'unproved': 'reason', 'canonical': {'kind': 'Int'}}, {'proved': True}):
+                self.reports = copy.deepcopy(original)
+                self.reject_definition(lambda d: d.update({field: value}), 'location evidence|signature must remain')
+
+    def test_unproved_reasons_require_nonempty_strings(self):
+        original = copy.deepcopy(self.reports)
+        for field in ('location', 'signature'):
+            for value in (True, False, None, 1, [], {}, '', '  '):
+                self.reports = copy.deepcopy(original)
+                self.reject_definition(lambda d: d.update({field: {'unproved': value}}), 'location evidence|signature must remain')
+
+    def test_signature_wrapper_tags_and_qualifier_types_are_closed(self):
+        original = copy.deepcopy(self.reports)
+        valid = dict(canonical={'unproved': 'unsupported type or wrapper limit'}, const=False, volatile=False, restrict=False)
+        bad = [dict(valid, extra=True), dict(valid, unproved='reason'), dict(valid, canonical={}),
+               dict(valid, canonical={'unproved': True}), dict(valid, canonical={'unproved': ''})]
+        for key in valid:
+            value = copy.deepcopy(valid)
+            value.pop(key)
+            bad.append(value)
+        for key in ('const', 'volatile', 'restrict'):
+            for scalar in (0, 1, '', None, [], {}):
+                bad.append(dict(valid, **{key: scalar}))
+        for value in bad:
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update(signature=value), 'signature must remain')
+
+    def test_known_and_proved_signatures_cannot_claim_unknown_state(self):
+        original = copy.deepcopy(self.reports)
+        for value in ({'proved': {'kind': 'Int'}}, {'canonical': {'kind': 'Int'}, 'const': False, 'volatile': False, 'restrict': False},
+                      {'canonical': {'variadic': False, 'parameters': [], 'return': {'kind': 'Int'}},
+                       'const': False, 'volatile': False, 'restrict': False}):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update(signature=value), 'signature must remain')
+
+    def test_native_location_nested_tags_are_closed(self):
+        original = copy.deepcopy(self.reports)
+        for key in ('spelling', 'expansion', 'presumed'):
+            for value in ({}, True, [], {'unproved': ''}, {'unproved': True}, {'unproved': 'reason', 'path': self.unit}):
+                self.reports = copy.deepcopy(original)
+                origin = self.native_origin()
+                origin[key] = value
+                self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+        for key in ('spelling', 'expansion', 'presumed'):
+            self.reports = copy.deepcopy(original)
+            origin = self.native_origin()
+            origin.pop(key)
+            self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+        self.reports = copy.deepcopy(original)
+        self.reject_definition(lambda d: d.update(location=dict(self.native_origin(), extra=True)), 'location evidence')
+
+    def test_native_positions_require_typed_consistent_ranges(self):
+        original = copy.deepcopy(self.reports)
+        for key, values in [('path', ['', True, None]), ('buffer_sha256', ['', 'g' * 64, True]),
+                            ('begin', [True, -1, 2, '0']), ('end', [True, -1, 2**63, '1']),
+                            ('bytes_hex', [True, 'f', 'gg', 'ffff'])]:
+            for value in values:
+                self.reports = copy.deepcopy(original)
+                origin = self.native_origin()
+                origin['spelling'][key] = value
+                self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+        for key in ('path', 'buffer_sha256', 'begin', 'end', 'bytes_hex'):
+            self.reports = copy.deepcopy(original)
+            origin = self.native_origin()
+            origin['expansion'].pop(key)
+            self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+        self.reports = copy.deepcopy(original)
+        origin = self.native_origin()
+        origin['expansion']['extra'] = 1
+        self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+
+    def test_presumed_location_types_are_exact(self):
+        original = copy.deepcopy(self.reports)
+        for value in ({'path': True, 'line': 1}, {'path': self.unit, 'line': True},
+                      {'path': self.unit, 'line': -1}, {'path': self.unit, 'line': '1'},
+                      {'path': self.unit}, {'path': self.unit, 'line': 1, 'extra': 0}):
+            self.reports = copy.deepcopy(original)
+            origin = self.native_origin()
+            origin['presumed'] = value
+            self.reject_definition(lambda d: d.update(location=origin), 'location evidence')
+
+    def test_coordinated_state_signature_and_plan_mutation_is_rejected(self):
+        self.counts['unknown_definitions'][0]['blockers'] = []
+        self.reject_definition(lambda d: d.update(state='Proved', reason='classified', signature={'proved': {'kind': 'Int'}}),
+                               'evidence differs')
+
+
 if __name__ == '__main__':
     unittest.main()

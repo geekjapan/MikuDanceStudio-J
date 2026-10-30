@@ -1,0 +1,223 @@
+name: Bullet private MMD collision world scaffold
+
+on:
+  push:
+    branches: [w6-mmd-collision-owner]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bullet-mmd-collision-world-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Actual MMD collision world (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            policy: generic-reference
+          - os: ubuntu-24.04-arm
+            policy: generic-reference
+          - os: macos-15
+            policy: generic-reference
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Check helper framing and source admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B -O tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B tools/bullet-rust-mmd-collision-check/test_evidence.py -v
+          python3 -B tools/bullet-rust-gjk-pair-check/test_measured_profiles.py -v
+      - name: Compile and measure the unmodified native archive
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+          POLICY: ${{ matrix.policy }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world" --authority "$RUNNER_TEMP/mmd-collision-authority.json"
+      - name: Save all actual commands, sources, archives and raw checkpoints
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-collision-world-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-collision-world
+          if-no-files-found: error
+          include-hidden-files: true
+
+  windows_native:
+    name: Actual MMD collision world (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    outputs:
+      authority_size: ${{ steps.producer.outputs.authority_size }}
+      authority_sha256: ${{ steps.producer.outputs.authority_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Check helper framing and source admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B -O tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B tools/bullet-rust-mmd-collision-check/test_evidence.py -v
+          python3 -B tools/bullet-rust-gjk-pair-check/test_measured_profiles.py -v
+      - name: Compile and measure the actual Windows SSE consumer
+        id: producer
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python -B tools\bullet-rust-mmd-collision-check\check.py --out-dir "%RUNNER_TEMP%\mmd-collision-world" --authority "%RUNNER_TEMP%\mmd-collision-authority.json"
+          exit /b %ERRORLEVEL%
+      - name: Save all actual commands, sources, archives and raw checkpoints
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-collision-world-windows-2022
+          path: ${{ runner.temp }}/mmd-collision-world
+          if-no-files-found: error
+          include-hidden-files: true
+      - name: Save detached Windows producer authority
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-collision-authority-windows-2022
+          path: ${{ runner.temp }}/mmd-collision-authority.json
+          if-no-files-found: error
+
+  windows_replay:
+    name: Actual Windows source replay (${{ matrix.os }})
+    needs: [native, windows_native]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: mmd-collision-world-windows-2022
+          path: ${{ runner.temp }}/windows-mmd-collision-world
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: mmd-collision-authority-windows-2022
+          path: ${{ runner.temp }}/windows-mmd-authority
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Require strict Windows source admission before replay
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          AUTHORITY_SIZE: ${{ needs.windows_native.outputs.authority_size }}
+          AUTHORITY_SHA256: ${{ needs.windows_native.outputs.authority_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world-replay" --replay-dir "$RUNNER_TEMP/windows-mmd-collision-world" --authority "$RUNNER_TEMP/windows-mmd-authority/mmd-collision-authority.json" --authority-size "$AUTHORITY_SIZE" --authority-sha256 "$AUTHORITY_SHA256"
+      - name: Require strict Windows source admission before replay with MSVC
+        if: runner.os == 'Windows'
+        shell: cmd
+        env:
+          AUTHORITY_SIZE: ${{ needs.windows_native.outputs.authority_size }}
+          AUTHORITY_SHA256: ${{ needs.windows_native.outputs.authority_sha256 }}
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-mmd-collision-check\check.py --out-dir "%RUNNER_TEMP%\mmd-collision-world-replay" --replay-dir "%RUNNER_TEMP%\windows-mmd-collision-world" --authority "%RUNNER_TEMP%\windows-mmd-authority\mmd-collision-authority.json" --authority-size "%AUTHORITY_SIZE%" --authority-sha256 "%AUTHORITY_SHA256%"
+          exit /b %ERRORLEVEL%
+      - name: Save strict replay and compiled semantic controls
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-collision-world-windows-replay-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-collision-world-replay
+          if-no-files-found: error
+          include-hidden-files: true
+
+  regression:
+    name: Existing collision gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            policy: generic-reference
+          - os: ubuntu-24.04-arm
+            policy: generic-reference
+          - os: macos-15
+            policy: generic-reference
+          - os: windows-2022
+            policy: mmd-win64-sse
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Recheck discrete, dynamics and source-admitted GJK behavior
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+          POLICY: ${{ matrix.policy }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-discrete-world-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/discrete" --policy "$POLICY"
+          python3 -B tools/bullet-rust-dynamics-world-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/dynamics" --policy "$POLICY"
+          python3 -B tools/bullet-rust-gjk-pair-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/gjk"
+      - name: Recheck actual Windows SSE collision gates
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python -B tools\bullet-rust-discrete-world-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\discrete" --policy mmd-win64-sse
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-dynamics-world-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\dynamics" --policy mmd-win64-sse
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-gjk-pair-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\gjk"
+          exit /b %ERRORLEVEL%
+      - name: Save all affected gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-regression-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-regression
+          if-no-files-found: error
+          include-hidden-files: true

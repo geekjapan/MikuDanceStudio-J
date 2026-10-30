@@ -24,13 +24,21 @@ def write_json(path, value):
 
 
 def source_hashes():
-    paths = subprocess.check_output(['git', '-C', ROOT, 'ls-files', '-z',
+    entries = subprocess.check_output(['git', '-C', ROOT, 'ls-files', '--stage', '-z',
         'recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet',
         'rust/crates/mds-bullet-sys/shim', 'rust/crates/mds-crtmath',
         'tools/bullet-rust-gjk-pair-check', 'tools/bullet-rust-gjk-epa-check',
         'tools/bullet-rust-support-check', '.github/workflows/bullet-outer-gjk-host-capture.yml']).decode().split('\0')
-    return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
-            for path in paths if path and (ROOT / path).is_file()}
+    result = {}
+    for entry in filter(None, entries):
+        metadata, path = entry.split('\t')
+        mode, _, stage = metadata.split()
+        source = ROOT / path
+        if (mode != '100644' or stage != '0' or source.is_symlink() or not source.is_file()
+                or (os.name != 'nt' and source.stat().st_mode & 0o111)):
+            raise ValueError('Outer GJK source closure requires regular nonexecutable files')
+        result[path] = hashlib.sha256(source.read_bytes()).hexdigest()
+    return result
 
 
 def run(args, **kwargs):

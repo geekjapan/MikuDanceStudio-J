@@ -15,6 +15,14 @@ def once(s,old,new):
     return s.replace(old,new)
 
 
+def stage_core(directory, replacements):
+    for name, source in replacements.items():
+        (directory/(name+'.rs')).write_text(source)
+    mod=(CORE/'mod.rs').read_text()
+    mod=re.sub(r'(?m)^(?:pub(?:\([^)]*\))? )?mod (\w+);',lambda m:'#[path = '+json.dumps((directory/(m[1]+'.rs') if m[1] in replacements else CORE/(m[1]+'.rs')).as_posix())+']\n'+m[0],mod)
+    (directory/'core.rs').write_text(mod)
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--only', action='append', choices=['joint-delta-reset'])
@@ -43,10 +51,7 @@ def main():
         return p
     for name,(s,c) in (variants.items() if not args.only else []):
         directory=out/name;directory.mkdir(exist_ok=True)
-        (directory/'solver.rs').write_text(s);(directory/'contact_solver.rs').write_text(c)
-        mod=(CORE/'mod.rs').read_text()
-        mod=re.sub(r'pub mod (\w+);',lambda m:'#[path = '+json.dumps((directory/(m[1]+'.rs') if m[1] in ['solver','contact_solver'] else CORE/(m[1]+'.rs')).as_posix())+']\npub mod '+m[1]+';',mod)
-        (directory/'core.rs').write_text(mod)
+        stage_core(directory, {'solver':s, 'contact_solver':c})
         harness='#![allow(dead_code)]\n#[path='+json.dumps((directory/'core.rs').as_posix())+'] mod core;\n#[path='+json.dumps((ROOT/'rust/crates/mds-bullet/tests/pure_bullet/persistent_solver.rs').as_posix())+'] mod persistent_solver;\n'
         (directory/'harness.rs').write_text(harness)
         binary=directory/('test.exe' if __import__('os').name=='nt' else 'test')
@@ -68,10 +73,7 @@ def main():
     }
     for name, replacement in controls.items():
         directory=out/name;directory.mkdir(exist_ok=True)
-        (directory/'solver.rs').write_text(once(solver, reset, replacement))
-        mod=(CORE/'mod.rs').read_text()
-        mod=re.sub(r'pub mod (\w+);',lambda m:'#[path = '+json.dumps((directory/'solver.rs' if m[1]=='solver' else CORE/(m[1]+'.rs')).as_posix())+']\npub mod '+m[1]+';',mod)
-        (directory/'core.rs').write_text(mod)
+        stage_core(directory, {'solver':once(solver, reset, replacement)})
         mutated=re.sub(r'#\[path = "[^"]+/core/mod.rs"\]',lambda _: '#[path = '+json.dumps((directory/'core.rs').as_posix())+']',runner)
         (directory/'runner.rs').write_text(mutated)
         binary=directory/('runner.exe' if __import__('os').name=='nt' else 'runner')

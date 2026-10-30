@@ -691,7 +691,8 @@ ERROR_STAGES = ('runtime-guard', 'ipc-setup', 'case-selection', 'source-import',
 
 
 def failure_sample_record(sample):
-    record = dict(count=sample.count, signals=list(sample.signals[:8]), pending=list(sample.pending[:64]),
+    record = dict(count=sample.count, signals=list(sample.signals[:8]),
+        pending=[int(value) if isinstance(value, signal.Signals) else value for value in sample.pending[:64]],
         pair=list(sample.pair), phase=sample.phase, owner_phase=sample.owner_phase, case=sample.case,
         interpreter=[str(value)[:24] for value in sample.interpreter],
         signals_omitted=max(0, sample.count - 8), pending_omitted=max(0, len(sample.pending) - 64))

@@ -466,6 +466,19 @@ class SourceDataTests(unittest.TestCase):
                 execute('ready-second', namespace)
 
     def test_frozen_failure_sample_encoder_schema_and_parent_branch(self):
+        kernel_sample = controls.second_ack_snapshot([dict(signal=2)], [signal.SIGTERM], 2, 15,
+            'entry', 'installing', 'entry-2-15', ('cpython', 'v', 'p', 0))
+        self.assertIs(kernel_sample.pending[0], signal.SIGTERM)
+        encoded = controls.encode_worker_error('entry-2-15', 100, 4, 'execute', 'ValueError', 'failed', 'trace', kernel_sample)
+        normalized = json.loads(encoded)
+        self.assertTrue(controls.validate_worker_error(normalized, 'entry-2-15', 100, 4))
+        self.assertEqual(normalized['second_ack_failure']['pending'], [15])
+        self.assertIs(type(normalized['second_ack_failure']['pending'][0]), int)
+        self.assertIs(kernel_sample.pending[0], signal.SIGTERM)
+        for wrong in (True, '15', 15.0, object()):
+            with self.assertRaises(ValueError):
+                controls.encode_worker_error('entry-2-15', 100, 4, 'execute', 'ValueError', 'failed', 'trace',
+                    kernel_sample._replace(pending=(wrong,)))
         events, pending = [dict(signal=2)], [15]
         sample = controls.second_ack_snapshot(events, pending, 2, 15, 'entry', 'installing', 'entry-2-15',
             ('cpython', '\U0001f600' * 1000, '/inert/python', 0))

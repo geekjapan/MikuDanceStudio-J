@@ -1,55 +1,63 @@
-# Private MMD collision owner scaffold
+# Private MMD collision owner check
 
-This checkpoint connects one `WorldObjects` to `AxisSweep32` and the existing
-`CollisionDispatcher`. It adds no public backend, stepping, or caller adoption.
-`MmdCollisionWorld` registers the ground first, uses raw registration bounds,
-updates current COM bounds with the contact margin, releases algorithms during
-SAP updates, and precleans pairs before reverse proxy teardown.
+`MmdCollisionWorld` connects one `WorldObjects` to `AxisSweep32` and the existing
+`CollisionDispatcher`. It registers the ground first, uses raw registration
+bounds, updates current COM bounds with the contact margin, releases algorithms
+during SAP updates, and precleans pairs before reverse proxy teardown. Public
+backend selection, stepping, and caller adoption remain outside this change.
 
-The diagnostic native consumer includes the genuine `mds_mmd.cpp`. Its ray
-accelerator remains enabled. Generated observation edits add read-only SAP and
-spring accessors, lifecycle events, and native allocator chronology. Each edit
-has an exact byte inverse. The Rust runner borrows the owner's existing objects
-and dispatcher storage through a generated fixture. `W` independently seeds
-already-created contacts on each side. No native manifold is transferred.
+The native consumer includes the genuine `mds_mmd.cpp`. Its ray accelerator stays
+enabled. Generated observations add read-only SAP and spring accessors,
+algorithm/manifold lifecycle events, Bullet aligned-allocation events, and
+explicit body/joint physical deletion events. Every generated edit has an exact
+byte inverse. Ordinary C++ heap allocations and inner toolchain subprocesses are
+not attested. Rust ray/query and accelerator allocation parity are not claimed.
 
-`cases.py` derives 55 cases from nine source-derived families. Huge boxes place
-their center at their half extent so the lower edge remains within the SAP
-range. The parser retains checkpoint, edge, pair, manifold, contact, and event
-order. It preserves raw float words, including signed zero and NaN payloads.
+The Rust runner uses generated access to the owner's existing storage. `W` seeds
+nonzero warmstart values independently into already-created legal contacts on
+each side. Native contacts are never transferred to Rust.
 
-## Current acceptance boundary
+`cases.py` derives 55 cases. Huge boxes place their center at their half extent,
+keep their lower edge inside the SAP range, and cover float32 bounds below,
+equal to, and above `1e12`. Motion, reseat, and stop-at use separate interpolation
+velocity markers. The parser preserves checkpoint, SAP edge, pair, manifold,
+contact, and event order. It preserves raw float words and NaN payloads.
 
-This is an incomplete verification scaffold. `admit_capture` rejects every
-capture. A successful diagnostic comparison remains `DIAGNOSTIC_EQUAL_UNADMITTED`
-and exits unsuccessfully at the admission boundary. The workflow cannot report
-an accepted MMD migration from this checkpoint. No actual native or Rust binary
-has been run locally. No compiled mutant is accepted. Control definitions live in `MUTANTS`; their count is derived at runtime and
-is separate from the executed success count.
+The hosted driver records actual child PIDs, UTC boundaries, resolved tool
+hashes, source-before/end maps, include occurrences before and after measured
+compilation, archive payload/source/object identities, link maps, binary
+production/use/execution identities, normal waits, and stream closure. A fixed
+recipe checks command order, arguments, output roles, and corpus inputs. Rust
+and native linker identities are recorded before use. The driver selects the
+recorded Rust linker and the recorded non-Windows native linker explicitly.
 
-The missing hosted acceptance work is explicit in `check.py`'s `PENDING` list.
-The hosted driver now records include occurrences before and after measured
-compilation and resolves them again at the end. It binds every archive payload
-to its compiled object and source, retains native link maps, and records native
-allocation and physical deletion chronology. The compiled-control loop checks
-a clean baseline, normal exit, full trace, and a directed field difference.
-These paths remain unrun. Strict closed capture admission, legal actual-capture
-admission before malformed peers, and Windows producer/replay admission remain
-unimplemented. The replay body is wired behind that admission boundary. The current
-common-output comparison excludes observer-only events, SAP arrays, spring
-accessors, and generation identities. It is a diagnostic noninterference check.
-It does not replace the missing provenance and actual-capture gates.
+Compiled controls must exit normally, produce a complete valid lifetime trace,
+match a fresh same-host clean baseline, and differ in their intended semantic
+fields. Algorithm and manifold generations have separate lifetime checks. The
+delayed-release control remains a valid complete trace and differs in event
+timing. Counts come from the corpus, command records, and control definitions.
 
-The initial workflow trigger is restricted to `w6-mmd-collision-owner` and uses
-read-only contents permission. Its native and destination matrices target
-Windows x64, Apple Silicon, Linux x64, and Linux ARM64. Until admission is
-implemented, the native jobs fail and dependent replay jobs cannot accept data.
-A separate four-host regression matrix retains the discrete world, dynamics
-world, and GJK behavior gates. The unchanged General workflow still runs
-`tools/rust/check.sh` on branch push. All require same-HEAD hosted execution
-before publication or acceptance.
+`admit_capture` reads a bounded closed artifact inventory, rederives observations
+and mutations from current source, checks command and include ownership, and
+compares the complete genuine native and Rust outputs. The native driver first
+admits the actual compiled capture before constructing bound malformed peers.
+It publishes `CONTROLLED_PASS` only after those peers are rejected and the final
+closed capture is admitted again. Replay requires an admitted same-HEAD Windows
+producer and validates its own current-source command and binary receipts.
 
-## Hosted commands
+## Verification status
+
+These producer/admission/replay paths have not run on a native host locally.
+No native comparison, compiled control, actual capture admission, or Windows
+replay is accepted from source checks. Their first legal executions and any
+required repairs remain GitHub Actions work after independent source review.
+The source-only GJK admission remains `UNRUN` and changes no historical record.
+
+The initial workflow trigger is restricted to `w6-mmd-collision-owner`. It uses
+read-only contents permission and four native plus four Windows replay targets.
+Targets are Windows x64, Apple Silicon, Linux x64, and Linux ARM64. A separate
+four-host regression matrix retains discrete world, dynamics world, and GJK
+gates. The unchanged General workflow runs `tools/rust/check.sh` on branch push.
 
 ```sh
 python3 -B tools/bullet-rust-mmd-collision-check/test_check.py -v
@@ -58,10 +66,6 @@ python3 -B tools/bullet-rust-mmd-collision-check/test_evidence.py -v
 python3 -B tools/bullet-rust-mmd-collision-check/check.py --out-dir "$RUNNER_TEMP/mmd-collision-world"
 ```
 
-Compilation is restricted to GitHub Actions. The diagnostic command records
-actual child PIDs, UTC boundaries, executable hashes, source-before/end maps,
-input/output hashes, normal wait results, and stream closure. These records are
-not a strict admission seal. The source-only GJK admission remains `UNRUN`.
-
-Rust ray queries, native allocator parity, MMD dynamics, nonzero-mass kinematic
-stepping, public FFI adoption, and native-source deletion are outside this slice.
+Compilation and actual-capture tests are hosted-only. MMD dynamics,
+nonzero-mass kinematic stepping, public FFI adoption, native-free product builds,
+and C++ source deletion remain separate work.

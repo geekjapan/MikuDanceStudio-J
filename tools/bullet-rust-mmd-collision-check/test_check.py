@@ -1,10 +1,11 @@
 """Small inert helper tests. Hosted suites do not substitute for actual capture."""
 import unittest
 import struct
+import copy
 
 from cases import corpus, word
 from hooks import MUTANTS, OWNER, inverse, mutate, replace
-from trace import frames
+from trace import frames, validate_lifetimes, semantic_projection
 
 
 class Memory:
@@ -96,6 +97,7 @@ class CorpusTests(unittest.TestCase):
     def test_each_mutant_is_an_exact_single_reversible_edit(self):
         for name, (path, old, new, field) in MUTANTS.items():
             self.assertTrue(field)
+            self.assertEqual(semantic_projection([], field), [])
             self.assertNotEqual(old, new)
             memory = Memory({path: old.encode()})
             edits = mutate(memory, name)
@@ -110,6 +112,29 @@ class CorpusTests(unittest.TestCase):
         for changed in (raw[:-4], raw + b'Z 2\n', raw.replace(b'O 1', b'O 2'), raw.replace(b'Z 2', b'Z 1')):
             with self.assertRaises(ValueError):
                 frames(changed, commands)
+
+    def test_inert_generation_ledger_checks_ownership_and_allows_delayed_release_control(self):
+        manifold = ['M', '0', '0', '1', '1', '0', '1', '00000000', '00000000', '0']
+        rows = [
+            [['E', '0', 'A+', '1'], ['E', '0', 'M+', '1', '0', '1'], ['O', '0', 'D', '2', '1', '1'],
+             ['P', '0', '0', '1', '2', '0', '1', '1'], manifold],
+            [['E', '1', 'U+', '0'], ['E', '1', 'U-', '0'], ['O', '1', 'S', '2', '0', '1'],
+             ['M', '1', *manifold[2:]]],
+            [['E', '2', 'M-', '1'], ['E', '2', 'A-', '1'], ['O', '2', 'X', '0', '0', '0']],
+        ]
+        self.assertEqual(validate_lifetimes(rows), {'algorithm_generations': 1, 'manifold_generations': 1})
+        for mutation in ['missing-manifold-free', 'duplicate-generation', 'wrong-owner', 'open-update']:
+            changed = copy.deepcopy(rows)
+            if mutation == 'missing-manifold-free':
+                changed[2].pop(0)
+            elif mutation == 'duplicate-generation':
+                changed[0].insert(1, ['E', '0', 'A+', '1'])
+            elif mutation == 'wrong-owner':
+                changed[0][-1][4] = '2'
+            else:
+                changed[1].pop(1)
+            with self.assertRaises(ValueError):
+                validate_lifetimes(changed)
 
 
 if __name__ == '__main__':

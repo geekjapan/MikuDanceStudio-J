@@ -58,5 +58,35 @@ class NativeLifetimeFramingTests(unittest.TestCase):
                 validate_native_lifetimes(changed, inputs, observed=True)
 
 
+class CommandRecipeTests(unittest.TestCase):
+    def test_inert_command_recipe_preserves_order_roles_and_generation(self):
+        from evidence import command_schedule
+        from hooks import MUTANTS
+        for system, root, out, exe in [('Linux','/source','/capture','/tool'),
+                                      ('Darwin','/source','/capture','/tool'),
+                                      ('Windows','C:/source','D:/capture','C:/tool.exe')]:
+            context = {'schema':1,'system':system,'root':root,'out':out,
+                       'tools':{name:exe for name in ['python','git','rustup','rustc','rust_linker','compiler','archiver','native_linker']}}
+            sources = ['recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp']
+            recipe = command_schedule(context,sources,[])
+            labels = [entry.label for entry in recipe]
+            self.assertEqual(len(labels),len(set(labels)))
+            self.assertEqual(labels[:2],['git-head','git-status'])
+            self.assertLess(labels.index('compile-000-discovery'),labels.index('compile-000'))
+            self.assertLess(labels.index('native-run'),labels.index('observed-run'))
+            self.assertEqual(sum(entry.label.startswith('mutant-run-') for entry in recipe),len(MUTANTS))
+            for name in MUTANTS:
+                baseline = next(entry for entry in recipe if entry.label == 'baseline-build-'+name)
+                mutant = next(entry for entry in recipe if entry.label == 'mutant-build-'+name)
+                self.assertEqual(baseline.generation,'baseline-'+name)
+                self.assertEqual(mutant.generation,'mutant-'+name)
+                self.assertEqual(len(mutant.outputs),2 if system == 'Windows' else 1)
+                if system == 'Windows':
+                    self.assertTrue(mutant.outputs[-1].endswith('.pdb'))
+            self.assertTrue(next(entry for entry in recipe if entry.label == 'native-run').corpus)
+            self.assertTrue(next(entry for entry in recipe if entry.label == 'observed-consumer-build').compile)
+            self.assertTrue(all(len(entry.outputs)==1 for entry in recipe if entry.compile))
+
+
 if __name__ == '__main__':
     unittest.main()

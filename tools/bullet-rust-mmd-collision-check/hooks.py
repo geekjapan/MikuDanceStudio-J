@@ -103,28 +103,28 @@ MUTANTS = {
     'motion-bound': (OWNER, 'let threshold = Vec3([0.02; 3]);', 'let (min, max) = objects.data()[i].shape.aabb(objects.data()[i].motion.get_world_transform());\n        let threshold = Vec3([0.02; 3]);', 'sap'),
     'inclusive-huge-boundary': (OWNER, 'max.sub(min).length2() < 1e12', 'max.sub(min).length2() <= 1e12', 'sap'),
     'kinematic-huge-exemption': (OWNER, 'collision_flags & 1 != 0', 'collision_flags & 3 != 0', 'sap'),
-    'force-disable': (OWNER, '.set_activation_state(ActivationState::DisableSimulation)', '.force_activation_state(ActivationState::DisableSimulation)', 'bodies'),
-    'reverse-owner-order': (OWNER, 'keys.map(|key| owners[&key.0])', '[owners[&keys[1].0], owners[&keys[0].0]]', 'manifolds'),
+    'force-disable': (OWNER, '.set_activation_state(ActivationState::DisableSimulation)', '.force_activation_state(ActivationState::DisableSimulation)', 'activation'),
+    'reverse-owner-order': (OWNER, 'keys.map(|key| owners[&key.0])', '[owners[&keys[1].0], owners[&keys[0].0]]', 'manifold-bodies'),
     'omit-preclean': (OWNER, 'if keys.contains(&key) {', 'if false && keys.contains(&key) {', 'events'),
-    'ground-filter': (OWNER, 'let [group, mask] = objects.data()[i].filter;', 'let [group, mask] = if i == 0 { [1, -1] } else { objects.data()[i].filter };', 'bodies'),
+    'ground-filter': (OWNER, 'let [group, mask] = objects.data()[i].filter;', 'let [group, mask] = if i == 0 { [1, -1] } else { objects.data()[i].filter };', 'filter'),
     'deferred-release': (OWNER, 'dispatcher.release(key);', 'crate::observer::defer(key.0);', 'events'),
-    'ground-restitution': (OWNER, '        collision.register(&objects, 0);', '        let mut objects = objects;\n        objects.solver_parts().0[0].set_restitution(0.0);\n        collision.register(&objects, 0);', 'bodies'),
-    'mode-zero-dynamic': (OWNER, 'self.objects.create_mmd_body(desc, mode)?', 'self.objects.create_mmd_body(desc, mode.max(1))?', 'bodies'),
-    'motion-moves-current': (OWNER, 'self.objects.set_motion_state(body, world)', '{ self.objects.set_motion_state(body, world)?; self.objects.reseat(body, world) }', 'bodies'),
+    'ground-restitution': (OWNER, '        collision.register(&objects, 0);', '        let mut objects = objects;\n        objects.solver_parts().0[0].set_restitution(0.0);\n        collision.register(&objects, 0);', 'restitution'),
+    'mode-zero-dynamic': (OWNER, 'self.objects.create_mmd_body(desc, mode)?', 'self.objects.create_mmd_body(desc, mode.max(1))?', 'mass-flags'),
+    'motion-moves-current': (OWNER, 'self.objects.set_motion_state(body, world)', '{ self.objects.set_motion_state(body, world)?; self.objects.reseat(body, world) }', 'current-transform'),
     'reseat-keeps-interpolation-velocity': (OWNER, 'self.objects.reseat(body, world)', '''{
             let i = self.objects.index(body)?;
             let before = self.objects.bodies()[i].snapshot();
             self.objects.reseat(body, world)?;
             self.objects.solver_parts().0[i].set_interpolation_velocities(before.interpolation_linear_velocity, before.interpolation_angular_velocity);
             Ok(())
-        }''', 'bodies'),
+        }''', 'interpolation-velocity'),
     'stop-clears-interpolation-velocity': (OWNER, 'self.objects.stop_at(body, origin)', '''{
             self.objects.stop_at(body, origin)?;
             let i = self.objects.index(body)?;
             self.objects.solver_parts().0[i].set_interpolation_velocities(Vec3::ZERO, Vec3::ZERO);
             Ok(())
-        }''', 'bodies'),
-    'joint-collision-suppression': (OWNER, 'self.objects.create_joint(desc, Some(uid))', '{ let _ = uid; self.objects.create_joint(desc, None) }', 'manifolds'),
+        }''', 'interpolation-velocity'),
+    'joint-collision-suppression': (OWNER, 'self.objects.create_joint(desc, Some(uid))', '{ let _ = uid; self.objects.create_joint(desc, None) }', 'manifold-bodies'),
     'recreate-dispatcher': (OWNER, '        self.sweep.calculate_overlapping_pairs();', '        self.sweep.for_each_algorithm(|_, slot| { if let Some(key) = slot.take() { self.dispatcher.release(key); } });\n        self.dispatcher = CollisionDispatcher::new();\n        self.sweep.calculate_overlapping_pairs();', 'events'),
     'reverse-dispatch-order': (OWNER, '''        self.sweep.for_each_algorithm(|keys, algorithm| {
             dispatcher.near_pair(algorithm, keys.map(|key| owners[&key.0]), &views);
@@ -136,7 +136,7 @@ MUTANTS = {
         }
         self.sweep.for_each_algorithm(|keys, slot| {
             *slot = ordered.iter().find(|entry| entry.0 == keys).unwrap().1;
-        });''', 'events'),
+        });''', 'dispatch-order'),
 }
 
 

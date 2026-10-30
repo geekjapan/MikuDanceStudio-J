@@ -11,9 +11,9 @@ import sys
 from cases import corpus
 from evidence import (Recorder, admit_capture, digest, include_occurrences, include_projection,
                       require, save, selected_members, selected_overrides, verify_archive, validate_native_lifetimes,
-                      macro_source, policy)
+                      macro_source, policy, command_schedule, Capture, candidate_capture, actual_peer_controls, admit_replay, _admit_replay)
 from hooks import CORE, MUTANTS, NATIVE_OBSERVATIONS, OBSERVATION_PATHS, instrument, inverse, mutate
-from trace import common, frames, semantic_projection
+from trace import common, frames, semantic_projection, validate_lifetimes
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -24,11 +24,7 @@ FOLDERS = ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src/core'
            'rust/crates/mds-crtmath/src', 'tools/bullet-rust-mmd-collision-check']
 EXTRA = ['.github/workflows/bullet-mmd-collision-world.yml', 'rust/crates/mds-bullet-sys/build.rs',
          'rust/crates/mds-bullet/Cargo.toml', 'rust/Cargo.lock', '.gitattributes', 'rust/.gitattributes']
-PENDING = ['strict closed actual-capture admission and legal actual-capture malformed peers',
-           'strict admission of recorded include/archive/link selection receipts',
-           'strict capture admission of native allocator and physical lifetime chronology',
-           'strict admission of normally exiting compiled controls and directed fields',
-           'same-HEAD Windows producer admission and four-destination replay']
+PENDING = ['same-HEAD hosted native and Windows replay execution after independent source review']
 
 
 def source_paths():
@@ -72,6 +68,7 @@ def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected):
         recorder.run('baseline-build-' + name, [*rargs, '--cfg', 'test', entry, '-o', baseline],
                      cwd=ROOT / 'rust', inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[baseline])
         clean = frames(recorder.run('baseline-run-' + name, [baseline], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        validate_lifetimes(clean)
         require(clean == expected, 'same-host full clean baseline ' + name)
         changed = mutate(target, name)
         save(out / ('mutation-' + name + '.json'), changed)
@@ -79,6 +76,7 @@ def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected):
         recorder.run('mutant-build-' + name, [*rargs, '--cfg', 'test', entry, '-o', executable],
                      cwd=ROOT / 'rust', inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[executable])
         rows = frames(recorder.run('mutant-run-' + name, [executable], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        validate_lifetimes(rows)
         differences = [i for i, (a, b) in enumerate(zip(clean, rows)) if a != b]
         directed = [i for i, (a, b) in enumerate(zip(clean, rows))
                     if semantic_projection(a, field) != semantic_projection(b, field)]
@@ -98,6 +96,7 @@ def capture(out):
         ('Windows', 'amd64'), ('Windows', 'x86_64'), ('Darwin', 'arm64'),
         ('Linux', 'x86_64'), ('Linux', 'aarch64'), ('Linux', 'arm64')}, 'supported actual host')
     require(not out.exists(), 'fresh unique output directory')
+    require(ROOT != out and ROOT not in out.parents and out not in ROOT.parents, 'disjoint source and capture roots')
     out.mkdir(parents=True)
     inputs, cases = corpus()
     (out / 'inputs.txt').write_bytes(inputs.encode())
@@ -109,6 +108,7 @@ def capture(out):
     save(out / 'report.json', status)
     recorder = Recorder(out, snapshot)
     try:
+        python = recorder.bind_tool(sys.executable)['path']
         for path in source_paths():
             dst = out / 'source' / path.relative_to(ROOT)
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -116,14 +116,18 @@ def capture(out):
         head = recorder.run('git-head', ['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip()
         require(not recorder.run('git-status', ['git', 'status', '--porcelain=v1'], cwd=ROOT).strip(), 'clean producer source')
         status['head'] = head
-        compiler = os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++')
+        compiler = recorder.bind_tool(os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++'))['path']
         rustup = 'rustup'
         rustc = recorder.run('rustc-path', [rustup, 'which', '--toolchain', '1.95.0', 'rustc'], cwd=ROOT / 'rust').decode().strip()
         version = recorder.run('rust-version', [rustc, '-Vv'], cwd=ROOT / 'rust')
         require(b'release: 1.95.0\n' in version.replace(b'\r\n', b'\n'), 'actual pinned Rust compiler')
         require(os.environ.get('BULLET_ALLOC_LOG') is None and os.environ.get('OPENMMD_DUMP_SPRING') is None,
                 'native environment logging disabled')
-        rust = [rustc, '--edition=2021', '-O']
+        require(not os.environ.get('CL') and not os.environ.get('_CL_'), 'no ambient MSVC flag injection')
+        rust_linker = recorder.bind_tool('link.exe' if os.name == 'nt' else 'cc')['path']
+        native_linker = (rust_linker if os.name == 'nt' else recorder.bind_tool(
+            recorder.run('native-linker-path', [compiler, '-print-prog-name=ld'], cwd=ROOT / 'rust').decode().strip())['path'])
+        rust = [rustc, '--edition=2021', '-O', '-C', 'linker=' + rust_linker]
         recorder.run('crt-build', [*rust, '--crate-name', 'mds_crtmath', '--crate-type', 'rlib,staticlib',
                      '--print', 'native-static-libs', ROOT / 'rust/crates/mds-crtmath/src/lib.rs', '--out-dir', out],
                      cwd=ROOT / 'rust', inputs=[ROOT / 'rust/crates/mds-crtmath/src/lib.rs'],
@@ -161,6 +165,7 @@ def capture(out):
         recorder.run('rust-observed-build', [*rargs, '--cfg', 'test', runner, '-o', rust_exe],
                      cwd=ROOT / 'rust', inputs=[runner, out / 'libmds_crtmath.rlib'], outputs=[rust_exe])
         rust_rows = frames(recorder.run('rust-observed-run', [rust_exe], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        save(out / 'rust-lifetimes.json', validate_lifetimes(rust_rows))
         src = ROOT / 'recipes/bullet275/bullet-src/src'
         sources = sorted(p for folder in ['BulletCollision', 'BulletDynamics', 'LinearMath'] for p in (src / folder).rglob('*.cpp'))
         objects, bindings, include_aliases = [], [], {}
@@ -224,7 +229,7 @@ def capture(out):
         macro_obj, macro_exe = out / ('effective-macros' + extension), out / ('effective-macros' + suffix)
         compile_object(macro, macro_obj, 'macro-build')
         recorder.run('macro-link', [compiler, '/nologo', '/MD', macro_obj, '/Fe' + str(macro_exe)] if os.name == 'nt'
-                     else [compiler, macro_obj, '-o', macro_exe], cwd=ROOT / 'rust', inputs=[macro_obj], outputs=[macro_exe])
+                     else [compiler, macro_obj, '-fuse-ld=' + native_linker, '-o', macro_exe], cwd=ROOT / 'rust', inputs=[macro_obj], outputs=[macro_exe])
         macros = recorder.run('actual-macros', [macro_exe], cwd=ROOT / 'rust')
         require(all(value in macros for value in [b'pointer_bits=64', b'scalar_bytes=4', b'MDS_BT_SYSTEM_MATH=<undefined>',
                                                 b'sinf=mds_crt_sinf', b'BT_NO_PROFILE=1']), 'actual supported ABI and deterministic math policy')
@@ -259,7 +264,7 @@ def capture(out):
             compile_object(source, obj, name + '-consumer-build', root, extra)
             linkmap = out / (name + '.map')
             args = ([compiler, '/nologo', '/MD', '/EHsc', obj, *prefix, archive, crt, '/Fe' + str(exe), '/link', '/MAP:' + str(linkmap), '/VERBOSE:LIB', *libs]
-                    if os.name == 'nt' else [compiler, obj, *prefix, archive, crt, *libs,
+                    if os.name == 'nt' else [compiler, obj, *prefix, archive, crt, *libs, '-fuse-ld=' + native_linker,
                     ('-Wl,-map,' if platform.system() == 'Darwin' else '-Wl,-Map,') + str(linkmap), '-o', exe])
             link_output = recorder.run(name + '-link', args, cwd=ROOT / 'rust', inputs=[obj, *prefix, archive, crt], outputs=[exe, linkmap])
             link_data = linkmap.read_bytes()
@@ -272,6 +277,8 @@ def capture(out):
             save(out / (name + '-link-selection.json'), sorted(selected))
             raw = recorder.run(name + '-run', [exe], cwd=ROOT / 'rust', data=inputs.encode())
             native_rows[name] = frames(raw, inputs, observed=name == 'observed')
+            if name == 'observed':
+                save(out / 'observed-trace-lifetimes.json', validate_lifetimes(native_rows[name]))
             lifecycle = validate_native_lifetimes((out / (name + '-run.stderr')).read_bytes().replace(b'\r\n', b'\n'),
                                                   inputs, observed=name == 'observed')
             save(out / (name + '-lifetime-summary.json'), lifecycle)
@@ -286,6 +293,20 @@ def capture(out):
             endings.append({'cwd': cwd, 'raw': spelling, 'target': acquired['target'], 'sha256': acquired['sha256']})
         save(out / 'native-include-bindings-end.json', {'schema': 1, 'bindings': endings})
         save(out / 'generated-end.json', recorder.generated_snapshot())
+        recorded = {record['label']: record for record in recorder.commands}
+        producer = {'schema': 1, 'system': platform.system(), 'root': str(ROOT), 'out': str(out),
+                    'tools': {name: recorded[label]['argv'][0] for name, label in [
+                        ('git', 'git-head'), ('rustup', 'rustc-path'), ('rustc', 'rust-version'),
+                        ('compiler', 'compile-000'), ('archiver', 'archive-build')]}}
+        producer['tools'].update(python=python, rust_linker=rust_linker, native_linker=native_linker)
+        save(out / 'producer.json', producer)
+        schedule = command_schedule(producer, [p.relative_to(ROOT).as_posix() for p in sources], libs)
+        require([(r['label'], tuple(r['argv']), r['cwd']) for r in recorder.commands] ==
+                [(r.label, r.argv, r.cwd) for r in schedule], 'exact complete diagnostic command schedule')
+        for expected, record in zip(schedule, recorder.commands):
+            require(set(record['outputs']) == set(expected.outputs), 'exact produced artifact roles ' + expected.label)
+            require(record['stdin_sha256'] == (digest(inputs.encode()) if expected.corpus else None),
+                    'exact corpus stdin role ' + expected.label)
         status.update(status='DIAGNOSTIC_EQUAL_UNADMITTED', cases=len(cases), checkpoints=len(inputs.splitlines()),
                       commands=len(recorder.commands), mutant_definitions=len(MUTANTS), compiled_controls=len(controls))
         save(out / 'report.json', status)
@@ -298,7 +319,20 @@ def capture(out):
     finally:
         recorder.close()
         save(out / 'artifact-manifest.json', {p.relative_to(out).as_posix(): digest(p.read_bytes()) for p in sorted(out.rglob('*')) if p.is_file() and p.name != 'artifact-manifest.json'})
-    admit_capture(out)
+    expected = {'expected_head':head,'canonical_sources':original_sources,'inputs':inputs,'cases':cases,
+                'expected_host':{(platform.system(),platform.machine().lower())}}
+    status.update(status='CONTROLLED_PASS',pending=[])
+    import json
+    report_bytes = (json.dumps(status,indent=2,sort_keys=True)+'\n').encode()
+    candidate = candidate_capture(Capture(out),{'report.json':report_bytes})
+    peers = actual_peer_controls(candidate,**expected)
+    candidate = candidate_capture(candidate,{'actual-capture-controls.json':(json.dumps(peers,indent=2,sort_keys=True)+'\n').encode()})
+    admit_capture(candidate,**expected)
+    for name in ['actual-capture-controls.json','report.json','artifact-manifest.json']:
+        temporary = out / (name+'.pending')
+        temporary.write_bytes(candidate[name])
+        temporary.replace(out/name)
+    admit_capture(out,**expected)
 
 
 def replay(directory, out):
@@ -307,6 +341,7 @@ def replay(directory, out):
         ('Windows', 'amd64'), ('Windows', 'x86_64'), ('Darwin', 'arm64'),
         ('Linux', 'x86_64'), ('Linux', 'aarch64'), ('Linux', 'arm64')}, 'supported actual replay host')
     require(not out.exists(), 'fresh unique replay output directory')
+    require(ROOT != out and ROOT not in out.parents and out not in ROOT.parents, 'disjoint source and replay roots')
     out.mkdir(parents=True)
     inputs, cases = corpus()
     (out / 'inputs.txt').write_bytes(inputs.encode())
@@ -316,6 +351,10 @@ def replay(directory, out):
     save(out / 'report.json', status)
     recorder = Recorder(out, snapshot)
     try:
+        for path in source_paths():
+            dst = out / 'source' / path.relative_to(ROOT)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(path.read_bytes())
         head = recorder.run('git-head', ['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip()
         require(not recorder.run('git-status', ['git', 'status', '--porcelain=v1'], cwd=ROOT).strip(), 'clean replay source')
         producer = admit_capture(directory, expected_head=head,
@@ -328,7 +367,8 @@ def replay(directory, out):
         rustc = recorder.run('rustc-path', ['rustup', 'which', '--toolchain', '1.95.0', 'rustc'], cwd=ROOT / 'rust').decode().strip()
         version = recorder.run('rust-version', [rustc, '-Vv'], cwd=ROOT / 'rust')
         require(b'release: 1.95.0\n' in version.replace(b'\r\n', b'\n'), 'actual pinned replay Rust compiler')
-        rust = [rustc, '--edition=2021', '-O']
+        rust_linker = recorder.bind_tool('link.exe' if os.name == 'nt' else 'cc')['path']
+        rust = [rustc, '--edition=2021', '-O', '-C', 'linker=' + rust_linker]
         recorder.run('crt-build', [*rust, '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
                      ROOT / 'rust/crates/mds-crtmath/src/lib.rs', '--out-dir', out], cwd=ROOT / 'rust',
                      inputs=[ROOT / 'rust/crates/mds-crtmath/src/lib.rs'], outputs=[out / 'libmds_crtmath.rlib'])
@@ -348,12 +388,17 @@ def replay(directory, out):
                      inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[executable])
         raw = recorder.run('rust-observed-run', [executable], cwd=ROOT / 'rust', data=inputs.encode())
         actual = frames(raw, inputs)
+        validate_lifetimes(actual)
         require(actual == frames(producer.observed_trace, inputs), 'every admitted Windows checkpoint and raw word replayed')
         controls = compiled_controls(recorder, out, shadow, rargs, suffix, inputs, actual)
         inverse(shadow, edits, originals)
         save(out / 'generated-end.json', recorder.generated_snapshot())
         status.update(cases=len(cases), checkpoints=len(inputs.splitlines()), commands=len(recorder.commands),
                       compiled_controls=len(controls))
+        recorded = {record['label']:record for record in recorder.commands}
+        save(out / 'replay-producer.json', {'schema':1,'system':platform.system(),'root':str(ROOT),'out':str(out),
+             'tools':{'git':recorded['git-head']['argv'][0],'rustup':recorded['rustc-path']['argv'][0],
+                      'rustc':recorded['rust-version']['argv'][0],'rust_linker':rust_linker}})
         save(out / 'report.json', status)
     except Exception as error:
         status.update(error=str(error))
@@ -363,7 +408,13 @@ def replay(directory, out):
         recorder.close()
         save(out / 'artifact-manifest.json', {p.relative_to(out).as_posix(): digest(p.read_bytes()) for p in sorted(out.rglob('*'))
                                              if p.is_file() and p.name != 'artifact-manifest.json'})
-    raise ValueError('strict replay receipt admission is not implemented; replay remains UNADMITTED')
+    current_sources = {p:(ROOT/p).read_bytes() for p in snapshot()}
+    _admit_replay(out,producer,expected_head=head,canonical_sources=current_sources,require_pass=False)
+    status.update(status='CONTROLLED_PASS',pending=[])
+    save(out/'report.json',status)
+    save(out/'artifact-manifest.json',{p.relative_to(out).as_posix():digest(p.read_bytes()) for p in sorted(out.rglob('*'))
+                                      if p.is_file() and p.name != 'artifact-manifest.json'})
+    admit_replay(out,producer,expected_head=head,canonical_sources=current_sources)
 
 
 def main():

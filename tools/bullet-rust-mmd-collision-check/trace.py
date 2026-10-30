@@ -88,5 +88,71 @@ def common(rows):
 
 def semantic_projection(checkpoint, field):
     tags = {'sap': {'S'}, 'bodies': {'B'}, 'manifolds': {'P', 'M', 'Q'}, 'events': {'E'}}
+    body_fields = {'activation': [4], 'filter': [6, 7], 'restitution': [47], 'mass-flags': [3, 45],
+                   'current-transform': list(range(9, 21)), 'interpolation-velocity': list(range(54, 60))}
+    if field in body_fields:
+        return [[record[2], *[record[index] for index in body_fields[field]]]
+                for record in checkpoint if record[0] == 'B']
+    if field in {'manifold-bodies', 'dispatch-order'}:
+        return [record[5:7] for record in checkpoint if record[0] == 'M']
     require(field in tags, 'known directed semantic field')
     return [record for record in checkpoint if record[0] in tags[field]]
+
+
+def validate_lifetimes(rows):
+    """Check independent algorithm/manifold generations without reordering events."""
+    algorithms, manifolds, owners = set(), {}, {}
+    next_algorithm = next_manifold = 0
+    for checkpoint in rows:
+        update = None
+        header = next(record for record in checkpoint if record[0] == 'O')
+        body_count = int(header[3])
+        for record in checkpoint:
+            if record[0] != 'E':
+                continue
+            require(len(record) == (6 if record[2] == 'M+' else 4), 'exact lifecycle event fields')
+            event, generation = record[2], int(record[3])
+            if event == 'A+':
+                require(generation == next_algorithm + 1 and generation not in algorithms, 'fresh algorithm generation')
+                next_algorithm = generation
+                algorithms.add(generation)
+            elif event == 'A-':
+                require(generation in algorithms and generation not in owners.values(), 'release algorithm after owned manifolds')
+                algorithms.remove(generation)
+            elif event == 'M+':
+                require(generation == next_manifold + 1 and generation not in manifolds, 'fresh manifold generation')
+                next_manifold = generation
+                bodies = tuple(map(int, record[4:6]))
+                require(len(bodies) == 2 and bodies[0] != bodies[1]
+                        and all(0 <= body < body_count for body in bodies), 'live manifold body owners')
+                manifolds[generation] = bodies
+            elif event == 'M-':
+                require(generation in manifolds, 'release existing manifold generation')
+                del manifolds[generation]
+                owners.pop(generation, None)
+            elif event == 'U+':
+                require(update is None and 0 <= generation < body_count, 'single live AABB update')
+                update = generation
+            elif event == 'U-':
+                require(update == generation, 'matching synchronous AABB update end')
+                update = None
+            else:
+                require(event == 'U' and generation >= 0, 'proxy unregister event')
+        require(update is None, 'closed AABB update checkpoint')
+        current = [record for record in checkpoint if record[0] == 'M']
+        require(len(current) == len(manifolds) and {int(record[3]) for record in current} == set(manifolds),
+                'complete live manifold snapshot')
+        for record in current:
+            generation, owner = int(record[3]), int(record[4])
+            require(owner in algorithms and tuple(map(int, record[5:7])) == manifolds[generation], 'manifold algorithm/body identity')
+            require(generation not in owners or owners[generation] == owner, 'persistent manifold owner generation')
+            owners[generation] = owner
+        require(len(set(owners.values())) == len(owners), 'one manifold per supported algorithm')
+        pairs = [record for record in checkpoint if record[0] == 'P']
+        pair_algorithms = [int(record[-1]) for record in pairs if record[-1] != '0']
+        require(len(set(pair_algorithms)) == len(pair_algorithms) and set(pair_algorithms) <= algorithms,
+                'live distinct pair algorithms')
+        if header[2] == 'X':
+            require(not algorithms and not manifolds and not owners, 'complete algorithm/manifold teardown')
+    require(not algorithms and not manifolds and not owners, 'closed full trace lifetime ledger')
+    return {'algorithm_generations': next_algorithm, 'manifold_generations': next_manifold}

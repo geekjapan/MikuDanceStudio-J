@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix, w4-shader-retention-diagnostic, w4-shader-paged-plan-report]
+    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix, w4-shader-retention-diagnostic, w4-shader-paged-plan-report, w4-shader-paired-preservation-7602]
   workflow_dispatch:
 
 permissions:

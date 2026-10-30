@@ -4490,8 +4490,8 @@
   },
   "mmd_dynamics_world_source_admission": {
     "kind": "private-mmd-dynamics-world-source-only",
-    "base_head": "4a78362ba76da689eac75979764972f94efed9ff",
-    "base_tree": "5ab1a37524863ec5d41475d38d74af32112cf835",
+    "base_head": "9e97fa288bc4869587964a02b59390ef2d174dfa",
+    "base_tree": "9dc5bfd70c05aa2b21b9ac5d1d085ff66acbee35",
     "execution": "UNRUN",
     "hosts": {
       "macos-arm64": {
@@ -4507,7 +4507,7 @@
         },
         "additions": {
           "rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs": "145c6619525f3c4581962ff7ffb7fec58e6d3678fb8a618b53586228e78a389c",
-          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24"
+          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d"
         }
       },
       "linux-arm64": {
@@ -4523,7 +4523,7 @@
         },
         "additions": {
           "rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs": "145c6619525f3c4581962ff7ffb7fec58e6d3678fb8a618b53586228e78a389c",
-          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24"
+          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d"
         }
       },
       "linux-x64": {
@@ -4539,7 +4539,7 @@
         },
         "additions": {
           "rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs": "145c6619525f3c4581962ff7ffb7fec58e6d3678fb8a618b53586228e78a389c",
-          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24"
+          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d"
         }
       },
       "windows-x64": {
@@ -4555,7 +4555,7 @@
         },
         "additions": {
           "rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs": "4735bcd3842289b84adfb65027066b503f89532a2aaf7f9e40d5b1e29759e514",
-          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24"
+          "rust/crates/mds-bullet/tests/mmd_dynamics_world.rs": "734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d"
         }
       }
     }

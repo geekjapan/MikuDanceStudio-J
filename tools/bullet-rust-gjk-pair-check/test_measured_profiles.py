@@ -40,6 +40,11 @@ class MmdDynamicsAdmissionTests(unittest.TestCase):
 
     def test_exact_four_host_maps_git_bytes_and_collector(self):
         layer = self.manifest[self.key]
+        self.assertEqual(layer['base_head'], '9e97fa288bc4869587964a02b59390ef2d174dfa')
+        self.assertEqual(layer['base_tree'], '9dc5bfd70c05aa2b21b9ac5d1d085ff66acbee35')
+        for delta in layer['hosts'].values():
+            self.assertEqual(delta['additions']['rust/crates/mds-bullet/tests/mmd_dynamics_world.rs'],
+                             '734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d')
         self.assertEqual(measured_profiles.source_map_digest(layer), measured_profiles.MMD_DYNAMICS_WORLD_SHA256)
         self.assertEqual(layer['execution'], 'UNRUN')
         paths = measured_profiles.MMD_DYNAMICS_WORLD_REPLACEMENTS | measured_profiles.MMD_DYNAMICS_WORLD_ADDITIONS

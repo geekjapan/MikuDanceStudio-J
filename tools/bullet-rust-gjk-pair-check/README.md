@@ -224,9 +224,9 @@ suite baselines, final integrity, and independent acceptance remain `UNRUN`.
 
 Schema 14 requires `mmd_dynamics_world_source_admission` after the MMD format
 layer and before current verification composition. Its fixed source target is
-`4a78362ba76da689eac75979764972f94efed9ff`, tree
-`5ab1a37524863ec5d41475d38d74af32112cf835`. The canonical entry SHA256 is
-`bdd31e3281259d21c0a187c497191bd8d5f2e824c95069f220bb8e718978a59d`.
+`9e97fa288bc4869587964a02b59390ef2d174dfa`, tree
+`9dc5bfd70c05aa2b21b9ac5d1d085ff66acbee35`. The canonical entry SHA256 is
+`8d1c56ddf53ecb9329e4278dbd0c11a36b1d3504904a22e08562ea1f755589d9`.
 Canonical bytes use `json.dumps(entry, sort_keys=True).encode("utf-8")`.
 Execution is `UNRUN`.
 
@@ -236,9 +236,12 @@ under `rust/crates/mds-bullet/`. Old Git bytes come from predecessor
 `96336e2ef253f148f1042836e79b06d42d9d8cf5`, tree
 `71d32635e461d14f0edd03b6bebf1f6dcf1c6d79`.
 New Git bytes come from protected target
-`4a78362ba76da689eac75979764972f94efed9ff`, tree
-`5ab1a37524863ec5d41475d38d74af32112cf835`, and remain identical at helper-only
-base `3cddd11bf1b4350a5badd014054bf27222a5dca7`. Unix hosts use Git LF bytes.
+`9e97fa288bc4869587964a02b59390ef2d174dfa`, tree
+`9dc5bfd70c05aa2b21b9ac5d1d085ff66acbee35`. This target changes only the
+dedicated test formatting. Its raw identity is 14909 bytes with SHA256
+`734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d`.
+The other three protected Rust files retain their earlier identities.
+Unix hosts use Git LF bytes.
 Windows production sources use CRLF, while the dedicated test retains LF under
 `rust/.gitattributes` `-text`. Wrong physical bytes are refused without
 normalization. Exact old and new physical SHA256 values are in the admission.

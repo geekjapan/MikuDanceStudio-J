@@ -59,7 +59,7 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
-MMD_DYNAMICS_WORLD_SHA256 = 'bdd31e3281259d21c0a187c497191bd8d5f2e824c95069f220bb8e718978a59d'
+MMD_DYNAMICS_WORLD_SHA256 = '8d1c56ddf53ecb9329e4278dbd0c11a36b1d3504904a22e08562ea1f755589d9'
 MMD_DYNAMICS_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/' + path for path in
                                 ['mod.rs', 'mmd_collision_world.rs']}
 MMD_DYNAMICS_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
@@ -496,8 +496,8 @@ def apply_mmd_dynamics_admission(manifest, host, protected):
     admission = manifest['mmd_dynamics_world_source_admission']
     fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'MMD dynamics world admission')
     schema(admission['kind'] == 'private-mmd-dynamics-world-source-only'
-           and admission['base_head'] == '4a78362ba76da689eac75979764972f94efed9ff'
-           and admission['base_tree'] == '5ab1a37524863ec5d41475d38d74af32112cf835'
+           and admission['base_head'] == '9e97fa288bc4869587964a02b59390ef2d174dfa'
+           and admission['base_tree'] == '9dc5bfd70c05aa2b21b9ac5d1d085ff66acbee35'
            and admission['execution'] == 'UNRUN', 'fixed MMD dynamics world base and execution')
     fields(admission['hosts'], HOSTS, 'MMD dynamics world hosts')
     delta = admission['hosts'][host]

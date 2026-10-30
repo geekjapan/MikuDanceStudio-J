@@ -15,6 +15,37 @@ from test_capture import mutations
 
 
 class MmdCollisionAdmissionTests(unittest.TestCase):
+    def test_verification_git_layer_requires_exact_paths_modes_and_scope(self):
+        blobs = measured_profiles.VERIFICATION_BASE_BLOBS
+        head = '2' * 40
+        changed = dict(blobs)
+        path = 'tools/bullet-rust-gjk-pair-check/measured_profiles.py'
+        changed[path] = '3' * 40
+        def records(mapping, mode='100644'):
+            return b''.join(f'{mode} blob {blob}\t{name}\0'.encode() for name, blob in mapping.items())
+        def run(mapping, mode='100644'):
+            measured_profiles.git_verification_maps.cache_clear()
+            def git(argv):
+                if 'ls-tree' in argv:
+                    return records(blobs) if measured_profiles.VERIFICATION_BASE in argv else records(mapping, mode)
+                return argv[-1].encode() + b'\n'
+            with patch.object(measured_profiles.subprocess, 'check_output', side_effect=git):
+                return measured_profiles.git_verification_maps(head, 'linux-x64')
+        baseline, current = run(changed)
+        self.assertEqual(set(current), set(blobs))
+        self.assertNotEqual(baseline[path], current[path])
+        invalid = [({p: b for p, b in changed.items() if p != path}, '100644'),
+                   (dict(changed, **{'unexpected.py': '4' * 40}), '100644'),
+                   (changed, '100755'), (changed, '120000')]
+        foreign = next(p for p in blobs if p not in measured_profiles.VERIFICATION_LAYER_PATHS)
+        invalid.append((dict(changed, **{foreign: '4' * 40}), '100644'))
+        try:
+            for mapping, mode in invalid:
+                with self.subTest(mode=mode, paths=set(mapping)), self.assertRaisesRegex(ValueError, 'schema'):
+                    run(mapping, mode)
+        finally:
+            measured_profiles.git_verification_maps.cache_clear()
+
     def test_fixed_unrun_source_layer_and_physical_transport(self):
         manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
         layer = manifest['mmd_collision_world_source_admission']
@@ -650,9 +681,11 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.load_changed(change)
         for host in measured_profiles.HOSTS:
             current = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(current), 478 + len(measured_profiles.DYNAMICS_WORLD_ADDITIONS))
             self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
-                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DYNAMICS_WORLD_ADDITIONS | set(self.manifest['verification_sha256'][host]))
+                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS
+                             | measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DYNAMICS_WORLD_ADDITIONS
+                             | measured_profiles.MMD_COLLISION_WORLD_ADDITIONS
+                             | set(self.manifest['verification_sha256'][host]))
 
     def test_discrete_world_current_only_admission_refuses_identity_and_scope_drift(self):
         admission = self.manifest['discrete_world_source_admission']
@@ -754,11 +787,12 @@ class FiniteMeasurementTests(unittest.TestCase):
         self.assertNotEqual(captured, self.manifest['verification_sha256']['linux-arm64'])
 
     def test_protected_observer_stays_rejected_with_refreshed_verification(self):
-        refreshed = self.load_changed(lambda value: value['verification_sha256']['linux-arm64'].update(
-            {path: '1' * 64 for path in value['verification_sha256']['linux-arm64']}))
-        source = measured_profiles.approved_source_map(refreshed, 'linux-arm64')
+        with self.assertRaisesRegex(ValueError, 'immutable baseline verification'):
+            self.load_changed(lambda value: value['verification_sha256']['linux-arm64'].update(
+                {path: '1' * 64 for path in value['verification_sha256']['linux-arm64']}))
+        source = measured_profiles.approved_source_map(self.manifest, 'linux-arm64')
         source['tools/bullet-rust-gjk-pair-check/observe.py'] = '0' * 64
-        with patch.object(measured_profiles, 'load_manifest', return_value=refreshed):
+        with patch.object(measured_profiles, 'load_manifest', return_value=self.manifest):
             with self.assertRaisesRegex(ValueError, 'source closure'):
                 measured_profiles.validate(Path('/unused'), host=lambda: 'linux-arm64',
                     inventory=check.inventory, source_hashes=lambda: source,
@@ -891,12 +925,13 @@ class FiniteMeasurementTests(unittest.TestCase):
     def test_current_collector_and_broadphase_physical_source_refusals(self):
         current = check.source_hashes()
         current.pop(measured_profiles.MANIFEST_PATH)
-        self.assertEqual(len(current), 478 + len(measured_profiles.DYNAMICS_WORLD_ADDITIONS))
         self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, check.host()))
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
             self.assertNotIn(measured_profiles.MANIFEST_PATH, source)
-            for path in measured_profiles.REPLACEMENTS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS:
+            for path in (measured_profiles.REPLACEMENTS | measured_profiles.BROADPHASE_ADDITIONS
+                         | measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DYNAMICS_WORLD_ADDITIONS
+                         | measured_profiles.MMD_COLLISION_WORLD_ADDITIONS | measured_profiles.MMD_COLLISION_WORLD_REPLACEMENTS):
                 mutations = [dict(source, **{path: '0' * 64}),
                              {p: h for p, h in source.items() if p != path},
                              dict(source, **{'unknown.rs': source[path]})]

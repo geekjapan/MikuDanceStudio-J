@@ -1,10 +1,30 @@
 import hashlib
 import json
+import os
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+VERIFICATION_BASE = 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70'
+VERIFICATION_BASE_BLOBS = {
+    '.github/workflows/bullet-outer-gjk-host-capture.yml': 'c9b0e3155dd819ad49b0b085c735879e3fa0cf90',
+    'rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv': 'a033f5920e953595291bd0bd5b0224ef80faa616',
+    'rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs': '35fafde6cd1aa3e3a2eae1817fffb644ced576d3',
+    **{'tools/bullet-rust-gjk-pair-check/' + path: blob for path, blob in {
+        'README.md': 'c353451a3b782cbe191f1d9aa4ec2d91ac666844',
+        'check.py': '72925f3bc3801214830d7d2d950c9c589ee9ce7e',
+        'measured_profiles.py': '8506a6d9a6d629131c8c76b089fba9623df80c9f',
+        'mutations.py': '76cb81ca475a77f62957a86d178fb9462d7d72ff',
+        'native-x64-provenance.json': '9fbf529808e40dc9a1599154f1c73c6dcbcf49fc',
+        'test_capture.py': 'ce6f861bf82408cad1f10bc425e2ca136adc7ca9',
+        'test_measured_profiles.py': 'a4cef940a72d0e0fa8f936adfacbbd9d0c8376ca',
+    }.items()},
+}
+VERIFICATION_LAYER_PATHS = {'tools/bullet-rust-gjk-pair-check/' + path for path in
+                            ['README.md', 'check.py', 'measured_profiles.py', 'test_measured_profiles.py']}
 
 
 def sha(data):
@@ -83,6 +103,45 @@ def digest(value, size=64):
 
 def source_map_digest(value):
     return sha(json.dumps(value, sort_keys=True).encode('utf-8'))
+
+
+@lru_cache(maxsize=8)
+def git_verification_maps(head, host):
+    schema(digest(head, 40) and host in HOSTS, 'current verification context')
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(ROOT), *args])
+    maps = []
+    for revision in [VERIFICATION_BASE, head]:
+        entries = git('ls-tree', '-r', '-z', revision, '--', *sorted(VERIFICATION_BASE_BLOBS)).split(b'\0')
+        blobs = {}
+        for entry in filter(None, entries):
+            metadata, path = entry.decode('ascii').split('\t')
+            mode, kind, blob = metadata.split()
+            schema(mode == '100644' and kind == 'blob', 'verification regular mode')
+            blobs[path] = blob
+        schema(set(blobs) == set(VERIFICATION_BASE_BLOBS), 'verification fixed paths')
+        if revision == VERIFICATION_BASE:
+            schema(blobs == VERIFICATION_BASE_BLOBS, 'immutable verification baseline')
+        else:
+            schema({p for p in blobs if blobs[p] != VERIFICATION_BASE_BLOBS[p]} <= VERIFICATION_LAYER_PATHS,
+                   'verification layer scope')
+        physical = {}
+        for path, blob in blobs.items():
+            body = git('cat-file', 'blob', blob)
+            if host == 'windows-x64' and '/tests/' not in path:
+                body = body.replace(b'\n', b'\r\n')
+            physical[path] = sha(body)
+        maps.append(physical)
+    return maps
+
+
+def current_verification_map(manifest, host):
+    head = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode('ascii').strip()
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        schema(head == os.environ.get('GITHUB_SHA'), 'trusted checkout head')
+    baseline, current = git_verification_maps(head, host)
+    schema(manifest['verification_sha256'][host] == baseline, 'immutable baseline verification')
+    return current
 
 
 def hash_map(value, count, label):
@@ -356,7 +415,7 @@ def approved_source_map(manifest, host):
     schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
            'immutable dynamics world c23 test format admission')
     protected = apply_mmd_collision_admission(manifest, host, protected)
-    return {**protected, **manifest['verification_sha256'][host]}
+    return {**protected, **current_verification_map(manifest, host)}
 
 
 def apply_mmd_collision_admission(manifest, host, protected):

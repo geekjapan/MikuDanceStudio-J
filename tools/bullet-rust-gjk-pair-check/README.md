@@ -43,6 +43,18 @@ Each measurement records its actual evidence head, run, job, artifact, ZIP hash,
 
 `verification_sha256` describes current expected physical source bytes derived from fixed reviewed Git blobs and each path's measured LF or CRLF checkout transport. Its status is `reviewed-current-source-expectation-execution-pending`. This expectation does not claim the historical captures executed the current validator. Receipts return the selected measurement reference and separately identify the current source map and manifest. Runtime schema checks do not authenticate arbitrary artifact IDs. Admission review must resolve the recorded identities to immutable actual GitHub artifacts and members.
 
+For the MMD source layer, `verification_sha256` retains the immutable f6 baseline.
+Current verification identities come from the checkout's Git HEAD blobs for the
+same ten paths. Hosted execution requires HEAD to equal `GITHUB_SHA`. The fixed
+f6 blob map anchors the baseline. Only this tool's `README.md`, `check.py`,
+`measured_profiles.py`, and `test_measured_profiles.py` may differ in that map.
+All ten Git entries and every collected physical source must retain regular,
+nonexecutable file modes. Missing paths, extra paths, unexpected verification
+changes, and physical content drift are rejected. Windows transport remains
+CRLF except for the retained LF test paths. Current receipts contain the layered
+map separately from the unchanged historical measurements. This source admission
+does not establish new native, replay, or MMD execution.
+
 Fresh final-head four-host capture and independent review must prove current source-before and source-after identities, the current validator, all commands and twelve streams, full same-host baselines, and 52 compiled mutants with 16 mutation-suite baselines. Historical 39-mutant and 12-baseline runs cannot fill that requirement. Pure replay of both Linux records does not establish fresh native execution in both environments. Compiler executable, linker and runtime-library byte identities remain unknown. Seven legacy whole outer-suite optimized-Python failures remain tracked separately in issue 212. Hosted preparation runs the dedicated model tests under normal Python and `-O` without treating that legacy optimized suite as passing.
 
 

@@ -1,5 +1,5 @@
 //! Altered translation of the MMD shim's Bullet 2.75 collision ownership.
-//! Public adoption remains external. See mod.rs for the zlib notice.
+//! See mod.rs for the zlib notice.
 
 use std::collections::BTreeMap;
 

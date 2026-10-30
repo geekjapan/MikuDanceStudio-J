@@ -1,5 +1,5 @@
 //! Altered translation of the MMD shim's Bullet 2.75 dynamics orchestration.
-//! Native dynamics parity and public adoption remain external. See mod.rs for the zlib notice.
+//! See mod.rs for the zlib notice.
 
 use super::discrete_dynamics_world::{DynamicsEvent, StepError};
 use super::islands::{IslandConstraint, SimulationIslands, SolverEvent};

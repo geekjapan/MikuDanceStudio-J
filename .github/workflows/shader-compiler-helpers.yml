@@ -131,14 +131,71 @@ jobs:
                       'directories': sorted(actual_dirs), 'leaves': leaves}
           def check_identity(value):
               require(value['head'] == EXPECTED_HEAD and value['tree'] == EXPECTED_TREE and not value['status'], 'Tested source identity/cleanliness mismatch')
+          def class_ids(module, stem):
+              classes = {}
+              for node in module.body:
+                  if isinstance(node, ast.ClassDef):
+                      require(node.name not in classes, 'Duplicate source class')
+                      classes[node.name] = node
+              own, bases = {}, {}
+              for name, cls in classes.items():
+                  require(not cls.decorator_list and not cls.keywords and len(cls.bases) == 1, 'Unsupported source class shape')
+                  methods = set()
+                  declared = set()
+                  for node in cls.body:
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                          require(node.name not in declared, 'Duplicate source method')
+                          declared.add(node.name)
+                          if node.name.startswith('test_'):
+                              require(isinstance(node, ast.FunctionDef) and not node.decorator_list, 'Unsupported test method shape')
+                              methods.add(node.name)
+                      else:
+                          require(not any(isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+                                          and child.id.startswith('test_') for child in ast.walk(node)), 'Nonfunction test shadow')
+                  own[name] = methods
+                  base = cls.bases[0]
+                  if isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and (base.value.id, base.attr) == ('unittest', 'TestCase'):
+                      bases[name] = None
+                  elif isinstance(base, ast.Name) and base.id in classes:
+                      bases[name] = base.id
+                  else:
+                      require(stem == 'test_run_diagnostics' and name == 'MemoryStream' and not methods
+                              and isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name)
+                              and (base.value.id, base.attr) == ('io', 'BytesIO'), 'Unknown or dynamic source base')
+                      bases[name] = False
+              resolved, visiting = {}, set()
+              def inherited(name):
+                  require(name not in visiting, 'Cyclic source inheritance')
+                  if name not in resolved:
+                      visiting.add(name)
+                      base = bases[name]
+                      require(base is not False or not own[name], 'Non-TestCase source methods')
+                      if base is False:
+                          methods = None
+                      elif base is None:
+                          methods = own[name]
+                      else:
+                          parent = inherited(base)
+                          require(parent is not None, 'Non-TestCase local base')
+                          methods = parent | own[name]
+                      visiting.remove(name)
+                      resolved[name] = methods
+                  return resolved[name]
+              physical, effective = [], []
+              for name in classes:
+                  methods = inherited(name)
+                  physical.extend(stem + '.' + name + '.' + method for method in own[name])
+                  if methods is not None:
+                      effective.extend(stem + '.' + name + '.' + method for method in methods)
+              return sorted(physical), sorted(effective)
           def definitions():
-              ids = []
+              physical, effective = [], []
               for path in sorted((SOURCE / 'tools/vkd3d-rust-probe').glob('test_*.py')):
-                  for cls in ast.parse(path.read_text()).body:
-                      if isinstance(cls, ast.ClassDef):
-                          ids.extend(path.stem + '.' + cls.name + '.' + node.name for node in cls.body
-                                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_'))
-              return sorted(ids)
+                  defined, inherited = class_ids(ast.parse(path.read_text()), path.stem)
+                  physical.extend(defined)
+                  effective.extend(inherited)
+              require(len(physical) == 247 and len(set(physical)) == 247, 'Expected exact 247 physical source definitions')
+              return sorted(physical), sorted(effective)
           def flatten(suite):
               for item in suite:
                   if isinstance(item, unittest.TestSuite):
@@ -174,9 +231,10 @@ jobs:
                       with zipfile.ZipFile(path) as archive:
                           inventory = [{'name': i.filename, 'bytes': i.file_size, 'crc': i.CRC, 'external_attr': i.external_attr} for i in archive.infolist()]
                       write(name + '-zip-inventory.json', {'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'members': inventory})
-              expected = definitions()
-              record['source_definition_ids'] = expected
-              require(len(expected) == 247 and len(set(expected)) == 247, 'Expected exact 247 source definitions')
+              physical, expected = definitions()
+              record['source_definition_ids'] = physical
+              record['source_effective_ids'] = expected
+              require(len(expected) == 259 and len(set(expected)) == 259, 'Expected exact 259 effective test IDs from 247 source definitions')
               os.chdir(SOURCE)
               suite = unittest.defaultTestLoader.discover('tools/vkd3d-rust-probe', pattern='test_*.py')
               discovered = list(flatten(suite))
@@ -190,8 +248,8 @@ jobs:
                             skips=[{'id': t.id(), 'reason': reason} for t, reason in result.skipped],
                             expected_failures=[{'id': t.id(), 'traceback': tb} for t, tb in result.expectedFailures],
                             unexpected_successes=[t.id() for t in result.unexpectedSuccesses])
-              require(result.wasSuccessful() and result.testsRun == 247 and sorted(result.successes) == expected
-                      and not result.skipped and not result.expectedFailures, 'Full helper suite did not pass all 247 tests')
+              require(result.wasSuccessful() and result.testsRun == 259 and sorted(result.successes) == expected
+                      and not result.skipped and not result.expectedFailures, 'Full helper suite did not pass all 259 tests')
               record['status'], record['exit_code'] = 'passed', 0
           except BaseException:
               record['status'] = 'failed'

@@ -303,7 +303,7 @@ def capture(out, authority_path):
                      inputs=[control_source, control_runtime], outputs=[control_exe])
         control_rows = [line.split() for line in schedule.run('rust-ledger-control-run', [control_exe], cwd=cwd,
                                                              inputs=[control_exe]).decode('ascii').splitlines()]
-        require(control_rows[0] == ['FH', '3', 'rust-observed', 'ordinary', '0' * 64, '1'], 'control exact header')
+        require(control_rows[0] == ['FH', '3', 'rust-observed', 'ordinary', '0' * 64, '3'], 'control exact header')
         require([row[3] for row in control_rows if row[0] == 'FW'] == ['PLANE_BOTH', 'VELOCITY_DIR1', 'FIXTURE_W'],
                 'control actual branch writers and retention')
         require(len([row for row in control_rows if row[0] == 'FP']) == 4

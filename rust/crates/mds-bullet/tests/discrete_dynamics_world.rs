@@ -82,16 +82,44 @@ fn dynamics_world_gravity_once_and_forces_clear_after_outer_call() {
 fn dynamics_world_zero_substep_synchronizes_motion_and_hash() {
     let mut w = world();
     let body = w.create_body(sphere(0.0, 10.0, 1.0)).unwrap();
+    w.set_gravity(Vec3([0.0, -8.0, 0.0])).unwrap();
     w.step_simulation(0.125, 0, 0.03125, |_| {}).unwrap();
+    w.set_public_transform(body, sphere(0.0, 10.0, 1.0).pose)
+        .unwrap();
     let before = w.state_hash();
     let current = w.collision().objects().bodies()[0].snapshot();
-    assert_eq!(w.step_simulation(0.0, 1, 1.0, |_| {}), Ok(0));
-    assert_eq!(w.public_transform(body).unwrap(), current.world);
-    assert_ne!(before, w.state_hash());
+    assert_eq!(current.world.origin, Vec3([0.0, 10.0, 0.0]));
+    assert_eq!(current.interpolation_world, current.world);
+    assert_eq!(current.interpolation_linear_velocity, Vec3([0.0, -1.0, 0.0]));
+    let mut clock = None;
     assert_eq!(
-        w.collision().objects().bodies()[0].snapshot().world,
-        current.world
+        w.step_simulation(0.0, 1, 1.0, |event| {
+            if let DynamicsEvent::Clock(step) = event {
+                clock = Some(step);
+            }
+        }),
+        Ok(0)
     );
+    let clock = clock.unwrap();
+    assert_eq!(clock.requested, 0);
+    assert_eq!(clock.executed, 0);
+    assert_eq!(clock.remainder, 0.125);
+    let motion = w.public_transform(body).unwrap();
+    assert_eq!(motion.origin, Vec3([0.0, 9.875, 0.0]));
+    assert_eq!(motion.basis, current.world.basis);
+    assert_ne!(before, w.state_hash());
+    let after = w.collision().objects().bodies()[0].snapshot();
+    assert_eq!(after.world, current.world);
+    assert_eq!(after.interpolation_world, current.interpolation_world);
+    assert_eq!(after.linear_velocity, current.linear_velocity);
+    assert_eq!(
+        after.interpolation_linear_velocity,
+        current.interpolation_linear_velocity
+    );
+    let synchronized = w.state_hash();
+    assert_eq!(w.step_simulation(0.0, 1, 1.0, |_| {}), Ok(0));
+    assert_eq!(w.public_transform(body).unwrap(), motion);
+    assert_eq!(w.state_hash(), synchronized);
 }
 
 #[test]

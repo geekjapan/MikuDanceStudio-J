@@ -18,7 +18,7 @@ class DynamicsControls(unittest.TestCase):
         for row, command in zip(self.rows, self.inputs.splitlines()):
             if command.startswith('N '):
                 self.assertEqual(len(row['clock']), 4)
-                self.assertEqual(sum(event[0] == 'A' for event in row['schedule']), 1)
+                self.assertEqual(sum(event[0] == 'A' for event in row['schedule']), int(row['clock'][1]))
         self.assertTrue(any(row['workspace'] for row in self.rows))
 
     def test_missing_extra_order_and_global_schedule_indices_refused(self):
@@ -44,6 +44,40 @@ class DynamicsControls(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotEqual(comparison(self.rows), comparison(changed))
                 self.assertTrue(any(a[field] != b[field] for a, b in zip(self.rows, changed) for field in semantic_fields(name)))
+
+    def test_zero_time_pose_reset_has_motion_and_hash_witness_without_velocity_changes(self):
+        from evidence import semantic_fields
+        from test_evidence import traces
+        from cases import floats
+        case = next(case for case in self.cases if case['name'] == 'zero-step-motion-and-forces')
+        commands = self.inputs.splitlines()
+        reset = case['end'] - 3
+        self.assertEqual(commands[reset], 'T 0 ' + floats([0, 10, 0, 0, 0, 0, 1]))
+        self.assertEqual(commands[reset+1:case['end']], ['N 00000000 1 3f800000'] * 2)
+        mutant = validate(traces(self.inputs, 'ordinary', False, mutation='zero-step-sync')[0], self.inputs)
+        fields = semantic_fields('zero-step-sync')
+        self.assertEqual(fields, ['bodies', 'result'])
+        before, after, repeat = self.rows[reset:reset+3]
+        self.assertNotEqual(before['bodies'], after['bodies'])
+        self.assertNotEqual(before['result'][1], after['result'][1])
+        for field in ['bodies', 'result', 'dynamics']:
+            self.assertEqual(after[field], repeat[field])
+        self.assertEqual(self.rows[reset-1]['dynamics'], before['dynamics'])
+        self.assertEqual(before['dynamics'], after['dynamics'])
+        self.assertEqual(after['dynamics'], mutant[reset+1]['dynamics'])
+        for row in [before, after, repeat, mutant[reset+1]]:
+            state_hash = 1469598103934665603
+            for body, dynamics in zip(row['bodies'], row['dynamics']):
+                words = body[30:42] + [dynamics[15], dynamics[19], '00000000']
+                for word in words:
+                    for byte in bytes.fromhex(word)[::-1]:
+                        state_hash = ((state_hash ^ byte) * 1099511628211) & ((1 << 64)-1)
+            self.assertEqual(row['result'][1], state_hash)
+        self.assertTrue(all(after[field] != mutant[reset+1][field] for field in fields))
+        w_only = validate(self.raw, self.inputs)
+        w_only[reset+1]['dynamics'][0][22] = '3f800000'
+        self.assertNotEqual(comparison(self.rows), comparison(w_only))
+        self.assertFalse(any(a[field] != b[field] for a, b in zip(self.rows, w_only) for field in fields))
 
 
 if __name__ == '__main__':

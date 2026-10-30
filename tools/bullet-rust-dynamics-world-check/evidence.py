@@ -573,7 +573,7 @@ def captured_path(value, context):
 
 
 def semantic_fields(name):
-    return ['result'] if name == 'executed-return' else ['workspace'] if name in {'workspace-group-reset','workspace-step-reset'} else ['schedule'] if name in {'pair-owner','contact-only-union'} else ['contacts'] if name == 'missing-impulse-writeback' else ['dynamics']
+    return ['bodies', 'result'] if name == 'zero-step-sync' else ['result'] if name == 'executed-return' else ['workspace'] if name in {'workspace-group-reset','workspace-step-reset'} else ['schedule'] if name in {'pair-owner','contact-only-union'} else ['contacts'] if name == 'missing-impulse-writeback' else ['dynamics']
 
 
 def command_receipts(commands):

@@ -157,3 +157,5 @@ reference remains unchanged. Receipts add only current-source format metadata.
 Execution remains `UNRUN`. Fresh exact-head formatting, lint, full helpers,
 native/replay destinations and affected CI still require hosted execution and
 independent acceptance.
+
+Schema 10 adds one immutable `dynamics_world_c23_repair_admission` after the complete schema 9 format layer and before current verification. Its base is `c23bdf22be1de8a25db62c0be758b8aa93f0cc7e`, tree `5aa95cc9f23054b68b4a7055d2995a044c74923e`. It replaces exactly the collision owner's borrowed tuple signature and the dedicated dynamics test. Core source uses Windows CRLF; test source retains binary LF. All four maps retain 480 members. The layer is source-only with execution `UNRUN`. Historical admissions, all measured numerics and compiler identities remain unchanged. Dynamics helper source and protocol changes have their separate source proof; this GJK layer grants no producer or execution waiver.

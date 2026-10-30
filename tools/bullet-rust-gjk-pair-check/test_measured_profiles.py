@@ -43,7 +43,10 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
                 self.assertNotIn(b'\r', raw)
                 physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
                 self.assertEqual(source[path], measured_profiles.sha(physical))
-                self.assertEqual(identity['new_sha256'], source[path])
+                if path in measured_profiles.DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS:
+                    self.assertEqual(identity['new_sha256'], self.manifest['dynamics_world_c23_repair_admission']['hosts'][host]['replacements'][path]['old_sha256'])
+                else:
+                    self.assertEqual(identity['new_sha256'], source[path])
             data = {'source-head.txt': b'1' * 40 + b'\n',
                     'full-rust-result.json': b'{"status":"passed","returncode":0}'}
             data.update({name: json.dumps(command).encode() for name, command in profile['commands'].items()})
@@ -66,6 +69,10 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
                 self.assertEqual(receipt['current_source']['dynamics_world_format_admission'],
                                  {name: value for name, value in layer.items() if name != 'hosts'})
                 self.assertNotIn('dynamics_world_format_admission', receipt['measurement_reference'])
+                repair = self.manifest['dynamics_world_c23_repair_admission']
+                self.assertEqual(receipt['current_source']['dynamics_world_c23_repair_admission'],
+                                 {name: value for name, value in repair.items() if name != 'hosts'})
+                self.assertNotIn('dynamics_world_c23_repair_admission', receipt['measurement_reference'])
 
     def test_exact_scope_metadata_and_composed_old_identity_refusals(self):
         key = 'dynamics_world_format_admission'
@@ -132,6 +139,94 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
             measured_profiles.load_manifest(SimpleNamespace(read_text=lambda: json.dumps(value)))
         for host in measured_profiles.HOSTS:
             with self.assertRaisesRegex(ValueError, 'immutable dynamics world format admission'):
+                measured_profiles.approved_source_map(value, host)
+
+
+
+class DynamicsC23RepairAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
+
+    def test_complete_physical_projection_and_historical_links(self):
+        layer = self.manifest['dynamics_world_c23_repair_admission']
+        self.assertEqual(measured_profiles.source_map_digest(layer), measured_profiles.DYNAMICS_WORLD_C23_REPAIR_SHA256)
+        self.assertEqual(layer['execution'], 'UNRUN')
+        for host in measured_profiles.HOSTS:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            self.assertEqual(len(source), 480)
+            replacements = layer['hosts'][host]['replacements']
+            self.assertEqual(set(replacements), measured_profiles.DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS)
+            for path, identity in replacements.items():
+                previous = (self.manifest['dynamics_world_format_admission']['hosts'][host]['replacements'][path]['new_sha256']
+                            if '/tests/' in path else self.manifest['dynamics_world_source_admission']['hosts'][host]['replacements'][path]['new_sha256'])
+                self.assertEqual(identity['old_sha256'], previous)
+                raw = (check.ROOT / path).read_bytes()
+                self.assertNotIn(b'\r', raw)
+                physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
+                self.assertEqual(identity['new_sha256'], measured_profiles.sha(physical))
+                self.assertEqual(source[path], identity['new_sha256'])
+
+    def test_closed_schema_scope_and_composed_old_identity_refusals(self):
+        key = 'dynamics_world_c23_repair_admission'
+        for host in measured_profiles.HOSTS:
+            path = sorted(measured_profiles.DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS)[0]
+            def layer(value): return value[key]
+            def delta(value): return layer(value)['hosts'][host]
+            def identity(value): return delta(value)['replacements'][path]
+            changes = [lambda v: v.update(schema_version=9),
+                       lambda v: layer(v).update(kind='other'),
+                       lambda v: layer(v).update(base_head='0' * 40),
+                       lambda v: layer(v).update(base_tree='0' * 40),
+                       lambda v: layer(v).update(execution='PASS'),
+                       lambda v: layer(v).update(extra={}),
+                       lambda v: layer(v)['hosts'].pop(host),
+                       lambda v: layer(v)['hosts'].update(extra={}),
+                       lambda v: delta(v).update(additions={}),
+                       lambda v: delta(v)['replacements'].pop(path),
+                       lambda v: delta(v)['replacements'].update({measured_profiles.MANIFEST_PATH: identity(v).copy()}),
+                       lambda v: identity(v).update(old_sha256='0' * 64),
+                       lambda v: identity(v).update(new_sha256=identity(v)['old_sha256']),
+                       lambda v: identity(v).update(new_sha256='Z' * 64),
+                       lambda v: identity(v).update(extra={})]
+            for field in ['kind', 'base_head', 'base_tree', 'execution', 'hosts']:
+                changes.append(lambda v, field=field: layer(v).pop(field))
+            for field in ['old_sha256', 'new_sha256']:
+                changes.append(lambda v, field=field: identity(v).pop(field))
+            for change in changes:
+                value = copy.deepcopy(self.manifest)
+                change(value)
+                with self.subTest(host=host, change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                    measured_profiles.load_manifest(SimpleNamespace(read_text=lambda: json.dumps(value)))
+                if value['schema_version'] == 10:
+                    with self.subTest(composed=host, change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                        measured_profiles.approved_source_map(value, host)
+
+    def test_rollback_transport_body_and_coordinated_hash_refusals(self):
+        for host in measured_profiles.HOSTS:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            replacements = self.manifest['dynamics_world_c23_repair_admission']['hosts'][host]['replacements']
+            for path, identity in replacements.items():
+                raw = (check.ROOT / path).read_bytes()
+                physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
+                bodies = [physical + b' ', physical + b'// unauthorized\n',
+                          physical.replace(b'0', b'1', 1),
+                          raw.replace(b'\n', b'\r\n') if '/tests/' in path or host != 'windows-x64' else raw,
+                          physical.replace(b'\n', b'\r\n', 1)]
+                for digest in [identity['old_sha256']] + [measured_profiles.sha(body) for body in bodies]:
+                    self.assertNotEqual(digest, source[path])
+                    changed = dict(source, **{path: digest})
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=check.inventory,
+                            source_hashes=lambda: changed, stream=check.stream, transport=check.transport)
+        value = copy.deepcopy(self.manifest)
+        for host in measured_profiles.HOSTS:
+            for identity in value['dynamics_world_c23_repair_admission']['hosts'][host]['replacements'].values():
+                identity['new_sha256'] = '0' * 64
+            value['verification_sha256'][host] = {path: '1' * 64 for path in value['verification_sha256'][host]}
+        with self.assertRaisesRegex(ValueError, 'immutable dynamics world c23 repair admission'):
+            measured_profiles.load_manifest(SimpleNamespace(read_text=lambda: json.dumps(value)))
+        for host in measured_profiles.HOSTS:
+            with self.assertRaisesRegex(ValueError, 'immutable dynamics world c23 repair admission'):
                 measured_profiles.approved_source_map(value, host)
 
 
@@ -425,7 +520,17 @@ class FiniteMeasurementTests(unittest.TestCase):
         for path in measured_profiles.DISCRETE_WORLD_ADDITIONS:
             raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
             windows = raw if '/tests/' in path else raw.replace(b'\n', b'\r\n')
-            self.assertEqual(self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else admission['hosts']['windows-x64']['additions'][path], measured_profiles.sha(windows))
+            current = measured_profiles.approved_source_map(self.manifest, 'windows-x64')
+            historical = admission['hosts']['windows-x64']['additions'][path]
+            if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS:
+                dynamics = self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]
+                self.assertEqual(historical, dynamics['old_sha256'])
+                repair = self.manifest['dynamics_world_c23_repair_admission']['hosts']['windows-x64']['replacements'][path]
+                self.assertEqual(dynamics['new_sha256'], repair['old_sha256'])
+                self.assertEqual(repair['new_sha256'], current[path])
+            else:
+                self.assertEqual(historical, current[path])
+            self.assertEqual(current[path], measured_profiles.sha(windows))
         for field in admission:
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'schema'):
                 self.load_changed(lambda value: value['discrete_world_source_admission'].pop(field))
@@ -544,7 +649,8 @@ class FiniteMeasurementTests(unittest.TestCase):
             self.assertEqual(set(old),historical | measured_profiles.ADDITIONS)
             replacements={measured_profiles.REGISTRATION_FORMAT['path']}
             for layer in ['broadphase_source_admission','discrete_world_source_admission',
-                          'dynamics_world_source_admission','dynamics_world_format_admission']:
+                          'dynamics_world_source_admission','dynamics_world_format_admission',
+                          'dynamics_world_c23_repair_admission']:
                 replacements.update(self.manifest[layer]['hosts'][host]['replacements'])
             expected=replacements & historical
             self.assertEqual(expected,measured_profiles.REPLACEMENTS | {

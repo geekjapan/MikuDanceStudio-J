@@ -34,6 +34,9 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+DYNAMICS_WORLD_C23_REPAIR_SHA256 = '803c1e31e1bfbcfc805f0559c00bbd2f76a0101a76c603d29922150cb39e03ee'
+DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
+                                           ['src/core/discrete_collision_world.rs', 'tests/discrete_dynamics_world.rs']}
 DYNAMICS_WORLD_FORMAT_SHA256 = 'afff937521417b8c762b4c485417b374be72f26499fb71294cc85b741f658128'
 DYNAMICS_WORLD_SHA256 = 'a978d073cff65ea0f017924e245697202bf8763eef79895bf1e2b5ee5c407c06'
 DYNAMICS_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
@@ -103,8 +106,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 9, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 10, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -188,6 +191,8 @@ def load_manifest(path):
            'immutable dynamics world source admission')
     schema(source_map_digest(manifest['dynamics_world_format_admission']) == DYNAMICS_WORLD_FORMAT_SHA256,
            'immutable dynamics world format admission')
+    schema(source_map_digest(manifest['dynamics_world_c23_repair_admission']) == DYNAMICS_WORLD_C23_REPAIR_SHA256,
+           'immutable dynamics world c23 repair admission')
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
@@ -304,6 +309,24 @@ def approved_source_map(manifest, host):
         protected[path] = identity['new_sha256']
     schema(source_map_digest(admission) == DYNAMICS_WORLD_FORMAT_SHA256,
            'immutable dynamics world format admission')
+    admission = manifest['dynamics_world_c23_repair_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world c23 repair admission')
+    schema(admission['kind'] == 'private-dynamics-world-c23-repair-source-only'
+           and admission['base_head'] == 'c23bdf22be1de8a25db62c0be758b8aa93f0cc7e'
+           and admission['base_tree'] == '5aa95cc9f23054b68b4a7055d2995a044c74923e'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world c23 repair base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world c23 repair hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements'}, 'dynamics world c23 repair delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS, 'dynamics world c23 repair replacements')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world c23 repair replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world c23 repair old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world c23 repair new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_REPAIR_SHA256,
+           'immutable dynamics world c23 repair admission')
     return {**protected, **manifest['verification_sha256'][host]}
 
 
@@ -387,6 +410,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['dynamics_world_source_admission'].items() if name != 'hosts'},
                 'dynamics_world_format_admission': {name: value for name, value in
                     manifest['dynamics_world_format_admission'].items() if name != 'hosts'},
+                'dynamics_world_c23_repair_admission': {name: value for name, value in
+                    manifest['dynamics_world_c23_repair_admission'].items() if name != 'hosts'},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

@@ -328,7 +328,7 @@ def bound_preflight(value):
             for char in item:
                 code=ord(char)
                 bound_check(not 0xd800<=code<=0xdfff,'bounded UTF-8 string')
-                charge(12 if code>0xffff else 6 if code>127 or code<32 and char not in '\b\f\n\r\t' else
+                charge(12 if code>0xffff else 6 if code>=127 or code<32 and char not in '\b\f\n\r\t' else
                        2 if char in '\"\\\b\f\n\r\t' else 1)
         else:
             bound_check(kind in (type(None),bool,int,float),'bounded document scalar type')
@@ -516,6 +516,7 @@ def admit_bound_document(binding_name,inventory,read):
                     try:tag,part=next(stream)
                     except StopIteration:raise ValueError('missing string fragment')
                     require(tag=='fragment' and type(part) is str and 0<len(part)<=32 and length+len(part)<=value,'ordered string fragment')
+                    require(not any(0xd800<=ord(char)<=0xdfff for char in part),'bounded UTF-8 string fragment')
                     chunks.append(part);length+=len(part)
                 result=''.join(chunks)
             elif kind=='array':result=[restore(depth+1) for _ in range(value)]

@@ -2550,6 +2550,40 @@ class BoundedDocumentControls(unittest.TestCase):
             _,files,inventory=self.fixture(scalar)
             self.assertEqual(self.admit(files,inventory),scalar)
 
+    def test_bound_unicode_scalar_controls(self):
+        for value in ('\U00010000',{'\U00010000':'😀'}):
+            _,files,inventory=self.fixture(value)
+            self.assertEqual(self.admit(files,inventory),value)
+        peers=[(b'"\\ud800"\n',[['string',1],['fragment','\ud800']]),
+               (b'"\\udfff"\n',[['string',1],['fragment','\udfff']]),
+               (b'{\n  "\\ud800": 1\n}\n',
+                [['object',1],['string',1],['fragment','\ud800'],['scalar',1]]),
+               (b'"\\ud800\\udc00"\n',
+                [['string',2],['fragment','\ud800'],['fragment','\udc00']])]
+        for raw,records in peers:
+            with self.subTest(raw=raw):
+                _,files,inventory=self.fixture('a')
+                files['manifest.json']=raw
+                inventory['manifest.json']={'size':len(raw),'sha256':r.digest(raw)}
+                page=next(n for n in files if '.pages/' in n)
+                body=r.bound_json(files[page]);body['records']=records
+                self.replace(files,inventory,page,body)
+                index=r.bound_json(files['manifest.json.binding.json'])
+                index['original'].update(inventory['manifest.json'])
+                self.replace(files,inventory,'manifest.json.binding.json',index)
+                self.assertEqual(index['original'],dict(name='manifest.json',**inventory['manifest.json']))
+                for name,body in files.items():
+                    self.assertEqual(inventory[name],{'size':len(body),'sha256':r.digest(body)})
+                with self.assertRaisesRegex(ValueError,'bounded UTF-8 string fragment'):
+                    self.admit(files,inventory)
+
+    def test_bound_preflight_del_serialized_size(self):
+        for value in ('\x7e','\x7f','\x80',{'\x7f':'\x7f'}):
+            with self.subTest(value=value):
+                self.assertGreaterEqual(r.bound_preflight(value),len(r.bound_bytes(value)))
+        self.assertEqual(r.bound_bytes('\x7f'),b'"\\u007f"\n')
+        self.assertEqual(r.bound_preflight('\x7f'),9)
+
     def test_bound_inventory_same_bytes_before_any_page_parse(self):
         for kind in ('missing','extra','size','sha','bytes','original','original-newline','alias','case-alias','slash-alias'):
             _,files,inventory=self.fixture();page=next(n for n in files if '.pages/' in n)

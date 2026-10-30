@@ -168,8 +168,10 @@ def synthetic_packet_fixture(root):
         path.write_bytes(value if isinstance(value, bytes) else json.dumps(value).encode())
     typ = {'canonical': {'kind': 'Int'}, 'const': False, 'volatile': False, 'restrict': False}
     symbol = lambda i: {'linker': 'function_' + str(i)}
-    commands = [{'file': '/native/' + unit, 'directory': '/native',
-                 'arguments': ['/usr/lib/llvm-18/bin/clang', '-DHAVE_CONFIG_H', '-I/native/include', '-c', '/native/' + unit]} for unit in UNITS]
+    native_root = root.parent / 'native'
+    commands = [{'file': str(native_root / unit), 'directory': str(native_root),
+                 'arguments': ['/usr/lib/llvm-18/bin/clang', '-DHAVE_CONFIG_H', '-I' + str(native_root / 'include'),
+                               '-c', str(native_root / unit)]} for unit in UNITS]
     buffers = b'"%d"'
     checksum = F.sha(buffers)
     position = dict(path='', buffer_sha256=checksum, begin=0, end=4, bytes_hex=buffers.hex())
@@ -194,8 +196,14 @@ def synthetic_packet_fixture(root):
             plan['symbols'][target]['calls'].append({'unit': commands[index]['file'], 'expression': call_id})
             n += 1
     native_files = {}
+    header = native_root / 'include/fixture.h'
+    header.parent.mkdir(parents=True)
+    header.write_bytes(buffers)
+    native_files[str(header)] = checksum
     for index, command in enumerate(commands):
         unit = command['file']
+        Path(unit).parent.mkdir(parents=True, exist_ok=True)
+        Path(unit).write_bytes(buffers)
         position['path'] = unit
         native_files[unit] = checksum
         rows, definitions, variables, statements, expressions, events = [], [], [], [], [], []
@@ -251,18 +259,21 @@ def synthetic_packet_fixture(root):
             expressions.append({'id': raw['id'] + 3, 'kind': 'reference', 'decl': target + 1,
                                 'children': [], 'location': location, 'type_id': 1, 'promotion_chain': [typ]})
             events.append({'expression': raw['id'], 'builtin': None, 'callee_declaration': target + 1, 'operands': args, 'relation': unresolved})
-        native = {'schema': 2, 'main_input': unit, 'cwd': '/native', 'adjusted_driver_argv': command['arguments'] + ['-fno-builtin-strlen', '-fparse-all-comments', '-Wwrite-strings',
+        native = {'schema': 2, 'main_input': unit, 'cwd': str(native_root), 'adjusted_driver_argv': command['arguments'] + ['-fno-builtin-strlen', '-fparse-all-comments', '-Wwrite-strings',
                       '-D_FORTIFY_SOURCE=0', '-DC2RUST=1', '-resource-dir=/usr/lib/llvm-18/bin/../lib/clang/18', '-fsyntax-only'],
                   'regenerated_cc1_argv': ['-x', 'c', unit, '-triple', 'x86_64-pc-linux-gnu', '-resource-dir',
-                      '/usr/lib/llvm-18/bin/../lib/clang/18', '-fdebug-compilation-dir=/native'], 'target': 'x86_64-pc-linux-gnu', 'cpu': '', 'abi': '',
+                      '/usr/lib/llvm-18/bin/../lib/clang/18', '-fdebug-compilation-dir=' + str(native_root)], 'target': 'x86_64-pc-linux-gnu', 'cpu': '', 'abi': '',
                   'features': [], 'features_as_written': [], 'vfs': 'clangtool_empty_overlay_on_real_filesystem',
-                  'unsupported': [], 'lexer_events': [{'file_id': str(i), 'reason': 'enter', 'characteristic': 0} for i in (1, 2)],
+                  'unsupported': [], 'lexer_events': [{'file_id': str(i), 'reason': 'enter', 'characteristic': 0} for i in (1, 2, 3)],
                   'buffers': [{'role': 'main', 'identifier': unit, 'physical_path': unit, 'aliases': [unit],
                                'native_device': '1', 'native_file': '1', 'length': len(buffers), 'bytes_hex': buffers.hex(),
                                'sha256': checksum, 'lexed': True, 'lexer_file_ids': ['1']},
                               {'role': 'predefines', 'identifier': '<built-in>', 'physical_path': '', 'aliases': [],
                                'native_device': '0', 'native_file': '0', 'length': 0, 'bytes_hex': '', 'sha256': F.sha(b''),
-                               'lexed': True, 'lexer_file_ids': ['2']}]}
+                               'lexed': True, 'lexer_file_ids': ['2']},
+                              {'role': 'file', 'identifier': str(header), 'physical_path': str(header), 'aliases': [str(header)],
+                               'native_device': '1', 'native_file': '3', 'length': len(buffers), 'bytes_hex': buffers.hex(),
+                               'sha256': checksum, 'lexed': True, 'lexer_file_ids': ['3']}]}
         widths = dict(char=8, short=16, int=32, long=64, long_long=64, pointer=64, float=32, double=64)
         inventory = {'unit': unit, 'target': native['target'], 'target_c_widths_bits': widths,
                      'declarations': rows, 'calls': raw_calls}
@@ -343,8 +354,10 @@ class ClosedFormatFactsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.directory.name)
+        cls.root = Path(cls.directory.name) / 'closed-format-facts'
+        cls.root.mkdir()
         cls.packet = synthetic_packet_fixture(cls.root)
+        cls.trusted = F.replay(cls.root, trusted_handoff=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -437,44 +450,186 @@ class ClosedFormatFactsTests(unittest.TestCase):
                 F.packet_pairs(packet, commands)
 
     def test_common_authority_admission_uses_current_sources_and_opaque_full_facts(self):
-        names = ['packet.json', 'compile_commands.json', 'native-files.json']
-        names += [pair['authority'] for pair in self.packet['units']]
-        saved = {name: (self.root / name).read_bytes() for name in names}
         with tempfile.TemporaryDirectory() as directory:
-            current = Path(directory)
-            packet = copy.deepcopy(self.packet)
-            commands, sources = [], {}
-            for pair, relative in zip(packet['units'], UNITS):
-                path = current / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b'int current_source;\n')
-                unit = str(path)
-                commands.append(dict(directory=str(current), file=unit, arguments=['clang', '-c', unit]))
-                sources[unit] = F.sha(path.read_bytes())
-                pair['unit'] = unit
-                authority = F.loads((self.root / pair['authority']).read_bytes())
-                authority['unit'] = unit
-                (self.root / pair['authority']).write_text(json.dumps(authority))
-                pair['files']['authority'] = F.sha((self.root / pair['authority']).read_bytes())
+            handoff = Path(directory) / 'trusted.json'
+            raw = F.handoff_bytes(self.trusted)
+            handoff.write_bytes(raw)
+            commands = F.loads((self.root / 'compile_commands.json').read_bytes())
+            tool = self.root / 'tool/bin/c2rust-transpile'
+            decoder = F.loads
+            def metadata_only(data):
+                self.assertNotIn(b'"CompleteReport"', data)
+                return decoder(data)
+            with patch.object(F, 'loads', side_effect=metadata_only):
+                admitted, before = F.authority_packet(self.root, commands, tool, handoff, len(raw), F.sha(raw))
+            self.assertEqual(len(admitted['units']), len(UNITS))
+            self.assertTrue(F.same(before, self.trusted['manifest']))
+            path = Path(commands[0]['file'])
+            original = path.read_bytes()
             try:
-                for name, value in [('packet.json', packet), ('compile_commands.json', commands), ('native-files.json', sources)]:
-                    (self.root / name).write_text(json.dumps(value))
-                (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
-                tool = self.root / 'tool/bin/c2rust-transpile'
-                decoder = F.loads
-                def metadata_only(raw):
-                    self.assertNotIn(b'"CompleteReport"', raw)
-                    return decoder(raw)
-                with patch.object(F, 'loads', side_effect=metadata_only):
-                    admitted, _ = F.authority_packet(self.root, commands, tool)
-                self.assertEqual(len(admitted['units']), len(UNITS))
                 path.write_bytes(b'int late_source;\n')
                 with self.assertRaisesRegex(F.FactsError, 'current native source'):
-                    F.authority_packet(self.root, commands, tool)
+                    F.authority_packet(self.root, commands, tool, handoff, len(raw), F.sha(raw))
             finally:
-                for name, raw in saved.items():
-                    (self.root / name).write_bytes(raw)
-                (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+                path.write_bytes(original)
+
+    def test_trusted_handoff_rejects_independently_resealed_packet_drift(self):
+        pair = self.packet['units'][0]
+        names = ['packet.json', 'compile_commands.json', 'native-files.json', pair['facts'],
+                 pair['authority'], pair['cbor'], pair['typed_ast'], 'tool/bin/c2rust-transpile']
+        saved = {name: (self.root / name).read_bytes() for name in names}
+        with tempfile.TemporaryDirectory() as directory:
+            handoff = Path(directory) / 'trusted.json'
+            raw = F.handoff_bytes(self.trusted)
+            handoff.write_bytes(raw)
+            commands = F.loads(saved['compile_commands.json'])
+            tool = self.root / 'tool/bin/c2rust-transpile'
+            def argv_only(data):
+                data['compile_commands.json'][0]['arguments'].insert(1, '-DRESEALED_ARGV_ONLY=1')
+            def remap(data):
+                old = data['packet.json']['units'][0]['unit']
+                new = old.replace('/native/', '/remapped/')
+                data['packet.json']['units'][0]['unit'] = new
+                data['compile_commands.json'][0]['file'] = new
+                data[pair['authority']]['unit'] = new
+                data[pair['authority']]['compiler_session']['raw_cbor_sha256'] = '0' * 64
+            def omit_header(data):
+                del data['native-files.json'][str(self.root.parent / 'native/include/fixture.h')]
+            changes = [argv_only, remap, omit_header,
+                       lambda d: d.update({'tool/bin/c2rust-transpile': b'changed compiler'}),
+                       lambda d: d[pair['facts']]['native_inputs']['buffers'][0].update(bytes_hex='00'),
+                       lambda d: d.update({pair['cbor']: b'changed CBOR'}),
+                       lambda d: d.update({pair['typed_ast']: b'changed typed AST'})]
+            for mutate in changes:
+                with self.subTest(change=mutate):
+                    try:
+                        data = {name: F.loads(value) if name.endswith('.json') else value for name, value in saved.items()}
+                        mutate(data)
+                        for name, value in data.items():
+                            (self.root / name).write_bytes(value if isinstance(value, bytes) else json.dumps(value).encode())
+                        packet = data['packet.json']
+                        for unit in packet['units']:
+                            unit['files'] = {role: F.sha((self.root / unit[role]).read_bytes()) for role in unit['files']}
+                        (self.root / 'packet.json').write_text(json.dumps(packet))
+                        (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+                        current = F.loads((self.root / 'compile_commands.json').read_bytes())
+                        with self.assertRaisesRegex(F.FactsError, 'trusted replay manifest differs'):
+                            F.authority_packet(self.root, current, tool, handoff, len(raw), F.sha(raw))
+                    finally:
+                        for name, value in saved.items():
+                            (self.root / name).write_bytes(value)
+                        (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+            self.assertEqual(F.authority_packet(self.root, commands, tool, handoff, len(raw), F.sha(raw))[0], self.packet)
+
+    def test_trusted_handoff_external_authentication_and_closed_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trusted.json'
+            raw = F.handoff_bytes(self.trusted)
+            path.write_bytes(raw)
+            F.read_handoff(self.root, path, len(raw), F.sha(raw))
+            for size, digest in [(None, None), (True, F.sha(raw)), (len(raw) + 1, F.sha(raw)),
+                                 (len(raw), '0' * 64), (len(raw), F.sha(raw).upper())]:
+                with self.subTest(size=size, digest=digest), self.assertRaises(F.FactsError):
+                    F.read_handoff(self.root, path, size, digest)
+            for candidate in (None, self.root / 'seal.json', Path(directory) / 'missing.json'):
+                with self.assertRaises(F.FactsError):
+                    F.read_handoff(self.root, candidate, len(raw), F.sha(raw))
+            path.write_bytes(raw + b'corruption')
+            with self.assertRaises(F.FactsError):
+                F.read_handoff(self.root, path, len(raw), F.sha(raw))
+            path.write_bytes(raw.replace(b'complete_coverage', b'changed_coverage'))
+            with self.assertRaisesRegex(F.FactsError, 'external digest'):
+                F.read_handoff(self.root, path, len(raw), F.sha(raw))
+            changes = [lambda h: h.update(schema=True), lambda h: h.update(schema=1.0),
+                       lambda h: h.update(schema=2), lambda h: h.update(kind='foreign'),
+                       lambda h: h.update(status='unchecked'), lambda h: h.update(authorization='lowering'),
+                       lambda h: h.update(extra=True), lambda h: h.pop('bindings'),
+                       lambda h: h.update(bindings={}), lambda h: h.update(native_files=[]),
+                       lambda h: h.update(manifest=[])]
+            for mutate in changes:
+                value = copy.deepcopy(self.trusted)
+                mutate(value)
+                invalid = json.dumps(value).encode()
+                path.write_bytes(invalid)
+                with self.assertRaises(F.FactsError):
+                    F.read_handoff(self.root, path, len(invalid), F.sha(invalid))
+            for invalid in (b'{"schema":1,"schema":1}', b'{"schema":NaN}', b'{"schema":Infinity}', b'{"schema":1e999}'):
+                path.write_bytes(invalid)
+                with self.assertRaises(F.FactsError):
+                    F.read_handoff(self.root, path, len(invalid), F.sha(invalid))
+
+    def test_trusted_handoff_requires_exact_typed_all24_bindings(self):
+        commands = F.loads((self.root / 'compile_commands.json').read_bytes())
+        changes = [lambda h: h['bindings'].pop(), lambda h: h['bindings'].append(h['bindings'][0]),
+                   lambda h: h['bindings'][0].update(unit='/remapped/blob.c'),
+                   lambda h: h['bindings'][0]['command']['arguments'].append('-DDRIFT'),
+                   lambda h: h['bindings'][0]['compiler_session'].update(raw_cbor_sha256='0' * 64),
+                   lambda h: h['bindings'][0].update(facts=h['bindings'][1]['facts']),
+                   lambda h: h['bindings'][0].update(extra=True),
+                   lambda h: h.update(native_files='foreign.json'),
+                   lambda h: h['manifest']['packet.json'].update(bytes=float(h['manifest']['packet.json']['bytes']))]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trusted.json'
+            for mutate in changes:
+                value = copy.deepcopy(self.trusted)
+                mutate(value)
+                raw = F.handoff_bytes(value)
+                path.write_bytes(raw)
+                with self.assertRaisesRegex(F.FactsError, 'trusted replay (manifest|unit command or session bindings) differs'):
+                    F.authority_packet(self.root, commands, self.root / 'tool/bin/c2rust-transpile',
+                                       path, len(raw), F.sha(raw))
+
+    def test_common_collection_rechecks_manifest_after_unknown_join(self):
+        import check_common_plan as common
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            handoff = Path(directory) / 'trusted.json'
+            raw = F.handoff_bytes(self.trusted)
+            handoff.write_bytes(raw)
+            database = self.root.parent / 'compile_commands.json'
+            database.write_bytes((self.root / 'compile_commands.json').read_bytes())
+            output = Path(directory) / 'common'
+            path = self.root / self.packet['units'][0]['authority']
+            original = path.read_bytes()
+            def run(command, log, **kwargs):
+                emitted = Path(command[command.index('--output-dir') + 1])
+                emitted.mkdir()
+                (emitted / 'fixture.rs').write_bytes(b'// synthetic fixture\n')
+                log.write_text('COMMON_PLAN_CLOSED 24\n' + 'COMMON_PLAN_NATIVE_EXPORT \n' * 24
+                               + 'COMMON_PLAN_TYPED_IMPORT \n' * 24 + 'COMMON_PLAN_EMIT \n' * 24)
+                return dict(exit_code=0, timed_out=False)
+            def late(reports, validation, sources):
+                self.assertEqual(len(list(reports)), 24)
+                path.write_bytes(original + b' ')
+                return {}
+            try:
+                with patch('probe.run', side_effect=run), patch.object(common, 'seal_live_report', return_value={}), \
+                     patch.object(common, 'ReportValidation') as validation, \
+                     patch.object(common, 'preserved_unknowns', side_effect=late):
+                    validation.return_value.__enter__.return_value = SimpleNamespace(sources=set())
+                    with self.assertRaisesRegex(ValueError, 'independent packet changed during unknown join'):
+                        common.collect(self.root / 'tool/bin/c2rust-transpile', database, output, 1,
+                                       handoff, len(raw), F.sha(raw))
+                self.assertFalse((output / 'report.json').exists())
+            finally:
+                path.write_bytes(original)
+
+    def test_trusted_handoff_exact_bound_and_one_over_refuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trusted.json'
+            raw = F.handoff_bytes(self.trusted)
+            exact = raw + b' ' * (F.MAX_AUTHORITY - len(raw))
+            path.write_bytes(exact)
+            F.read_handoff(self.root, path, len(exact), F.sha(exact))
+            path.write_bytes(exact + b' ')
+            with self.assertRaisesRegex(F.FactsError, 'anchor required'):
+                F.read_handoff(self.root, path, len(exact) + 1, F.sha(exact + b' '))
+            value = dict(self.trusted, native_files='')
+            value['native_files'] = 'x' * (F.MAX_AUTHORITY - len(F.handoff_bytes(value)))
+            self.assertEqual(len(F.handoff_bytes(value)), F.MAX_AUTHORITY)
+            value['native_files'] += 'x'
+            with self.assertRaisesRegex(F.FactsError, 'byte bound'):
+                F.handoff_bytes(value)
 
     def test_resealed_identity_and_coverage_controls(self):
         cases = [

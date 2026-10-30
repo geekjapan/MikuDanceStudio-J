@@ -104,7 +104,7 @@ def preserved_unknowns(reports, validation, sources):
     return dict(status='PASS', count=count, join='full_source_and_name_bytes')
 
 
-def collect(tool, database, output, timeout):
+def collect(tool, database, output, timeout, handoff, handoff_size, handoff_sha256):
     from full_compiler import UNITS, verify_cursor_tool
     from probe import run
     verify_cursor_tool(tool)
@@ -146,7 +146,7 @@ def collect(tool, database, output, timeout):
     inventory = database.parent / 'closed-format-facts/inventory-plan.json'
     from closed_format_facts import authority_packet, read_authority, manifest
     report_root = database.parent / 'closed-format-facts'
-    packet, independent_authority = authority_packet(report_root, entries, tool)
+    packet, independent_authority = authority_packet(report_root, entries, tool, handoff, handoff_size, handoff_sha256)
     (output / 'independent-report-authority.json').write_text(json.dumps(independent_authority, indent=2) + '\n')
     with ReportValidation(output / 'on', entries, authority) as validation:
         independent_unknowns = preserved_unknowns(
@@ -278,12 +278,18 @@ def main():
     parser.add_argument('--test-list', type=Path)
     parser.add_argument('--test-log', type=Path)
     parser.add_argument('--timeout', type=int, default=1800)
+    parser.add_argument('--trusted-handoff', type=Path)
+    parser.add_argument('--trusted-handoff-size', type=int)
+    parser.add_argument('--trusted-handoff-sha256')
     args = parser.parse_args()
     if args.compiler_source:
         report = check_test_receipts(args.compiler_source, args.test_list, args.test_log)
     else:
         require(args.tool and args.database and args.output, 'tool, database and output are required')
-        report = collect(args.tool.resolve(), args.database.resolve(), args.output.resolve(), args.timeout)
+        require(args.trusted_handoff and args.trusted_handoff_size and args.trusted_handoff_sha256,
+                'external trusted replay handoff, size and SHA are required')
+        report = collect(args.tool.resolve(), args.database.resolve(), args.output.resolve(), args.timeout,
+                         args.trusted_handoff, args.trusted_handoff_size, args.trusted_handoff_sha256)
     print(json.dumps(report, indent=2))
 
 

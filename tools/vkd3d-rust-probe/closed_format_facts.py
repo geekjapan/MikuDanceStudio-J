@@ -84,13 +84,56 @@ def read_authority(root, pair):
     return value
 
 
-def authority_packet(root, entries, tool):
-    """Verify opaque packet members before opening only the compact authorities."""
+def replay_binding(pair, command, session):
+    return dict(unit=pair['unit'], command=command, compiler_session=session,
+                **{role: pair[role] for role in ('facts', 'authority', 'cbor', 'typed_ast')})
+
+
+def handoff_bytes(value):
+    chunks, size = [], 1
+    for chunk in json.JSONEncoder(sort_keys=True, allow_nan=False).iterencode(value):
+        data = chunk.encode()
+        size += len(data)
+        need(size <= MAX_AUTHORITY, 'trusted replay handoff byte bound')
+        chunks.append(data)
+    return b''.join(chunks) + b'\n'
+
+
+def read_handoff(root, path, expected_size, expected_sha):
+    need(isinstance(path, Path) and not path.is_symlink()
+         and not path.resolve().is_relative_to(root.resolve()), 'trusted replay handoff must be outside packet')
+    need(type(expected_size) is int and 0 < expected_size <= MAX_AUTHORITY
+         and type(expected_sha) is str and len(expected_sha) == 64
+         and all(c in '0123456789abcdef' for c in expected_sha), 'trusted replay handoff external anchor required')
+    need(path.is_file() and path.stat().st_size == expected_size, 'trusted replay handoff external length differs')
+    with path.open('rb') as stream:
+        data = stream.read(MAX_AUTHORITY + 1)
+    need(len(data) == expected_size and sha(data) == expected_sha, 'trusted replay handoff external digest or length differs')
+    value = loads(data)
+    need(type(value) is dict and set(value) == {'schema', 'kind', 'status', 'authorization',
+         'manifest', 'native_files', 'bindings'}, 'trusted replay handoff fields differ')
+    need(same({k: value[k] for k in ('schema', 'kind', 'status', 'authorization')},
+         dict(schema=1, kind='c2rust-trusted-full-replay', status='complete_coverage', authorization='analysis_only')),
+         'trusted replay handoff schema differs')
+    need(type(value['manifest']) is dict and type(value['native_files']) is str
+         and type(value['bindings']) is list, 'trusted replay handoff types differ')
+    return value
+
+
+def authority_packet(root, entries, tool, handoff, expected_size, expected_sha):
     root = root.absolute()
+    trusted = read_handoff(root, handoff, expected_size, expected_sha)
     before = manifest(root)
+    need(same(trusted['manifest'], before), 'trusted replay manifest differs')
     need(same(loads(safe_file(root, 'seal.json').read_bytes()), before), 'packet seal differs')
     packet = loads(safe_file(root, 'packet.json').read_bytes())
     packet_pairs(packet, entries)
+    commands = {c['file']: c for c in entries}
+    bindings = [replay_binding(pair, commands[pair['unit']], {
+        'raw_cbor_sha256': pair['files']['cbor'], 'typed_ast_sha256': pair['files']['typed_ast']})
+        for pair in packet['units']]
+    need(same(trusted['bindings'], bindings) and trusted['native_files'] == packet['native_files'],
+         'trusted replay unit command or session bindings differ')
     authority_files = {pair['authority'] for pair in packet['units']}
     need({name for name in before if name.endswith('.unknown-authority.json')} == authority_files,
          'missing or extra unknown authority member')
@@ -1291,7 +1334,7 @@ def check_unit(facts, inventory, command):
     return definitions, calls, unclassified
 
 
-def replay(root):
+def replay(root, *, trusted_handoff=False):
     need(not root.is_symlink(), 'symlink packet directory')
     root = root.absolute()
     before = manifest(root)
@@ -1330,6 +1373,7 @@ def replay(root):
     native_files = read(packet['native_files'])
     observed_native_files = set()
     symbols, incoming, extras = {}, {}, {}
+    bindings = []
     need(len({u['rust_on'] for u in packet['units']}) == len(commands), 'generated TU module identity merged')
     for pair in packet['units']:
         required = {'facts', 'authority', 'inventory', 'cbor', 'typed_ast', 'rust_off', 'rust_on'}
@@ -1356,6 +1400,7 @@ def replay(root):
                 need(native_files.get(buffer['physical_path']) == buffer['sha256'], 'native source or header manifest differs')
         definitions, calls, unclassified = check_unit(facts, inventory, command_map[pair['unit']])
         need(same(read_authority(root, pair), authority_projection(facts)), 'unknown authority projection differs')
+        bindings.append(replay_binding(pair, command_map[pair['unit']], facts['compiler_session']))
         for row in definitions.values():
             symbol = key(row['symbol'])
             need(symbol not in symbols, 'duplicate compiler definition symbol')
@@ -1395,6 +1440,12 @@ def replay(root):
     need('--emit-closed-format-facts' not in off and on.count('--emit-closed-format-facts') == 1
          and [a for a in on if a != '--emit-closed-format-facts'] == off, 'paired command changes more than facts flag')
     need(manifest(root) == before, 'replay changed packet')
+    if trusted_handoff:
+        handoff = dict(schema=1, kind='c2rust-trusted-full-replay', status='complete_coverage',
+                       authorization='analysis_only', manifest=before,
+                       native_files=packet['native_files'], bindings=bindings)
+        handoff_bytes(handoff)
+        return handoff
     return {'schema': 1, 'status': 'complete_coverage', 'authorization': 'analysis_only',
             'units': 24, 'symbols': 40, 'incoming_calls': 4865, 'unclassified': 5,
             'lowerability': 'blocked', 'whole_library_stable': 'unaccepted', 'four_host_ABI': 'unrun',
@@ -1417,9 +1468,14 @@ def guard(event, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--replay', type=Path, required=True)
+    parser.add_argument('--trusted-handoff', action='store_true')
     args = parser.parse_args()
     sys.addaudithook(guard)
-    print(json.dumps(replay(args.replay), sort_keys=True))
+    result = replay(args.replay, trusted_handoff=args.trusted_handoff)
+    if args.trusted_handoff:
+        sys.stdout.buffer.write(handoff_bytes(result))
+    else:
+        print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == '__main__':

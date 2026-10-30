@@ -197,13 +197,16 @@ jobs:
           collect_closed_format_fixture(root / 'tool/bin/c2rust-transpile', Path('/usr/bin/clang-18'), root / 'evidence/compiler-fixture', run)
           PY
       - name: Check all24 native units and collect exact paired report-only outputs
+        id: full-normal-replay
         timeout-minutes: 65
         run: |
           python3 -B tools/vkd3d-rust-probe/probe.py --closed-format-facts \
             --source "$RUNNER_TEMP/format-facts/prepared/work-linux-native/vkd3d-2.1" \
             --artifacts "$RUNNER_TEMP/format-facts/evidence/result" \
             --c2rust "$RUNNER_TEMP/format-facts/tool/bin/c2rust" --clang /usr/bin/clang-18 --timeout 1800
-          python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
+          python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts" --trusted-handoff > "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json"
+          printf 'handoff_size=%s\n' "$(stat -c %s "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json")" >> "$GITHUB_OUTPUT"
+          printf 'handoff_sha256=%s\n' "$(sha256sum "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
       - name: Retain partial diagnostic report-only checkpoint before common plan
         id: report-only-checkpoint
@@ -221,6 +224,9 @@ jobs:
           python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
             --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
             --database "$RUNNER_TEMP/format-facts/evidence/result/compile_commands.json" \
+            --trusted-handoff "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" \
+            --trusted-handoff-size '${{ steps.full-normal-replay.outputs.handoff_size }}' \
+            --trusted-handoff-sha256 '${{ steps.full-normal-replay.outputs.handoff_sha256 }}' \
             --output "$RUNNER_TEMP/format-facts/evidence/common-plan" --timeout 1800
       - name: Retain complete packet or raw partial extraction failure
         if: always()

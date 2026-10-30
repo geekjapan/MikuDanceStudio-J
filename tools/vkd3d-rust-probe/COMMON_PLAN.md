@@ -14,6 +14,9 @@ Run the hosted collector after the existing untouched full24 report run:
 python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
   --tool "$TOOL/bin/c2rust-transpile" \
   --database "$RESULT/compile_commands.json" \
+  --trusted-handoff "$EVIDENCE/trusted-full-replay.json" \
+  --trusted-handoff-size "$TRUSTED_REPLAY_SIZE" \
+  --trusted-handoff-sha256 "$TRUSTED_REPLAY_SHA256" \
   --output "$EVIDENCE/common-plan"
 ```
 
@@ -31,7 +34,12 @@ each unclassified definition remain intact.
 Full replay still checks the complete native graph, census, source buffers,
 raw CBOR, typed AST and generated Rust. It also requires recursive type-strict
 authority equality with the verified facts. The common collector admits the
-sealed exact all24 packet, current compiler and source receipts, current source
+sealed exact all24 packet against an external successful-full-replay handoff.
+The normal hosted replay emits it with `--trusted-handoff` on stdout after its
+final unchanged-manifest check. The existing default summary is unchanged.
+GitHub step outputs retain its exact size and SHA outside the packet. Admission
+authenticates those same bytes before parsing the closed schema, complete
+manifest and all24 command/session bindings. The collector also checks current compiler and source receipts, current source
 bytes and independent compiler sessions. It opens only the bounded authorities
 for the existing SQLite full source/name-byte preservation join. It hashes full
 facts as opaque packet members. Packet limits remain 4,096 files, 4 GiB total

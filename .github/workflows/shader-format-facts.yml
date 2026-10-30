@@ -87,6 +87,8 @@ jobs:
       - name: Test compiler-free transport normally and optimized
         timeout-minutes: 15
         run: |
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_job_transport.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_job_transport.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
@@ -162,6 +164,10 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 115
+    outputs:
+      packet_size: ${{ steps.packet.outputs.size }}
+      packet_sha256: ${{ steps.packet.outputs.sha256 }}
+      namespace: ${{ steps.packet.outputs.namespace }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -197,45 +203,229 @@ jobs:
           collect_closed_format_fixture(root / 'tool/bin/c2rust-transpile', Path('/usr/bin/clang-18'), root / 'evidence/compiler-fixture', run)
           PY
       - name: Check all24 native units and collect exact paired report-only outputs
-        id: full-normal-replay
         timeout-minutes: 65
         run: |
-          python3 -B tools/vkd3d-rust-probe/probe.py --closed-format-facts \
+          mkdir -p "$RUNNER_TEMP/stages"
+          printf '{"stage":"collector","event":"start","utc":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RUNNER_TEMP/stages/collector.jsonl"
+          trap 'code=$?; printf '\''{"stage":"collector","event":"finish","utc":"%s","exit":%s}\n'\'' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" >> "$RUNNER_TEMP/stages/collector.jsonl"' EXIT
+          /usr/bin/time -v -o "$RUNNER_TEMP/stages/collector.resources.txt" python3 -B tools/vkd3d-rust-probe/probe.py --closed-format-facts \
             --source "$RUNNER_TEMP/format-facts/prepared/work-linux-native/vkd3d-2.1" \
             --artifacts "$RUNNER_TEMP/format-facts/evidence/result" \
             --c2rust "$RUNNER_TEMP/format-facts/tool/bin/c2rust" --clang /usr/bin/clang-18 --timeout 1800
-          python3 -B tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts" --trusted-handoff > "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json"
-          handoff_size=$(stat -c %s "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json")
-          handoff_sha256=$(sha256sum "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" | cut -d ' ' -f 1)
-          printf 'handoff_size=%s\n' "$handoff_size" >> "$GITHUB_OUTPUT"
-          printf 'handoff_sha256=%s\n' "$handoff_sha256" >> "$GITHUB_OUTPUT"
-          python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts"
-      - name: Retain partial diagnostic report-only checkpoint before common plan
-        id: report-only-checkpoint
-        continue-on-error: true
+          python3 -B tools/vkd3d-rust-probe/job_transport.py check --root "$RUNNER_TEMP/format-facts"
+      - name: Freeze complete final packet with exact source and compiler
+        id: packet
+        run: |
+          python3 -B tools/vkd3d-rust-probe/job_transport.py pack \
+            --root "$RUNNER_TEMP/format-facts" --archive "$RUNNER_TEMP/final-packet.tar" > "$RUNNER_TEMP/packet-anchor.json"
+          printf 'size=%s\n' "$(stat -c %s "$RUNNER_TEMP/final-packet.tar")" >> "$GITHUB_OUTPUT"
+          printf 'sha256=%s\n' "$(sha256sum "$RUNNER_TEMP/final-packet.tar" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          printf 'namespace=%s\n' "$RUNNER_TEMP/format-facts" >> "$GITHUB_OUTPUT"
+      - name: Publish frozen final packet only after complete coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: shader-format-facts-report-only-checkpoint
-          path: ${{ runner.temp }}/format-facts/evidence/
+          name: shader-format-facts-packet-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final-packet.tar
+          compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Exercise complete compiler-owned common plan and atomic output controls
-        timeout-minutes: 38
-        run: |
-          printf 'Partial diagnostic report-only checkpoint outcome=%s\n' '${{ steps.report-only-checkpoint.outcome }}'
-          python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
-            --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
-            --database "$RUNNER_TEMP/format-facts/evidence/result/compile_commands.json" \
-            --trusted-handoff "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" \
-            --trusted-handoff-size '${{ steps.full-normal-replay.outputs.handoff_size }}' \
-            --trusted-handoff-sha256 '${{ steps.full-normal-replay.outputs.handoff_sha256 }}' \
-            --output "$RUNNER_TEMP/format-facts/evidence/common-plan" --timeout 1800
-      - name: Retain complete packet or raw partial extraction failure
+      - name: Retain stage evidence including partial failures
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: shader-format-facts-all24
-          path: ${{ runner.temp }}/format-facts/evidence/
+          path: |
+            ${{ runner.temp }}/format-facts/evidence/
+            ${{ runner.temp }}/stages/
+            ${{ runner.temp }}/packet-anchor.json
+          retention-days: 7
+          if-no-files-found: error
+
+  normal-replay:
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic' && github.ref != 'refs/heads/w4-shader-paged-plan-report'
+    needs: extract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    outputs:
+      handoff_size: ${{ steps.replay.outputs.handoff_size }}
+      handoff_sha256: ${{ steps.replay.outputs.handoff_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the matching translator runtime
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/format-facts/evidence"
+          exec > >(tee "$RUNNER_TEMP/format-facts/evidence/runtime-setup.log") 2>&1
+          printf 'https://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-cpp18 libllvm18
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Download this run's frozen packet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: shader-format-facts-packet-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transport
+      - name: Verify external anchor and restore original namespace unchanged
+        run: |
+          python3 -B tools/vkd3d-rust-probe/job_transport.py unpack \
+            --root "$RUNNER_TEMP/format-facts" --archive "$RUNNER_TEMP/transport/final-packet.tar" \
+            --size '${{ needs.extract.outputs.packet_size }}' \
+            --sha256 '${{ needs.extract.outputs.packet_sha256 }}' \
+            --namespace '${{ needs.extract.outputs.namespace }}'
+      - name: Replay complete frozen packet normally with trusted handoff
+        id: replay
+        timeout-minutes: 65
+        run: |
+          mkdir -p "$RUNNER_TEMP/stages"
+          printf '{"stage":"normal-replay","event":"start","utc":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RUNNER_TEMP/stages/normal-replay.jsonl"
+          trap 'code=$?; printf '\''{"stage":"normal-replay","event":"finish","utc":"%s","exit":%s}\n'\'' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" >> "$RUNNER_TEMP/stages/normal-replay.jsonl"' EXIT
+          /usr/bin/time -v -o "$RUNNER_TEMP/stages/normal-replay.resources.txt" python3 -B tools/vkd3d-rust-probe/closed_format_facts.py \
+            --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts" --trusted-handoff > "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json"
+          handoff_size=$(stat -c %s "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json")
+          handoff_sha256=$(sha256sum "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" | cut -d ' ' -f 1)
+          python3 -B tools/vkd3d-rust-probe/job_transport.py handoff --root "$RUNNER_TEMP/format-facts" \
+            --archive "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" \
+            --size "$handoff_size" --sha256 "$handoff_sha256"
+          printf 'handoff_size=%s\n' "$handoff_size" >> "$GITHUB_OUTPUT"
+          printf 'handoff_sha256=%s\n' "$handoff_sha256" >> "$GITHUB_OUTPUT"
+      - name: Publish externally anchored normal handoff
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/format-facts/evidence/trusted-full-replay.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain stage evidence including partial failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-normal-replay
+          path: |
+            ${{ runner.temp }}/format-facts/evidence/
+            ${{ runner.temp }}/stages/
+            ${{ runner.temp }}/packet-anchor.json
+          retention-days: 7
+          if-no-files-found: error
+
+  optimized-replay:
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic' && github.ref != 'refs/heads/w4-shader-paged-plan-report'
+    needs: extract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the matching translator runtime
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/format-facts/evidence"
+          exec > >(tee "$RUNNER_TEMP/format-facts/evidence/runtime-setup.log") 2>&1
+          printf 'https://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-cpp18 libllvm18
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Download this run's frozen packet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: shader-format-facts-packet-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transport
+      - name: Verify external anchor and restore original namespace unchanged
+        run: |
+          python3 -B tools/vkd3d-rust-probe/job_transport.py unpack \
+            --root "$RUNNER_TEMP/format-facts" --archive "$RUNNER_TEMP/transport/final-packet.tar" \
+            --size '${{ needs.extract.outputs.packet_size }}' \
+            --sha256 '${{ needs.extract.outputs.packet_sha256 }}' \
+            --namespace '${{ needs.extract.outputs.namespace }}'
+      - name: Replay complete frozen packet optimized
+        id: replay
+        timeout-minutes: 65
+        run: |
+          mkdir -p "$RUNNER_TEMP/stages"
+          printf '{"stage":"optimized-replay","event":"start","utc":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RUNNER_TEMP/stages/optimized-replay.jsonl"
+          trap 'code=$?; printf '\''{"stage":"optimized-replay","event":"finish","utc":"%s","exit":%s}\n'\'' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" >> "$RUNNER_TEMP/stages/optimized-replay.jsonl"' EXIT
+          /usr/bin/time -v -o "$RUNNER_TEMP/stages/optimized-replay.resources.txt" python3 -B -O tools/vkd3d-rust-probe/closed_format_facts.py \
+            --replay "$RUNNER_TEMP/format-facts/evidence/result/closed-format-facts" > "$RUNNER_TEMP/format-facts/evidence/optimized-replay.json"
+          python3 -B tools/vkd3d-rust-probe/job_transport.py report --root "$RUNNER_TEMP/format-facts" \
+            --archive "$RUNNER_TEMP/format-facts/evidence/optimized-replay.json"
+      - name: Retain stage evidence including partial failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-optimized-replay
+          path: |
+            ${{ runner.temp }}/format-facts/evidence/
+            ${{ runner.temp }}/stages/
+            ${{ runner.temp }}/packet-anchor.json
+          retention-days: 7
+          if-no-files-found: error
+
+  common-plan:
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic' && github.ref != 'refs/heads/w4-shader-paged-plan-report'
+    needs: [extract, normal-replay, optimized-replay]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the matching translator runtime
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/format-facts/evidence"
+          exec > >(tee "$RUNNER_TEMP/format-facts/evidence/runtime-setup.log") 2>&1
+          printf 'https://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-cpp18 libllvm18
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Download this run's frozen packet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: shader-format-facts-packet-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transport
+      - name: Verify external anchor and restore original namespace unchanged
+        run: |
+          python3 -B tools/vkd3d-rust-probe/job_transport.py unpack \
+            --root "$RUNNER_TEMP/format-facts" --archive "$RUNNER_TEMP/transport/final-packet.tar" \
+            --size '${{ needs.extract.outputs.packet_size }}' \
+            --sha256 '${{ needs.extract.outputs.packet_sha256 }}' \
+            --namespace '${{ needs.extract.outputs.namespace }}'
+      - name: Download this run's successful normal replay handoff
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: shader-format-facts-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/format-facts/evidence
+      - name: Verify external normal replay handoff anchor
+        run: |
+          python3 -B tools/vkd3d-rust-probe/job_transport.py handoff --root "$RUNNER_TEMP/format-facts" \
+            --archive "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" \
+            --size '${{ needs.normal-replay.outputs.handoff_size }}' \
+            --sha256 '${{ needs.normal-replay.outputs.handoff_sha256 }}'
+          python3 -B tools/vkd3d-rust-probe/check_runtime.py --tool "$RUNNER_TEMP/format-facts/tool"
+      - name: Exercise complete compiler-owned common plan and atomic output controls
+        timeout-minutes: 38
+        run: |
+          mkdir -p "$RUNNER_TEMP/stages"
+          printf '{"stage":"common-plan","event":"start","utc":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RUNNER_TEMP/stages/common-plan.jsonl"
+          trap 'code=$?; printf '\''{"stage":"common-plan","event":"finish","utc":"%s","exit":%s}\n'\'' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$code" >> "$RUNNER_TEMP/stages/common-plan.jsonl"' EXIT
+          /usr/bin/time -v -o "$RUNNER_TEMP/stages/common-plan.resources.txt" python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
+            --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
+            --database "$RUNNER_TEMP/format-facts/evidence/result/compile_commands.json" \
+            --trusted-handoff "$RUNNER_TEMP/format-facts/evidence/trusted-full-replay.json" \
+            --trusted-handoff-size '${{ needs.normal-replay.outputs.handoff_size }}' \
+            --trusted-handoff-sha256 '${{ needs.normal-replay.outputs.handoff_sha256 }}' \
+            --output "$RUNNER_TEMP/format-facts/evidence/common-plan" --timeout 1800
+      - name: Retain stage evidence including partial failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-format-facts-common-plan
+          path: |
+            ${{ runner.temp }}/format-facts/evidence/
+            ${{ runner.temp }}/stages/
+            ${{ runner.temp }}/packet-anchor.json
           retention-days: 7
           if-no-files-found: error
 

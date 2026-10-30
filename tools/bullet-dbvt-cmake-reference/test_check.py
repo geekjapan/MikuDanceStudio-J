@@ -1005,10 +1005,18 @@ class Controls(unittest.TestCase):
     def test_identity_captures_checkout_and_pr_not_only_event_sha(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'event.json'
-            path.write_text(json.dumps({'pull_request': {'head': {'sha': 'a' * 40}, 'base': {'sha': 'b' * 40}}}))
+            path.write_text(json.dumps({'pull_request': {'title': '”日本語の更新',
+                            'head': {'sha': 'a' * 40}, 'base': {'sha': 'b' * 40}}},
+                            ensure_ascii=False), encoding='utf-8')
+            original_read_text = Path.read_text
+
+            def windows_read_text(path, encoding=None, errors=None):
+                return original_read_text(path, encoding='cp1252' if encoding is None else encoding, errors=errors)
+
             env = {'GITHUB_EVENT_PATH': str(path), 'GITHUB_RUN_ID': '7', 'GITHUB_RUN_ATTEMPT': '2',
                    'GITHUB_JOB': 'build', 'GITHUB_SHA': 'c' * 40}
             with patch.dict(os.environ, env, clear=True), \
+                 patch.object(Path, 'read_text', windows_read_text), \
                  patch.object(check.subprocess, 'check_output', side_effect=[b'd' * 40, b'e' * 40]) as git:
                 result = check.identity()
             self.assertEqual(git.call_args_list, [

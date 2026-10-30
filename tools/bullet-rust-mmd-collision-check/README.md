@@ -49,6 +49,9 @@ producer and validates its own current-source command and binary receipts. Windo
 uses a detached authority receipt whose size/SHA comes from the explicit Windows
 producer job outputs. Replay authenticates those receipt bytes before JSON parsing.
 All JSON members and authority receipts have an 8 MiB limit.
+Complete closed commands are stored once in `command-records/000001.json` and subsequent ordinal files.
+`commands.json` and the detached authority contain ordered label/path/size/SHA commitments;
+readers authenticate every record through the same capture cache before parsing its complete observations.
 
 ## Verification status
 

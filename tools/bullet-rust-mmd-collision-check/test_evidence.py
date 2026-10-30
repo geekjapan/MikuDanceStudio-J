@@ -147,13 +147,94 @@ class ByteAuthorityTests(unittest.TestCase):
              patch('evidence.os.fstat', return_value=info):
             restored = read_authority(Path('/inert-receipt'), size=len(raw), sha256=digest(raw))
             self.assertEqual(restored, expected)
-        stream = io.BytesIO(raw.replace(b'"schema": 1', b'"schema": 2'))
+        stream = io.BytesIO(raw.replace(b'"schema": 2', b'"schema": 3'))
         stream.fileno = lambda: 123
         with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'open', return_value=stream), \
              patch('evidence.os.fstat', return_value=info), patch('evidence.json_value') as parser:
             with self.assertRaisesRegex(ValueError, 'SHA256'):
                 read_authority(Path('/inert-receipt'), size=len(raw), sha256=digest(raw))
             parser.assert_not_called()
+
+
+class CommandRecordFramingTests(unittest.TestCase):
+    def fixture(self):
+        from evidence import ByteIdentity, Capture, ExpectedEvidence, command_index, command_path, digest, encode_json
+        records = [{'label': label, 'argv': ['inert', label], 'pid': None,
+                    'generated_before': {'generated/a.rs': digest(b'a'), 'mutants/x/b.rs': digest(b'b')},
+                    'generated_end': {'generated/a.rs': digest(b'a'), 'mutants/x/b.rs': digest(b'b')},
+                    'waited': False, 'streams_closed': False, 'outputs': {}, 'inputs_before': {}}
+                   for label in ['first', 'second']]
+        content, refs = {}, []
+        for ordinal, record in enumerate(records, 1):
+            raw = encode_json(record)
+            path = command_path(ordinal)
+            content[path] = raw
+            refs.append({'ordinal': ordinal, 'label': record['label'], 'path': path,
+                         'size': len(raw), 'sha256': digest(raw)})
+        content['commands.json'] = encode_json(command_index(refs))
+        expected = ExpectedEvidence({name: ByteIdentity.of(raw) for name, raw in content.items()}, refs)
+        return records, content, expected
+
+    def test_inert_record_roundtrip_and_immutable_commitments(self):
+        import io
+        import stat
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from evidence import Capture, command_records, digest, read_authority
+        records, content, expected = self.fixture()
+        raw = expected.receipt()
+        info = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_nlink=1, st_size=len(raw),
+                               st_dev=1, st_ino=1, st_mtime_ns=1, st_ctime_ns=1)
+        stream = io.BytesIO(raw)
+        stream.fileno = lambda: 123
+        with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'open', return_value=stream), \
+             patch('evidence.os.fstat', return_value=info):
+            restored = read_authority(Path('/inert-record-authority'), size=len(raw), sha256=digest(raw))
+        capture = Capture(content, restored)
+        self.assertEqual(command_records(capture.__getitem__, restored), records)
+        self.assertIsNone(records[0]['pid'])
+        with self.assertRaises(TypeError):
+            restored.commands[0]['size'] = 0
+
+    def test_held_authority_rejects_record_and_index_corruptions(self):
+        import copy
+        from unittest.mock import patch
+        from evidence import Capture, command_index, command_records, digest, encode_json, json_value, thaw
+        _, content, expected = self.fixture()
+        for candidate in ({name: raw for name, raw in content.items() if name != expected.commands[0]['path']},
+                          {**content, 'command-records/000003.json': b'{}'},
+                          {**content, expected.commands[0]['path']: b'{}'}):
+            with self.assertRaises(ValueError):
+                Capture(candidate, expected)
+        refs = thaw(expected.commands)
+        variants = [list(reversed(refs)), [refs[0], refs[0]], refs[:1], [*refs, refs[-1]]]
+        for field, value in [('size', refs[0]['size'] + 1), ('sha256', '0'*64),
+                             ('ordinal', True), ('ordinal', 1.0), ('path', 'command-records/000002.json')]:
+            changed = copy.deepcopy(refs)
+            changed[0][field] = value
+            variants.append(changed)
+        for changed in variants:
+            candidate = {**content, 'commands.json': encode_json(command_index(changed))}
+            with patch('evidence.json_value') as parser:
+                with self.assertRaises(ValueError):
+                    Capture(candidate, expected)
+                parser.assert_not_called()
+            with self.assertRaises(ValueError):
+                command_records(candidate.__getitem__, expected)
+        changed = copy.deepcopy(refs)
+        changed[0]['label'] = 'stale'
+        with self.assertRaisesRegex(ValueError, 'external closed command authority'):
+            command_records({**content, 'commands.json': encode_json(command_index(changed))}.__getitem__, expected)
+        path = refs[0]['path']
+        record = json_value(content[path])
+        record['generated_end']['generated/a.rs'] = '0'*64
+        changed_raw = encode_json(record)
+        changed = copy.deepcopy(refs)
+        changed[0].update(size=len(changed_raw), sha256=digest(changed_raw))
+        candidate = {**content, path: changed_raw, 'commands.json': encode_json(command_index(changed))}
+        with self.assertRaises(ValueError):
+            command_records(candidate.__getitem__, expected)
 
 
 class NativeEvidenceFramingTests(unittest.TestCase):

@@ -54,6 +54,7 @@ class Recorder:
         self.out, self.snapshot = out, snapshot
         self.sources = snapshot()
         self.commands = []
+        self.command_refs = []
         self.members = {}
         self.closed_bytes = {}
         self.closed = False
@@ -105,10 +106,16 @@ class Recorder:
 
     def authority(self):
         require(self.closed, 'closed producer authority')
-        require(self.read(self.out / 'commands.json') == encode_json(self.commands), 'closed serialized command authority')
+        require(self.read(self.out / 'commands.json') == encode_json(command_index(self.command_refs)),
+                'closed serialized command index authority')
         for name, expected in self.sources.items():
             require(self.members['source/' + name].sha256 == expected, 'fixed producer source bytes')
-        for record in self.commands:
+        require(len(self.commands) == len(self.command_refs), 'complete closed command references')
+        for record, ref in zip(self.commands, self.command_refs):
+            closed_command(record, self.members)
+            raw = self.read(self.out / ref['path'])
+            require(raw == encode_json(record) and ByteIdentity.of(raw) == self.members[ref['path']],
+                    'live closed serialized command authority')
             bindings = {**record['inputs_before'], **record['outputs'],
                         record['executable']['path']: record['executable']['sha256']}
             for path, expected in bindings.items():
@@ -116,7 +123,7 @@ class Recorder:
                     name = Path(path).relative_to(self.out).as_posix()
                     require(name in self.members and self.members[name].sha256 == expected,
                             'live closed produced binary/input authority')
-        return ExpectedEvidence(self.members, self.commands)
+        return ExpectedEvidence(self.members, self.command_refs)
 
     def manifest(self):
         self.save(self.out / 'artifact-manifest.json',
@@ -155,14 +162,12 @@ class Recorder:
                   'outputs': {}, 'pid': None, 'start_utc': utc(), 'end_utc': None,
                   'waited': False, 'streams_closed': False, 'returncode': None}
         self.commands.append(record)
-        self.save(self.out / 'commands.json', self.commands)
         start = time.monotonic()
         stdout_path, stderr_path = (self.out / (label + suffix) for suffix in ('.stdout', '.stderr'))
         with stdout_path.open('xb') as stdout, stderr_path.open('xb') as stderr:
             process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
                                        stdout=stdout, stderr=stderr, env={**os.environ, 'VSLANG': '1033'})
             record['pid'] = process.pid
-            self.save(self.out / 'commands.json', self.commands)
             try:
                 process.communicate(data, timeout=600)
             except subprocess.TimeoutExpired:
@@ -179,7 +184,13 @@ class Recorder:
         record['inputs_end'] = {str(p): digest(Path(p).read_bytes()) for p in inputs}
         record['executable_end'] = identity(binding['path'])
         record['generated_end'] = self.generated_snapshot()
-        self.save(self.out / 'commands.json', self.commands)
+        ordinal = len(self.commands)
+        path = command_path(ordinal)
+        (self.out / 'command-records').mkdir(exist_ok=True)
+        raw = self.save(self.out / path, record)
+        self.command_refs.append({'ordinal': ordinal, 'label': label, 'path': path,
+                                  'size': len(raw), 'sha256': digest(raw)})
+        self.save(self.out / 'commands.json', command_index(self.command_refs))
         require(record['inputs_end'] == record['inputs_before'], 'input preservation ' + label)
         require(record['executable_end'] == binding, 'executable preservation ' + label)
         require(record['generated_end'] == record['generated_before'], 'generated source preservation ' + label)
@@ -603,6 +614,63 @@ class ByteIdentity:
         return raw
 
 
+def command_path(ordinal):
+    require(type(ordinal) is int and 1 <= ordinal <= MAX_FILES, 'exact bounded command ordinal')
+    return f'command-records/{ordinal:06d}.json'
+
+
+def command_index(refs):
+    return {'schema': 1, 'records': thaw(refs)}
+
+
+def closed_command(record, members):
+    require(type(record) is dict and type(record['pid']) is int and record['pid'] > 0
+            and record['waited'] is True and record['streams_closed'] is True
+            and type(record['returncode']) is int and record['returncode'] == 0,
+            'actual closed command authority')
+    for stream in ['stdout', 'stderr']:
+        name = record['label'] + '.' + stream
+        require(name in members and members[name].sha256 == record[stream + '_sha256'],
+                'closed stream member authority')
+
+
+def command_references(value, members):
+    require(type(value) in {list, tuple}, 'closed command authority sequence')
+    labels = set()
+    for ordinal, ref in enumerate(value, 1):
+        fields(ref, ['ordinal', 'label', 'path', 'size', 'sha256'], 'command reference')
+        require(type(ref['ordinal']) is int and ref['ordinal'] == ordinal
+                and ref['path'] == command_path(ordinal), 'ordered command reference')
+        label = ref['label']
+        require(type(label) is str and re.fullmatch('[a-z0-9-]+', label) is not None
+                and label not in labels, 'unique command reference label')
+        labels.add(label)
+        identity = ByteIdentity(ref['size'], ref['sha256'])
+        require(identity.size <= MAX_JSON and members.get(ref['path']) == identity,
+                'command reference member authority')
+    require({name for name in members if name.startswith('command-records/')} ==
+            {ref['path'] for ref in value}, 'exact command record membership')
+    return freeze(value)
+
+
+def command_records(raw, authority):
+    index = fields(json_value(raw('commands.json')), ['schema', 'records'], 'command index')
+    require(type(index['schema']) is int and index['schema'] == 1, 'command index schema')
+    members = {**authority.members, **{ref['path']: ByteIdentity(ref['size'], ref['sha256'])
+                                      for ref in authority.commands}}
+    refs = command_references(index['records'], members)
+    require(refs == authority.commands, 'external closed command authority')
+    records = []
+    for ref in refs:
+        record_raw = raw(ref['path'])
+        record = json_value(record_raw)
+        require(len(record_raw) == ref['size'] and digest(record_raw) == ref['sha256'],
+                'external closed command authority')
+        require(type(record) is dict and record.get('label') == ref['label'], 'command record label authority')
+        records.append(record)
+    return records
+
+
 @dataclass(frozen=True)
 class ExpectedEvidence:
     members: Mapping
@@ -616,17 +684,7 @@ class ExpectedEvidence:
         require(sum(value.size for value in members.values()) <= MAX_TOTAL, 'expected total byte bounds')
         require(all(value.size <= MAX_JSON for name, value in members.items() if name.endswith('.json')),
                 'expected JSON byte bounds')
-        commands = freeze(thaw(self.commands))
-        require(type(commands) is tuple, 'closed command authority sequence')
-        for record in commands:
-            require(isinstance(record, Mapping) and type(record['pid']) is int and record['pid'] > 0
-                    and record['waited'] is True and record['streams_closed'] is True
-                    and type(record['returncode']) is int and record['returncode'] == 0,
-                    'actual closed command authority')
-            for stream in ['stdout', 'stderr']:
-                name = record['label'] + '.' + stream
-                require(name in members and members[name].sha256 == record[stream + '_sha256'],
-                        'closed stream member authority')
+        commands = command_references(thaw(self.commands), members)
         object.__setattr__(self, 'members', MappingProxyType(members))
         object.__setattr__(self, 'commands', commands)
 
@@ -635,7 +693,7 @@ class ExpectedEvidence:
                                 self.commands)
 
     def receipt(self):
-        return encode_json({'schema': 1, 'members': {name: {'size': value.size, 'sha256': value.sha256}
+        return encode_json({'schema': 2, 'members': {name: {'size': value.size, 'sha256': value.sha256}
                             for name, value in self.members.items()}, 'commands': thaw(self.commands)})
 
 
@@ -644,7 +702,7 @@ def read_authority(path, *, size, sha256):
     require(expected.size <= MAX_JSON, 'expected authority JSON byte bounds')
     raw = read_member(Path(path), expected, json_member=True)
     value = fields(json_value(raw), ['schema', 'members', 'commands'], 'detached authority')
-    require(type(value['schema']) is int and value['schema'] == 1 and type(value['members']) is dict,
+    require(type(value['schema']) is int and value['schema'] == 2 and type(value['members']) is dict,
             'detached authority schema')
     members = {}
     for name, item in value['members'].items():
@@ -969,8 +1027,9 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
     libraries = (raw('crt-build.stderr').decode().split('native-static-libs:')[-1].splitlines()[0].split() if win else
                  [] if host['system'] == 'Darwin' else ['-ldl','-lpthread','-lm'])
     schedule = command_schedule(context, sources, libraries)
-    commands = data('commands.json')
-    require(encode_json(commands) == encode_json(thaw(authority.commands)), 'external closed command authority')
+    commands = command_records(raw, authority)
+    for command in commands:
+        closed_command(command, authority.members)
     require(type(commands) is list and len(commands) == len(schedule) and type(report['commands']) is int and
             report['commands'] == len(commands), 'complete exact command schedule')
     expected_mutants = {}
@@ -1148,7 +1207,19 @@ def candidate_capture(capture, overrides):
 def semantic_peer(capture, overrides):
     require(not any(name.startswith(('source/', 'generated/', 'mutants/', 'tool-bytes/')) for name in overrides),
             'peer preserves actual source and tool authority')
-    peer = candidate_capture(capture, overrides)
+    records = {name: raw for name, raw in overrides.items() if name.startswith('command-records/')}
+    require(set(records) <= {ref['path'] for ref in capture.authority.commands}, 'known negative command record')
+    peer = candidate_capture(capture, {name: raw for name, raw in overrides.items() if name not in records})
+    if records:
+        # Negative peers bind explicit mutated bytes but keep the producer's closed record commitments.
+        content = {**peer.content, **records}
+        content['artifact-manifest.json'] = encode_json({name: digest(raw) for name, raw in content.items()
+                                                        if name != 'artifact-manifest.json'})
+        authority = object.__new__(ExpectedEvidence)
+        object.__setattr__(authority, 'members', MappingProxyType({name: ByteIdentity.of(raw)
+                                                                 for name, raw in content.items()}))
+        object.__setattr__(authority, 'commands', capture.authority.commands)
+        peer = Capture(content, authority)
     require(peer.authority.commands == capture.authority.commands, 'peer preserves closed command authority')
     return peer
 
@@ -1164,9 +1235,10 @@ def actual_peer_controls(capture, **expected):
             value = json_value(capture['report.json']); value['head'] = '0'*40
             overrides['report.json'] = (json.dumps(value,sort_keys=True)+'\n').encode()
         elif name in {'unclosed-command','boolean-pid'}:
-            value = json_value(capture['commands.json'])
-            value[0]['streams_closed' if name == 'unclosed-command' else 'pid'] = False if name == 'unclosed-command' else True
-            overrides['commands.json'] = (json.dumps(value,sort_keys=True)+'\n').encode()
+            path = capture.authority.commands[0]['path']
+            value = json_value(capture[path])
+            value['streams_closed' if name == 'unclosed-command' else 'pid'] = False if name == 'unclosed-command' else True
+            overrides[path] = (json.dumps(value,sort_keys=True)+'\n').encode()
         elif name == 'open-source':
             value = json_value(capture['source-end.json']); value[next(iter(value))] = '0'*64
             overrides['source-end.json'] = (json.dumps(value,sort_keys=True)+'\n').encode()
@@ -1287,8 +1359,9 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
             exe = out/(prefix+'-'+name+suffix); gen = prefix+'-'+name
             add(prefix+'-build-'+name,[*rargs,'--cfg','test',entry,'-o',exe],[entry,rlib],[exe],gen)
             add(prefix+'-run-'+name,[exe],generation=gen,corpus=True)
-    commands = data('commands.json')
-    require(encode_json(commands) == encode_json(thaw(authority.commands)), 'external closed command authority')
+    commands = command_records(raw, authority)
+    for command in commands:
+        closed_command(command, authority.members)
     require(type(commands) is list and len(commands) == len(recipe) and type(report['commands']) is int and report['commands'] == len(recipe),'complete replay command schedule')
     def artifact(value,identity_value):
         target = path(value)

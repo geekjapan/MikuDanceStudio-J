@@ -46,6 +46,14 @@ jobs:
             --source-checkout "$GITHUB_WORKSPACE/source82dc" --profiler-observer-control
           python3 -B -O controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
             --source-checkout "$GITHUB_WORKSPACE/source82dc" --profiler-observer-control
+      - name: Hosted code-local monitoring admission without OS delivery
+        id: monitoring
+        timeout-minutes: 1
+        run: |
+          python3 -B controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
+            --source-checkout "$GITHUB_WORKSPACE/source82dc" --monitoring-observer-control
+          python3 -B -O controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
+            --source-checkout "$GITHUB_WORKSPACE/source82dc" --monitoring-observer-control
       - name: Actual normal OS controls with synthetic compiler data
         id: normal
         continue-on-error: true
@@ -56,7 +64,7 @@ jobs:
           python3 -B controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
             --source-checkout "$GITHUB_WORKSPACE/source82dc" --real-os "$CMP_OS_ROOT/normal"
       - name: Actual optimized OS controls after fresh closure validation
-        if: always() && steps.normal.outcome != 'skipped'
+        if: always() && steps.monitoring.outcome == 'success' && steps.normal.outcome != 'skipped'
         id: optimized
         continue-on-error: true
         timeout-minutes: 7

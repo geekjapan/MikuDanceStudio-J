@@ -11,7 +11,9 @@ from typing import NamedTuple
 import datetime
 import hashlib
 import importlib.util
+import inspect
 import json
+import marshal
 import os
 from pathlib import Path
 import select
@@ -21,6 +23,7 @@ import subprocess
 import sys
 import time
 import traceback
+import textwrap
 
 SOURCE_COMMIT = '82dc9998fbe5b6ed5b8e9f7182edc17b0c6f818c'
 SOURCE_TREE = 'cf2862b301001448dc0e932e87b3a05c8d9246a1'
@@ -38,13 +41,158 @@ FROZEN = {
 }
 PAIRS = ((2, 2), (15, 15), (2, 15), (15, 2))
 PHASES = ('entry', 'working-cleanup', 'published-unblocked', 'published-masked')
+WAIT_AST = {'wait': '32eb93a7f8a4c09e4ddd6126580dfc68120f54ecc23dcefab06fa156d0b4e427',
+            '_wait': 'dbe2e31be45022de935cb0d9fc9c1c33c5b99ef8ea54826342703afce9f605e5'}
 CASES = [('baseline', 'baseline', 0, 0)] + [
     (f'{phase}-{first}-{second}', phase, first, second)
     for phase in PHASES for first, second in PAIRS] + [
     (f'caller-{kind}-{sig}', 'caller-' + kind, sig, 0)
     for kind in ('blocked', 'pending') for sig in (2, 15)]
 ADAPTERS = ('reviewed_contract', 'verify_tool', 'verify_evidence', 'retain_tool_identity',
-            'validate_result', 'Popen-command-only')
+            'validate_result', 'Popen-command-only', 'Popen._wait-pass-through')
+
+
+class HandlerObserver:
+    tool_id = 3
+    stack_limit = 64
+
+    def __init__(self, owner, handler_code, methods, counts, max_active, followon):
+        self.owner, self.handler_code = owner, handler_code
+        self.methods, self.counts, self.max_active, self.followon = methods, counts, max_active, followon
+        self.started, self.receipted, self.failure = [], 0, None
+        self.cancelled_seen = False
+        self.monitoring = None
+        self.previous_callback = None
+
+    def start(self, code, offset):
+        frame = sys._getframe(1)
+        matching, depths = None, dict(finish=0, close=0)
+        for unused in range(self.stack_limit):
+            if frame is None:
+                break
+            if frame.f_code is code and matching is None:
+                matching = frame
+            key = next((name for method, name in self.methods.items() if method is frame.f_code), None)
+            if key in depths:
+                depths[key] += 1
+            frame = frame.f_back
+        if frame is not None or matching is None:
+            self.failure = 'observer stack/frame bound differs'
+            return
+        if self.cancelled_seen and not self.owner.cancelled:
+            self.failure = 'cancellation latch regressed'
+        self.cancelled_seen = self.cancelled_seen or self.owner.cancelled
+        if code is self.handler_code:
+            if (matching.f_locals.get('self') is not self.owner
+                    or matching.f_locals.get('signum') not in self.owner.signals
+                    or len(self.started) + self.receipted >= 2):
+                self.failure = 'observer handler identity/count differs'
+                return
+            self.started.append((matching, self.owner, matching.f_locals['signum'], self.owner.phase))
+        else:
+            key = next((name for method, name in self.methods.items() if method is code), None)
+            if key is None or (key != 'close' and matching.f_locals.get('self') is not self.owner):
+                self.failure = 'observer code differs'
+                return
+            if not self.followon():
+                self.counts[key] += 1
+            for name in depths:
+                self.max_active[name] = max(self.max_active[name], depths[name])
+
+    def complete(self):
+        require(self.failure is None, self.failure or 'observer failed')
+        require(not self.cancelled_seen or self.owner.cancelled, 'cancellation latch regressed')
+        frame, stack = sys._getframe(1), []
+        for unused in range(self.stack_limit):
+            if frame is None:
+                break
+            stack.append(frame)
+            frame = frame.f_back
+        require(frame is None, 'completion stack bound differs')
+        records = []
+        while self.started:
+            observed, owner, signum, phase = self.started[0]
+            require(observed.f_code is self.handler_code and owner is self.owner
+                    and observed.f_locals.get('self') is owner
+                    and observed.f_locals.get('signum') == signum, 'completion handler identity differs')
+            if any(current is observed for current in stack):
+                break
+            require(owner.cancelled, 'interrupt did not latch cancellation')
+            self.cancelled_seen = True
+            self.receipted += 1
+            records.append(dict(signal=signum, phase=phase, cancelled=True, handler=self.receipted, owner=id(owner)))
+            self.started.pop(0)
+        return records
+
+    def enable(self):
+        require(sys.getprofile() is None and sys.gettrace() is None, 'observer refuses existing profile/trace')
+        monitoring = sys.monitoring
+        require(all(monitoring.get_tool(tool) is None and monitoring.get_events(tool) == 0
+                    for tool in range(6)), 'observer refuses existing monitoring tools/events')
+        codes = (self.handler_code, *self.methods)
+        require(all(monitoring.get_local_events(self.tool_id, code) == 0 for code in codes),
+                'observer refuses existing local events')
+        monitoring.use_tool_id(self.tool_id, 'cmp-genuine-handler')
+        self.monitoring = monitoring
+        try:
+            self.previous_callback = monitoring.register_callback(self.tool_id, monitoring.events.PY_START, self.start)
+            require(self.previous_callback is None, 'observer refuses existing callback')
+            monitoring.set_events(self.tool_id, 0)
+            for code in codes:
+                monitoring.set_local_events(self.tool_id, code, monitoring.events.PY_START)
+            require(monitoring.get_events(self.tool_id) == 0
+                    and all(monitoring.get_local_events(self.tool_id, code) == monitoring.events.PY_START
+                            for code in codes), 'observer activation scope differs')
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        monitoring = self.monitoring
+        if monitoring is None:
+            return
+        monitoring.set_events(self.tool_id, 0)
+        for code in (self.handler_code, *self.methods):
+            monitoring.set_local_events(self.tool_id, code, 0)
+        monitoring.register_callback(self.tool_id, monitoring.events.PY_START, None)
+        require(monitoring.get_events(self.tool_id) == 0
+                and all(monitoring.get_local_events(self.tool_id, code) == 0
+                        for code in (self.handler_code, *self.methods)), 'observer events remain active')
+        if self.previous_callback is not None:
+            monitoring.register_callback(self.tool_id, monitoring.events.PY_START, self.previous_callback)
+        monitoring.free_tool_id(self.tool_id)
+        require(monitoring.get_tool(self.tool_id) is None and sys.getprofile() is None and sys.gettrace() is None,
+                'observer runtime restoration differs')
+        self.monitoring = None
+        self.started.clear()
+
+
+def validate_completion(event, *, pid, case, owner, signum, phase, ordinal):
+    require(type(event) is dict and set(event) == {'kind', 'pid', 'seq', 'case', 'signal', 'phase',
+            'cancelled', 'handler', 'owner'}, 'completion schema differs')
+    require(event['kind'] == 'handler-return' and event['case'] == case
+            and type(event['pid']) is int and event['pid'] == pid
+            and type(event['seq']) is int and event['seq'] > 0
+            and type(event['owner']) is int and event['owner'] == owner and owner > 0
+            and type(event['signal']) is int and event['signal'] == signum
+            and event['phase'] == phase and event['cancelled'] is True
+            and type(event['handler']) is int and event['handler'] == ordinal, 'completion identity differs')
+    return True
+
+
+def second_readiness(event, first_ack, case, pid):
+    name, phase, first, second = case
+    first_phase = 'installing' if phase == 'entry' else ('working' if phase == 'working-cleanup' else 'finishing')
+    current_phase = 'closing' if phase == 'working-cleanup' else first_phase
+    require(type(event) is dict and set(event) == {'kind', 'case', 'pid', 'seq', 'owner', 'phase', 'masked', 'pending'}
+            and event.get('kind') == 'ready-second' and event.get('case') == name
+            and type(event.get('pid')) is int and event.get('pid') == pid and type(event.get('owner')) is int
+            and event.get('phase') == current_phase and event.get('masked') is (phase == 'published-masked')
+            and type(event.get('pending')) is list and len(event['pending']) <= 64
+            and all(type(value) is int and 1 <= value <= 64 for value in event['pending'])
+            and not {2, 15} & set(event['pending']), 'second readiness differs')
+    validate_completion(first_ack, pid=pid, case=name, owner=event['owner'], signum=first, phase=first_phase, ordinal=1)
+    return phase == 'published-masked'
 class SecondAck(NamedTuple):
     count: int
     signals: tuple
@@ -139,6 +287,85 @@ def profiler_observer_control(source):
     require(len(events) == len(sends) == len(nested) == 1 and events[0]['signal'] == 2
             and events[0]['cancelled'] is True and nested[0] == dict(signal=15, cancelled=True, accounted=1)
             and owner.cancelled, 'genuine profiler observer counterexample differs')
+    return report
+
+
+def wait_provenance(popen):
+    records = {}
+    for name, identity in WAIT_AST.items():
+        function = getattr(popen, name)
+        raw = inspect.getsource(function)
+        node = ast.parse(textwrap.dedent(raw)).body[0]
+        require(digest(ast.dump(node).encode()) == identity, 'hosted Popen wait AST differs from CPython v3.12.3')
+        records[name] = dict(ast_sha256=identity, source_sha256=digest(raw.encode()),
+            code_sha256=digest(marshal.dumps(function.__code__)), filename=function.__code__.co_filename,
+            firstlineno=function.__code__.co_firstlineno)
+    records['module'] = dict(path=subprocess.__file__, sha256=digest(Path(subprocess.__file__).read_bytes()))
+    return records
+
+
+def validate_wait_provenance(records):
+    require(type(records) is dict and set(records) == {'wait', '_wait', 'module'}, 'wait provenance schema differs')
+    for name, expected in WAIT_AST.items():
+        record = records[name]
+        require(type(record) is dict and set(record) == {'ast_sha256', 'source_sha256', 'code_sha256', 'filename', 'firstlineno'}
+                and record['ast_sha256'] == expected and type(record['firstlineno']) is int and record['firstlineno'] > 0
+                and type(record['filename']) is str and Path(record['filename']).is_absolute(), 'wait provenance identity differs')
+        for key in ('source_sha256', 'code_sha256'):
+            require(type(record[key]) is str and len(record[key]) == 64
+                    and all(c in '0123456789abcdef' for c in record[key]), 'wait provenance hash differs')
+    module = records['module']
+    require(type(module) is dict and set(module) == {'path', 'sha256'}
+            and module['path'] == records['wait']['filename'] == records['_wait']['filename']
+            and type(module['sha256']) is str and len(module['sha256']) == 64
+            and all(c in '0123456789abcdef' for c in module['sha256']), 'wait module provenance differs')
+    return True
+
+
+def observer_methods(wrapper):
+    methods = {getattr(wrapper.WrapperRun, name).__code__: key for name, key in (
+        ('normalize', 'normalize'), ('invoke', 'invoke'), ('_execute', 'execute_body'), ('_finish', 'finish'))}
+    methods[wrapper.close_owned_children.__code__] = 'close'
+    return methods
+
+
+def monitoring_observer_control(source):
+    require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux'
+            and sys.implementation.name == 'cpython' and sys.version_info[:3] == (3, 12, 3),
+            'monitoring control requires hosted Linux CPython 3.12.3')
+    wrapper, unused, unused_tool = load_source(source)
+    provenance = wait_provenance(subprocess.Popen)
+    handler = wrapper.WrapperRun.interrupt
+    reports = []
+    for phase, signum in (('installing', 2), ('working', 15)):
+        owner = wrapper.WrapperRun()
+        owner.phase = phase
+        observer = HandlerObserver(owner, handler.__code__, observer_methods(wrapper),
+            dict.fromkeys(('normalize', 'invoke', 'execute_body', 'finish', 'close'), 0),
+            dict(finish=0, close=0), lambda: False)
+        raised = False
+        try:
+            observer.enable()
+            try:
+                owner.interrupt(signum, None)
+            except KeyboardInterrupt:
+                raised = True
+            require(raised is (phase == 'working'), 'genuine unwind control differs')
+            records = observer.complete()
+            require(records == [dict(signal=signum, phase=phase, cancelled=True, handler=1, owner=id(owner))]
+                    and not observer.started and observer.complete() == [], 'monitoring completion control differs')
+            reports.append(dict(phase=phase, signum=signum, unwind=raised, records=records))
+        finally:
+            observer.close()
+        require(observer.monitoring is None and not observer.started, 'monitoring cleanup control differs')
+    report = dict(kind='manual genuine-handler observer admission; no OS delivery acceptance', source=SOURCE_COMMIT,
+        product_sha256=FROZEN['run_cmp_input.py'], handler_code_sha256=digest(marshal.dumps(handler.__code__)),
+        handler_ast_sha256=observer_definitions(source)[3]['interrupt_ast_sha256'],
+        controller_sha256=digest(Path(__file__).read_bytes()), wait=provenance,
+        interpreter=dict(implementation=sys.implementation.name, version=sys.version,
+                         executable=sys.executable, optimize=sys.flags.optimize), controls=reports,
+        local_codes=6, global_events=0, callback_ipc=False, profile=False, cleanup=True)
+    print('MONITORING_OBSERVER_CONTROL ' + json.dumps(report, sort_keys=True), flush=True)
     return report
 
 
@@ -463,11 +690,44 @@ ERROR_STAGES = ('runtime-guard', 'ipc-setup', 'case-selection', 'source-import',
                 'fixture-setup', 'owner-setup', 'execute', 'validation', 'restoration', 'unavailable')
 
 
-def encode_worker_error(case, pid, seq, stage, exception_type, message, trace):
+def failure_sample_record(sample):
+    record = dict(count=sample.count, signals=list(sample.signals[:8]), pending=list(sample.pending[:64]),
+        pair=list(sample.pair), phase=sample.phase, owner_phase=sample.owner_phase, case=sample.case,
+        interpreter=[str(value)[:24] for value in sample.interpreter],
+        signals_omitted=max(0, sample.count - 8), pending_omitted=max(0, len(sample.pending) - 64))
+    validate_failure_sample(record, sample.case)
+    return record
+
+
+def validate_failure_sample(record, case):
+    require(type(record) is dict and set(record) == {'count', 'signals', 'pending', 'pair', 'phase',
+        'owner_phase', 'case', 'interpreter', 'signals_omitted', 'pending_omitted'}, 'failure sample schema differs')
+    row = next((row for row in CASES if row[0] == case), None)
+    require(row is not None and row[3] in (2, 15) and record['case'] == case
+            and record['phase'] == row[1] and record['pair'] == list(row[2:]), 'failure sample case/pair differs')
+    require(record['owner_phase'] in ('installing', 'closing', 'finishing'), 'failure sample owner phase differs')
+    for field in ('count', 'signals_omitted', 'pending_omitted'):
+        require(type(record[field]) is int and 0 <= record[field] <= 1000000, 'failure sample count differs')
+    for field, bound, allowed in (('signals', 8, (2, 15)), ('pending', 64, range(1, 65)), ('pair', 2, (2, 15))):
+        require(type(record[field]) is list and len(record[field]) <= bound
+                and all(type(value) is int and value in allowed for value in record[field]), 'failure sample signals differ')
+    require(record['pending'] == sorted(set(record['pending']))
+            and record['count'] == len(record['signals']) + record['signals_omitted']
+            and (record['signals_omitted'] == 0 or len(record['signals']) == 8)
+            and (record['pending_omitted'] == 0 or len(record['pending']) == 64), 'failure sample omissions differ')
+    require(type(record['interpreter']) is list and len(record['interpreter']) == 4
+            and all(type(value) is str and len(value) <= 24 for value in record['interpreter']),
+            'failure sample interpreter differs')
+    return True
+
+
+def encode_worker_error(case, pid, seq, stage, exception_type, message, trace, sample=None):
     require(case in [row[0] for row in CASES] and stage in ERROR_STAGES, 'unknown worker error context')
     record = dict(kind='worker-error', schema=1, case=case, pid=pid, seq=seq, stage=stage,
                   exception_type=exception_type[:80], message=message[:400], traceback=trace[:1800],
                   truncated=len(exception_type) > 80 or len(message) > 400 or len(trace) > 1800)
+    if sample is not None:
+        record['second_ack_failure'] = failure_sample_record(sample)
     while True:
         raw = json.dumps(record, ensure_ascii=True).encode('utf-8') + b'\n'
         if len(raw) < 4096:
@@ -479,8 +739,10 @@ def encode_worker_error(case, pid, seq, stage, exception_type, message, trace):
 
 
 def validate_worker_error(event, case, pid, seq):
-    require(type(event) is dict and set(event) == {'kind', 'schema', 'case', 'pid', 'seq', 'stage',
-            'exception_type', 'message', 'traceback', 'truncated'}, 'worker error schema differs')
+    fields = {'kind', 'schema', 'case', 'pid', 'seq', 'stage', 'exception_type', 'message', 'traceback', 'truncated'}
+    require(type(event) is dict and set(event) in (fields, fields | {'second_ack_failure'}), 'worker error schema differs')
+    if 'second_ack_failure' in event:
+        validate_failure_sample(event['second_ack_failure'], case)
     require(event['kind'] == 'worker-error' and type(event['schema']) is int and event['schema'] == 1,
             'worker error kind/schema differs')
     require(event['case'] == case and type(event['pid']) is int and event['pid'] == pid
@@ -520,16 +782,29 @@ class Channel:
         require(len(raw) < 4096, 'IPC record exceeds atomic pipe bound')
         require(os.write(self.outgoing, raw) == len(raw), 'short IPC write')
 
-    def receive(self, seconds=5):
+    def receive(self, seconds=5, checkpoint=None):
         deadline = time.monotonic() + seconds
         while b'\n' not in self.buffer:
+            if checkpoint is not None:
+                checkpoint()
             remaining = deadline - time.monotonic()
-            require(remaining > 0 and select.select([self.incoming], [], [], remaining)[0], 'rendezvous deadline')
+            require(remaining > 0, 'rendezvous deadline')
+            ready = select.select([self.incoming], [], [], min(remaining, .01) if checkpoint else remaining)[0]
+            if not ready:
+                require(checkpoint is not None, 'rendezvous deadline')
+                continue
             data = os.read(self.incoming, 4096)
             require(data, 'IPC closed before terminal message')
             self.buffer += data
         raw, self.buffer = self.buffer.split(b'\n', 1)
-        return json.loads(raw)
+        require(len(raw) < 4096, 'IPC record exceeds atomic pipe bound')
+        def pairs(items):
+            record = {}
+            for key, value in items:
+                require(key not in record, 'duplicate IPC field')
+                record[key] = value
+            return record
+        return json.loads(raw, object_pairs_hook=pairs)
 
     def pause(self, kind, **data):
         self.send(kind, **data)
@@ -573,7 +848,7 @@ def worker(args):
             error = state.get('execute_error', failure)
             stage = 'execute' if 'execute_error' in state else state['stage']
             raw = encode_worker_error(args.case, os.getpid(), channel.serial + 1, stage,
-                type(error).__name__, str(error), ''.join(traceback.format_exception(error)))
+                type(error).__name__, str(error), ''.join(traceback.format_exception(error)), state.get('second_ack_failure'))
             os.write(channel.outgoing, raw)
         except BaseException:
             pass
@@ -596,7 +871,7 @@ def worker_body(args, channel, state):
     owner = wrapper.WrapperRun()
     real = dict(mask=signal.pthread_sigmask, install=signal.signal, pending=signal.sigpending,
                 timedwait=signal.sigtimedwait, replace=os.replace, pidfd=os.pidfd_open, close=os.close,
-                popen=subprocess.Popen)
+                popen=subprocess.Popen, wait=subprocess.Popen.wait, low_wait=subprocess.Popen._wait)
     wait_code = subprocess.Popen.wait.__code__
     fds_before = fd_snapshot()
     old_mask = real['mask'](signal.SIG_BLOCK, set())
@@ -621,6 +896,29 @@ def worker_body(args, channel, state):
     second_rendezvous = False
     in_followon = False
     module_file = str(Path(wrapper.__file__).resolve())
+    method_codes = observer_methods(wrapper)
+    observer = HandlerObserver(owner, wrapper.WrapperRun.interrupt.__code__, method_codes,
+                               counts, max_active, lambda: in_followon)
+    wait_frames = []
+
+    def complete_handlers():
+        for record in observer.complete():
+            callback = signal.getsignal(record['signal'])
+            require(getattr(callback, '__self__', None) is owner
+                    and getattr(callback, '__func__', None) is wrapper.WrapperRun.interrupt,
+                    'callback owner identity differs')
+            handler_events.append(record)
+            channel.send('handler-return', case=args.case, **record)
+
+    def low_wait(process, timeout):
+        frame = sys._getframe(1)
+        require(frame.f_code is real['wait'].__code__ and frame.f_locals.get('self') is process,
+                'wait caller identity differs')
+        if process in processes and not any(previous is frame for previous in wait_frames):
+            require(len(wait_frames) < 3, 'wait frame bound exceeded')
+            wait_frames.append(frame)
+            channel.send('wait-enter', writer=process.pid, phase=owner.phase)
+        return real['low_wait'](process, timeout)
 
     def profile(frame, event, arg):
         nonlocal cancelled_seen
@@ -668,9 +966,23 @@ def worker_body(args, channel, state):
 
     def pause_second(masked=False):
         nonlocal second_rendezvous
+        complete_handlers()
         require(len(handler_events) == 1 and first not in real['pending'](), 'first delivery not distinct and completed')
         second_rendezvous = True
-        channel.pause('ready-second', phase=owner.phase, masked=masked, pending=sorted(real['pending']()))
+        channel.send('ready-second', phase=owner.phase, masked=masked, pending=sorted(real['pending']()), owner=id(owner), case=args.case)
+        try:
+            instruction = channel.receive(checkpoint=None if masked else complete_handlers)
+        except BaseException as error:
+            if masked:
+                raise
+            sample = second_ack_snapshot(handler_events, sorted(real['pending']()), first, second, phase,
+                owner.phase, args.case, (sys.implementation.name, sys.version, sys.executable, sys.flags.optimize))
+            state['second_ack_failure'] = sample
+            second_ack_diagnostic(sample)
+            if isinstance(error, ValueError) and str(error) == 'rendezvous deadline':
+                require(sample.count == 2 and not set(owner.signals) & set(sample.pending), 'second handler ACK missing')
+            raise
+        require(instruction['kind'] == 'continue', 'unexpected controller instruction')
         pending = sorted(real['pending']())
         kernel_events.append(dict(point='second-after-send', pending=pending))
         if masked:
@@ -680,6 +992,7 @@ def worker_body(args, channel, state):
                 (sys.implementation.name, sys.version, sys.executable, sys.flags.optimize))
             completed = sample.count == 2 and not set(owner.signals) & set(sample.pending)
             if not completed:
+                state['second_ack_failure'] = sample
                 second_ack_diagnostic(sample)
             require(completed, 'second handler ACK missing')
 
@@ -713,6 +1026,7 @@ def worker_body(args, channel, state):
         if Path(destination).name == 'output-manifest.json' and phase.startswith('published-'):
             first_rendezvous = True
             channel.pause('ready-first', phase=owner.phase, blocked=False)
+            complete_handlers()
             require(len(handler_events) == 1, 'published first handler ACK missing')
             if phase == 'published-unblocked':
                 pause_second()
@@ -761,10 +1075,12 @@ def worker_body(args, channel, state):
     subprocess.Popen = popen
     signal.signal, signal.pthread_sigmask, signal.sigtimedwait = install, mask, timedwait
     os.replace, os.pidfd_open = replace, pidfd
-    sys.setprofile(profile)
     refusal_before = refusal_after = None
     exception = None
     try:
+        observer.enable()
+        wait_identity = wait_provenance(real['popen'])
+        real['popen']._wait = low_wait
         if phase.startswith('caller-'):
             real['mask'](signal.SIG_BLOCK, {first})
             if phase == 'caller-pending':
@@ -784,6 +1100,7 @@ def worker_body(args, channel, state):
                     (not phase.startswith('caller-') and not isinstance(error, KeyboardInterrupt))):
                 state['execute_error'] = error
         state['stage'] = 'validation'
+        complete_handlers()
         if phase.startswith('caller-'):
             refusal_after = caller_state()
             require(refusal_before == refusal_after, 'caller state changed on refusal')
@@ -844,6 +1161,9 @@ def worker_body(args, channel, state):
         require(all(receipt['owned_writers_closed'] for receipt in receipts), 'invocation closure receipt absent')
         if phase == 'working-cleanup':
             require(any(receipt['owned_descendants_reaped'] for receipt in receipts), 'working descendants not reaped')
+        observer.close()
+        real['popen']._wait = real['low_wait']
+        wait_frames.clear()
         atomic(root / 'result.json', dict(case=args.case, mode='optimized' if sys.flags.optimize else 'normal',
             source=SOURCE_COMMIT, tree=SOURCE_TREE, pid=os.getpid(), session=os.getsid(0), phase=phase,
             first=first, second=second, handlers=handler_events, kernel=kernel_events, counts=counts,
@@ -851,19 +1171,24 @@ def worker_body(args, channel, state):
             caller_deliveries=callers, caller_restored=True, children=observed_children, writer_none=True, pidfds_closed=True,
             subprocesses_reaped=True, streams_closed=True, post_handoff_io=[], commands=commands,
             native_fds_before=fds_before, native_fds_after=fd_snapshot(),
+            observer_closed=True, wait_hook_restored=real['popen']._wait is real['low_wait'], wait_identity=wait_identity,
             custody=receipts, adapters=list(ADAPTERS), status='PASS', runtime=list(sys.version_info[:3])))
         channel.send('worker-closed', case=args.case, owned_closed=True)
     finally:
         failure_stage = state['stage']
         state['stage'] = 'restoration'
-        sys.setprofile(None)
-        subprocess.Popen = real['popen']
-        signal.signal, signal.pthread_sigmask, signal.sigtimedwait = real['install'], real['mask'], real['timedwait']
-        os.replace, os.pidfd_open = real['replace'], real['pidfd']
-        for sig, callback in old_handlers.items():
-            real['install'](sig, callback)
-        real['mask'](signal.SIG_SETMASK, old_mask)
-        state['stage'] = failure_stage
+        try:
+            observer.close()
+        finally:
+            real['popen']._wait = real['low_wait']
+            wait_frames.clear()
+            subprocess.Popen = real['popen']
+            signal.signal, signal.pthread_sigmask, signal.sigtimedwait = real['install'], real['mask'], real['timedwait']
+            os.replace, os.pidfd_open = real['replace'], real['pidfd']
+            for sig, callback in old_handlers.items():
+                real['install'](sig, callback)
+            real['mask'](signal.SIG_SETMASK, old_mask)
+            state['stage'] = failure_stage
 
 
 def validate_case(receipt, case, mode, pid, events):
@@ -875,9 +1200,11 @@ def validate_case(receipt, case, mode, pid, events):
     require(receipt['source'] == SOURCE_COMMIT and receipt['tree'] == SOURCE_TREE, 'receipt source differs')
     require(receipt['status'] == 'PASS' and receipt['runtime'] == [3, 12, 3], 'incomplete case')
     require(receipt['children'] == [] and all(receipt[key] is True for key in
-        ('writer_none', 'pidfds_closed', 'subprocesses_reaped', 'streams_closed', 'caller_restored'))
+        ('writer_none', 'pidfds_closed', 'subprocesses_reaped', 'streams_closed', 'caller_restored',
+         'observer_closed', 'wait_hook_restored'))
         and receipt['post_handoff_io'] == [], 'false closure')
     require(receipt['adapters'] == list(ADAPTERS), 'adapter inventory differs')
+    validate_wait_provenance(receipt['wait_identity'])
     require(receipt['native_fds_before'] == receipt['native_fds_after'], 'native descriptor identity differs')
     require(all(event.get('kind') in ('send', 'handler-return', 'ready-first', 'ready-second',
                 'caller-pending-ready', 'wait-enter', 'writer-ready', 'worker-closed') for event in events), 'unknown event')
@@ -891,7 +1218,7 @@ def validate_case(receipt, case, mode, pid, events):
     sends = [event for event in events if event['kind'] == 'send']
     require(all(event.get('pidfd_retained') is True for event in sends), 'send pidfd identity differs')
     delivery = [event['kind'] for event in events if event['kind'] not in ('wait-enter', 'writer-ready')]
-    acks = [{key: value for key, value in event.items() if key not in ('kind', 'pid', 'seq')}
+    acks = [{key: value for key, value in event.items() if key not in ('kind', 'pid', 'seq', 'case')}
             for event in events if event['kind'] == 'handler-return']
     kernel = receipt['kernel']
     handlers = receipt['handlers']
@@ -1048,6 +1375,8 @@ def controller(args):
                 channel = Channel(incoming, outgoing)
                 ready_writer = waiting_writer = None
                 first_sent = False
+                completions, second_sent = [], False
+                serial = 0
                 def send(sig):
                     nonlocal first_sent
                     require(time.monotonic() - launched_at < 25, 'worker deadline')
@@ -1059,6 +1388,9 @@ def controller(args):
                     events.append(event)
                     kind = event['kind']
                     require(event['pid'] == process.pid or kind == 'writer-ready', 'foreign IPC PID')
+                    if kind != 'writer-ready':
+                        serial += 1
+                        require(type(event.get('seq')) is int and event['seq'] == serial, 'IPC missing/duplicate/reordered')
                     if kind == 'worker-error':
                         seq = sum(event['pid'] == process.pid and event['kind'] != 'send' for event in events)
                         validate_worker_error(event, name, process.pid, seq)
@@ -1068,9 +1400,24 @@ def controller(args):
                         send(first)
                         channel.send('continue')
                     elif kind == 'ready-second':
-                        require(first_sent, 'second requested before first')
+                        require(first_sent and not second_sent and len(completions) == 1, 'second requested before first completion')
+                        masked = second_readiness(event, completions[0], case, process.pid)
                         send(second)
-                        channel.send('continue')
+                        second_sent = True
+                        if masked:
+                            channel.send('continue')
+                    elif kind == 'handler-return':
+                        ordinal = len(completions) + 1
+                        require(first_sent and ordinal <= 2 and (ordinal == 1 or
+                                second_sent and phase != 'published-masked'), 'unexpected handler completion')
+                        first_phase = 'installing' if phase == 'entry' else ('working' if phase == 'working-cleanup' else 'finishing')
+                        ack_phase = 'closing' if ordinal == 2 and phase == 'working-cleanup' else first_phase
+                        validate_completion(event, pid=process.pid, case=name,
+                            owner=completions[0]['owner'] if completions else event.get('owner'),
+                            signum=first if ordinal == 1 else second, phase=ack_phase, ordinal=ordinal)
+                        completions.append(event)
+                        if ordinal == 2:
+                            channel.send('continue')
                     elif kind == 'writer-ready':
                         require(phase == 'working-cleanup' and event['primary'] == event['pid']
                                 and event['session'] == event['pid']
@@ -1163,6 +1510,7 @@ def main():
     choices = parser.add_mutually_exclusive_group(required=True)
     choices.add_argument('--source-only', action='store_true')
     choices.add_argument('--profiler-observer-control', action='store_true')
+    choices.add_argument('--monitoring-observer-control', action='store_true')
     choices.add_argument('--real-os', type=Path)
     choices.add_argument('--upload-gate', type=Path)
     choices.add_argument('--worker-output', type=Path)
@@ -1178,6 +1526,8 @@ def main():
         print(json.dumps(source_only_check(args.source_checkout), sort_keys=True))
     elif args.profiler_observer_control:
         profiler_observer_control(args.source_checkout)
+    elif args.monitoring_observer_control:
+        monitoring_observer_control(args.source_checkout)
     elif args.upload_gate:
         upload_gate(args.upload_gate)
         print('closed=true')

@@ -63,6 +63,10 @@ for namespace, names in ((signal, ('signal', 'pthread_sigmask', 'sigpending', 's
         if hasattr(namespace, name):
             setattr(namespace, name, deny_kernel(name))
 sys.setprofile = deny_kernel('sys.setprofile')
+sys.settrace = deny_kernel('sys.settrace')
+if hasattr(sys, 'monitoring'):
+    for name in ('use_tool_id', 'free_tool_id', 'set_events', 'set_local_events', 'register_callback'):
+        setattr(sys.monitoring, name, deny_kernel('sys.monitoring.' + name))
 if FIXTURE_WRITES:
     fixture_root.mkdir()
     (fixture_root / '.git').mkdir()
@@ -113,9 +117,14 @@ def legal_case(case, mode='normal', pid=100):
         source=controls.SOURCE_COMMIT, tree=controls.SOURCE_TREE,
         status='PASS', runtime=[3, 12, 3], children=[], writer_none=True, pidfds_closed=True,
         subprocesses_reaped=True, streams_closed=True, caller_restored=True, post_handoff_io=[],
+        observer_closed=True, wait_hook_restored=True,
         adapters=list(controls.ADAPTERS), handlers=[], kernel=[], counts=counts, custody=[],
         caller_deliveries=[], refusal_before=None, refusal_after=None)
     receipt.update(native_fds_before={'0': '/dev/null'}, native_fds_after={'0': '/dev/null'})
+    receipt['wait_identity'] = {name: dict(ast_sha256=identity, source_sha256='a' * 64,
+        code_sha256='b' * 64, filename='/inert/subprocess.py', firstlineno=1)
+        for name, identity in controls.WAIT_AST.items()}
+    receipt['wait_identity']['module'] = dict(path='/inert/subprocess.py', sha256='c' * 64)
     events = []
     def event(kind, **data):
         events.append(dict(kind=kind, pid=pid, seq=1 + sum(e['kind'] != 'send' and e['pid'] == pid for e in events), **data))
@@ -124,7 +133,7 @@ def legal_case(case, mode='normal', pid=100):
     def handler(sig, owner_phase):
         record = dict(signal=sig, phase=owner_phase, cancelled=True, owner=7, handler=len(receipt['handlers']) + 1)
         receipt['handlers'].append(record)
-        event('handler-return', **record)
+        event('handler-return', case=name, **record)
     if phase == 'baseline':
         counts.update(popen=3, invoke=3, normalize=2)
         receipt['custody'] = [dict(pid=writer, custody_status='clean') for writer in (200, 201, 202)]
@@ -157,7 +166,7 @@ def legal_case(case, mode='normal', pid=100):
         send(first)
         handler(first, first_phase)
         ready_phase = 'closing' if phase == 'working-cleanup' else first_phase
-        event('ready-second', phase=ready_phase, masked=phase == 'published-masked', pending=[])
+        event('ready-second', phase=ready_phase, masked=phase == 'published-masked', pending=[], owner=7, case=name)
         send(second)
         if phase == 'entry':
             receipt['kernel'].append(dict(point='entry-first', pending=[first]))
@@ -252,8 +261,10 @@ def second_ack_fixture(events, pending, *, masked=False, old=False):
     def continuation(*args, **kwargs):
         if deliver_second:
             events.append(dict(signal=15))
+        return dict(kind='continue')
     namespace = dict(require=controls.require, handler_events=events, first=2, second=15, phase='entry',
-        real={'pending': query}, channel=SimpleNamespace(pause=continuation), owner=owner,
+        real={'pending': query}, channel=SimpleNamespace(send=lambda *args, **kwargs: None, receive=continuation), owner=owner,
+        complete_handlers=lambda: None, state={},
         args=SimpleNamespace(case='entry-2-15'), kernel_events=kernel,
         second_ack_snapshot=controls.second_ack_snapshot, second_ack_diagnostic=diagnostics.append,
         sys=SimpleNamespace(implementation=SimpleNamespace(name='cpython'), version='inert-version',
@@ -264,6 +275,243 @@ def second_ack_fixture(events, pending, *, masked=False, old=False):
 
 
 class SourceDataTests(unittest.TestCase):
+    def test_actual_wait_hook_delegates_once_and_preserves_unwind(self):
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
+        hook = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'low_wait')
+        wait = lambda: None
+        process = SimpleNamespace(pid=123)
+        frame = SimpleNamespace(f_code=wait.__code__, f_locals={'self': process})
+        sends, invocations = [], []
+        def original(child, timeout):
+            self.assertIs(child, process)
+            invocations.append(timeout)
+            if timeout == 2:
+                raise KeyboardInterrupt('genuine wait unwind')
+            return 17
+        namespace = dict(sys=SimpleNamespace(_getframe=lambda depth: frame), require=controls.require,
+            real={'wait': wait, 'low_wait': original}, processes=[process], wait_frames=[],
+            channel=SimpleNamespace(send=lambda *args, **kwargs: sends.append((args, kwargs))),
+            owner=SimpleNamespace(phase='working'))
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[hook], type_ignores=[])), '<inert-wait-hook>', 'exec'), namespace)
+        self.assertEqual(namespace['low_wait'](process, 1), 17)
+        with self.assertRaisesRegex(KeyboardInterrupt, 'genuine wait unwind'):
+            namespace['low_wait'](process, 2)
+        self.assertEqual(invocations, [1, 2])
+        self.assertEqual(sends, [(('wait-enter',), dict(writer=123, phase='working'))])
+        frame.f_locals['self'] = object()
+        with self.assertRaisesRegex(ValueError, 'wait caller identity differs'):
+            namespace['low_wait'](process, 3)
+        self.assertEqual(invocations, [1, 2])
+
+    def test_blocked_first_and_caller_pending_do_not_wait_for_handler_ack(self):
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        controller = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'controller')
+        branch = next(node for node in ast.walk(controller) if isinstance(node, ast.If)
+                      and ast.unparse(node.test) == "kind in ('ready-first', 'caller-pending-ready')")
+        for phase in ('entry', 'caller-pending'):
+            sends, instructions = [], []
+            exec(compile(ast.fix_missing_locations(ast.Module(body=copy.deepcopy(branch.body), type_ignores=[])),
+                         '<inert-blocked-first>', 'exec'), dict(first=2, send=sends.append,
+                         channel=SimpleNamespace(send=instructions.append)))
+            self.assertEqual((sends, instructions), ([2], ['continue']))
+
+    def test_old_profile_counterexample_has_no_new_completion_evidence(self):
+        original = controls.sys
+        try:
+            owner = SimpleNamespace(cancelled=True, signals=(2, 15))
+            controls.sys = SimpleNamespace(_getframe=lambda depth: None)
+            observer = controls.HandlerObserver(owner, (lambda: None).__code__, {}, {}, {}, lambda: False)
+            self.assertEqual(observer.complete(), [])
+            with self.assertRaises(ValueError):
+                controls.second_readiness(dict(kind='ready-second', case='entry-2-2', pid=100, seq=4,
+                    owner=id(owner), phase='installing', masked=False, pending=[]), None, EXPECTED_CASES[1], 100)
+        finally:
+            controls.sys = original
+
+    def test_monitoring_mainline_completion_requires_actual_start_identity_exit_and_latch(self):
+        code, other = (lambda: None).__code__, (lambda value: value).__code__
+        original = controls.sys
+        try:
+            for mutation in ('legal', 'start-only', 'on-stack', 'not-cancelled', 'owner', 'code', 'signum',
+                             'overflow', 'missing-frame', 'changed-code', 'changed-owner', 'changed-signum', 'bound'):
+                owner = SimpleNamespace(signals=(2, 15), phase='working', cancelled=False)
+                frame = SimpleNamespace(f_code=code, f_locals=dict(self=owner, signum=2), f_back=None)
+                current = [frame]
+                controls.sys = SimpleNamespace(_getframe=lambda depth: current[0])
+                observer = controls.HandlerObserver(owner, code, {}, {}, {}, lambda: False)
+                if mutation == 'owner':
+                    frame.f_locals['self'] = object()
+                if mutation == 'signum':
+                    frame.f_locals['signum'] = 10
+                if mutation == 'missing-frame':
+                    current[0] = SimpleNamespace(f_code=other, f_back=None)
+                observer.start(other if mutation == 'code' else code, 0)
+                if mutation == 'changed-code':
+                    frame.f_code = other
+                if mutation == 'changed-owner':
+                    frame.f_locals['self'] = object()
+                if mutation == 'changed-signum':
+                    frame.f_locals['signum'] = 15
+                if mutation == 'overflow':
+                    observer.start(code, 0)
+                    observer.start(code, 0)
+                if mutation == 'start-only':
+                    self.assertEqual(observer.receipted, 0)
+                    continue
+                owner.cancelled = mutation != 'not-cancelled'
+                if mutation != 'on-stack':
+                    current[0] = SimpleNamespace(f_code=other, f_back=None)
+                if mutation == 'bound':
+                    for unused in range(65):
+                        current[0] = SimpleNamespace(f_code=other, f_back=current[0])
+                if mutation in ('legal', 'on-stack'):
+                    result = observer.complete()
+                    self.assertEqual(len(result), int(mutation == 'legal'))
+                    if result:
+                        self.assertEqual(result[0], dict(signal=2, phase='working', cancelled=True, handler=1, owner=id(owner)))
+                        self.assertEqual(observer.started, [])
+                        self.assertEqual(observer.complete(), [])
+                else:
+                    with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                        observer.complete()
+        finally:
+            controls.sys = original
+
+    def test_monitoring_scope_cleanup_order_and_existing_setup_refusal(self):
+        original = controls.sys
+        try:
+            for preexisting in ('none', 'profile', 'trace', 'tool', 'callback'):
+                calls, tools, local, callbacks = [], {}, {}, {}
+                old_callback = lambda *args: None
+                if preexisting == 'tool':
+                    tools[3] = 'other-tool'
+                if preexisting == 'callback':
+                    callbacks[1] = old_callback
+                def register(tool, event, callback):
+                    calls.append(('callback', callback))
+                    previous = callbacks.get(event)
+                    callbacks[event] = callback
+                    return previous
+                def use(tool, name):
+                    calls.append(('use', tool))
+                    tools[tool] = name
+                def free(tool):
+                    calls.append(('free', tool))
+                    tools.pop(tool)
+                def set_local(tool, code, event):
+                    calls.append(('local', code, event))
+                    local[code] = event
+                monitoring = SimpleNamespace(events=SimpleNamespace(PY_START=1), get_tool=tools.get,
+                    get_events=lambda tool: 0, get_local_events=lambda tool, code: local.get(code, 0),
+                    use_tool_id=use, free_tool_id=free, register_callback=register,
+                    set_events=lambda tool, value: calls.append(('global', value)), set_local_events=set_local)
+                controls.sys = SimpleNamespace(monitoring=monitoring, getprofile=lambda: preexisting == 'profile' or None,
+                    gettrace=lambda: preexisting == 'trace' or None)
+                observer = controls.HandlerObserver(object(), (lambda: None).__code__, {}, {}, {}, lambda: False)
+                if preexisting == 'none':
+                    observer.enable()
+                    self.assertEqual(list(local.values()), [1])
+                    observer.close()
+                    self.assertEqual(list(local.values()), [0])
+                    self.assertIsNone(callbacks[1])
+                    self.assertEqual(calls[-1], ('free', 3))
+                else:
+                    with self.assertRaises(ValueError):
+                        observer.enable()
+                    if preexisting == 'callback':
+                        self.assertIs(callbacks[1], old_callback)
+                    else:
+                        self.assertEqual(calls, [])
+        finally:
+            controls.sys = original
+
+    def test_controller_actual_second_branches_require_completion_before_continue(self):
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        controller = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'controller')
+        branches = {kind: next(node for node in ast.walk(controller) if isinstance(node, ast.If)
+                    and ast.unparse(node.test) == "kind == '" + kind + "'").body
+                    for kind in ('ready-second', 'handler-return')}
+        def execute(kind, namespace):
+            exec(compile(ast.fix_missing_locations(ast.Module(body=copy.deepcopy(branches[kind]), type_ignores=[])),
+                         '<inert-controller-branch>', 'exec'), namespace)
+        for case in (EXPECTED_CASES[1], EXPECTED_CASES[5], EXPECTED_CASES[13]):
+            receipt, events = legal_case(case)
+            first_ack = next(e for e in events if e['kind'] == 'handler-return')
+            ready = next(e for e in events if e['kind'] == 'ready-second')
+            sends, continuations = [], []
+            namespace = dict(require=controls.require, validate_completion=controls.validate_completion,
+                second_readiness=controls.second_readiness, first_sent=True, second_sent=False,
+                completions=[first_ack], case=case, name=case[0], phase=case[1], first=case[2], second=case[3],
+                process=SimpleNamespace(pid=100), send=sends.append,
+                channel=SimpleNamespace(send=continuations.append), event=ready)
+            execute('ready-second', namespace)
+            self.assertEqual(sends, [case[3]])
+            masked = case[1] == 'published-masked'
+            self.assertEqual(continuations, ['continue'] if masked else [])
+            if not masked:
+                second_ack = [e for e in events if e['kind'] == 'handler-return'][1]
+                for field, wrong in (('pid', 101), ('owner', 8), ('signal', 10), ('handler', 1),
+                                     ('case', 'wrong'), ('phase', 'wrong')):
+                    namespace['event'] = dict(second_ack, **{field: wrong})
+                    with self.subTest(field=field), self.assertRaises(ValueError):
+                        execute('handler-return', namespace)
+                    self.assertEqual(continuations, [])
+                namespace['event'] = second_ack
+                execute('handler-return', namespace)
+                self.assertEqual(continuations, ['continue'])
+                with self.assertRaises(ValueError):
+                    execute('handler-return', namespace)
+            with self.assertRaises(ValueError):
+                execute('ready-second', namespace)
+
+    def test_frozen_failure_sample_encoder_schema_and_parent_branch(self):
+        events, pending = [dict(signal=2)], [15]
+        sample = controls.second_ack_snapshot(events, pending, 2, 15, 'entry', 'installing', 'entry-2-15',
+            ('cpython', '\U0001f600' * 1000, '/inert/python', 0))
+        events.append(dict(signal=15))
+        pending.clear()
+        raw = controls.encode_worker_error('entry-2-15', 100, 4, 'execute', '\U0001f600' * 1000,
+            '\U0001f600' * 10000, '\U0001f600' * 10000, sample)
+        self.assertLess(len(raw), 4096)
+        event = json.loads(raw)
+        self.assertTrue(controls.validate_worker_error(event, 'entry-2-15', 100, 4))
+        self.assertEqual(event['second_ack_failure']['signals'], [2])
+        self.assertEqual(event['second_ack_failure']['pending'], [15])
+        for mutate in (lambda r: r.update(extra=1), lambda r: r.update(count=True),
+                       lambda r: r.update(pair=[15, 2]), lambda r: r.update(owner_phase='working'),
+                       lambda r: r.update(signals=[10]), lambda r: r.update(pending=[15, 15]),
+                       lambda r: r.update(signals_omitted=1), lambda r: r.update(interpreter=['x'])):
+            malformed = copy.deepcopy(event)
+            mutate(malformed['second_ack_failure'])
+            with self.assertRaises(ValueError):
+                controls.validate_worker_error(malformed, 'entry-2-15', 100, 4)
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        controller = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'controller')
+        branch = next(node for node in ast.walk(controller) if isinstance(node, ast.If)
+                      and ast.unparse(node.test) == "kind == 'worker-error'")
+        logged = []
+        with self.assertRaisesRegex(ValueError, 'owned closure unproven'):
+            exec(compile(ast.fix_missing_locations(ast.Module(body=copy.deepcopy(branch.body), type_ignores=[])),
+                '<inert-parent-error>', 'exec'), dict(event=event, events=[dict(kind='ready-first', pid=100)] * 3 + [event],
+                process=SimpleNamespace(pid=100), name='entry-2-15', mode='normal',
+                validate_worker_error=controls.validate_worker_error,
+                diagnostic=lambda label, **data: logged.append(data)))
+        self.assertEqual(logged[0]['second_ack_failure'], event['second_ack_failure'])
+
+    def test_monitoring_admission_workflow_is_required_before_both_actual_modes(self):
+        workflow = (SOURCE / '.github/workflows/vkd3d-cmp-os-controls.yml').read_text()
+        self.assertEqual(workflow.count('--monitoring-observer-control'), 2)
+        self.assertLess(workflow.index('Hosted code-local monitoring admission'), workflow.index('Actual normal OS controls'))
+        self.assertIn("steps.monitoring.outcome == 'success'", workflow)
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        observer = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'HandlerObserver')
+        start = next(node for node in observer.body if isinstance(node, ast.FunctionDef) and node.name == 'start')
+        calls = [ast.unparse(node.func) for node in ast.walk(start) if isinstance(node, ast.Call)]
+        self.assertFalse(any('channel' in call or 'json' in call or 'select' in call or 'wait' in call for call in calls))
+        self.assertNotIn('PY_RETURN', ast.unparse(observer))
+        self.assertNotIn('PY_UNWIND', ast.unparse(observer))
+
     def test_hosted_control_inert_missing_profile_events_refuses_and_restores(self):
         tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
         control = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'profiler_observer_control')
@@ -346,13 +594,16 @@ class SourceDataTests(unittest.TestCase):
             pause = next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == 'pause_second')
             decision = pause.body[-1].orelse
             controls.sys.stderr = Stream(fail=True)
+            worker_state = {}
             with self.assertRaisesRegex(ValueError, '^second handler ACK missing$') as caught:
                 exec(compile(ast.fix_missing_locations(ast.Module(body=copy.deepcopy(decision), type_ignores=[])), '<inert-decision>', 'exec'),
                     dict(sample=sample, second_ack_snapshot=lambda *args: sample, handler_events=[], pending=[],
+                         state=worker_state,
                          first=2, second=15, phase='entry', owner=SimpleNamespace(signals=(2, 15), phase='installing'),
                          args=SimpleNamespace(case='entry-2-15'), sys=sys, require=controls.require,
                          second_ack_diagnostic=controls.second_ack_diagnostic))
             self.assertIsNone(caught.exception.__cause__)
+            self.assertIs(worker_state['second_ack_failure'], sample)
         finally:
             controls.sys.stderr = original
 

@@ -703,6 +703,135 @@ class Controls(unittest.TestCase):
         self.assertEqual(len(r.native_commands(native_log(suspension,recipe),b'',recipe)),1)
         with self.assertRaisesRegex(ValueError,'serial project start'):r.native_commands(native_log(suspension.replace(b'       FinalizeBuildStatus:\n',b''),recipe),b'',recipe)
 
+    def test_90_c4200_interleaved_active_compiler_progress(self):
+        recipe=r.recipe('D:/a/_temp','observed','Od',census=True)
+        compile=('ClCompile:\n'
+                 '  C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /I"D:\\a\\_temp\\closure-census-evidence\\sources\\obs'
+                 'erved-Od\\include" /I"D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\third_party\\mmeffect\\include" /I"D:\\a\\_temp\\closure-census-build\\observed-Od\\native\\'
+                 'generated" /nologo /W3 /WX- /diagnostics:column /MP4 /Od /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D _CRT_SECURE_NO_WARNINGS /D "CMAKE_INTDIR=\\"Release\\"" /'
+                 'EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /openmp /std:c++17 /permissive- /Fo"mikudancestudio_core.dir\\Release\\\\" /Fd"D:\\a\\_temp\\closure-cens'
+                 'us-build\\observed-Od\\native\\Release\\mikudancestudio_core.pdb" /external:W0 /Gd /TP /wd4267 /wd4244 /wd4245 /errorReport:queue  /external:I "C:/Users/runneradmin'
+                 '/.conan2/p/b/bullebf46760ffc5b9/p/include" /utf-8 /Zc:alignedNew- "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\mmd_app.cpp" "D:\\a\\_temp\\closu'
+                 're-census-evidence\\sources\\observed-Od\\src\\app\\globals.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\app_ctor.cpp" "D:\\a\\_temp\\closure-ce'
+                 'nsus-evidence\\sources\\observed-Od\\src\\app\\app_defaults.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\main\\charset_conv.cpp" "D:\\a\\_temp\\closu'
+                 're-census-evidence\\sources\\observed-Od\\src\\math\\color_lerp.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\path_utils.cpp" "D:\\a\\_temp\\c'
+                 'losure-census-evidence\\sources\\observed-Od\\src\\window\\window_init.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_init.cpp" "D:\\a\\_te'
+                 'mp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_font.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\wndproc.cpp" "D:\\a\\_te'
+                 'mp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\localize_ui.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\wndproc_aux_window'
+                 's.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\command_dispatch.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\wind'
+                 'ow\\frame_line_edit.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\accessory_paste.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obse'
+                 'rved-Od\\src\\media\\wave_audio.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\media\\wave_data_chunk.cpp" "D:\\a\\_temp\\closure-census-evidence\\sou'
+                 'rces\\observed-Od\\src\\media\\media_load.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\command_impl.cpp" "D:\\a\\_temp\\closure-census-evide'
+                 'nce\\sources\\observed-Od\\src\\app\\frame_driver.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\playback_catchup.cpp" "D:\\a\\_temp\\closure-cens'
+                 'us-evidence\\sources\\observed-Od\\src\\app\\playback_state.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\timeline_advance.cpp" "D:\\a\\_temp\\cl'
+                 'osure-census-evidence\\sources\\observed-Od\\src\\app\\frame_modes.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\frame_modes_bone.cpp" "D:\\a\\_'
+                 'temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\key_ladder.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\pump_edit_keys.cpp" "D:'
+                 '\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\pump_navigation.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\physics\\physics_cr'
+                 'eate.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\physics\\physics_frame.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\phy'
+                 'sics\\scene_create.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\physics\\scene_dispose.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observ'
+                 'ed-Od\\src\\render\\d3d_init.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\render_states.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources'
+                 '\\observed-Od\\src\\render\\stereo_nvapi.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\frame_scene.cpp" "D:\\a\\_temp\\closure-census-evidenc'
+                 'e\\sources\\observed-Od\\src\\render\\sprite_overlay.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\overlay_producers.cpp" "D:\\a\\_temp\\closu'
+                 're-census-evidence\\sources\\observed-Od\\src\\render\\capture_downsample.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\debug_geometry.cpp"'
+                 ' "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\accessory.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\model_rend'
+                 'erers.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\bg_overlay.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render'
+                 '\\device_reset.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\avi_record_start.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od'
+                 '\\src\\app\\record_readback.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\dshow_record_graph.cpp" "D:\\a\\_temp\\closure-census-evidence\\source'
+                 's\\observed-Od\\src\\model\\model_init.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\path_resolve.cpp" "D:\\a\\_temp\\closure-census-evidence\\'
+                 'sources\\observed-Od\\src\\model\\pmd_load.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\bone_transform.cpp" "D:\\a\\_temp\\closure-census-evi'
+                 'dence\\sources\\observed-Od\\src\\model\\model_keyframe_advance.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\model_keyframe_edit.cpp" "D:\\a'
+                 '\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\model_key_reduction.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\bone_edi'
+                 't_undo.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\model_frame_seek.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\'
+                 'model\\vmd_load.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\track_apply.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\s'
+                 'rc\\model\\key_registrars.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\morph_apply.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obse'
+                 'rved-Od\\src\\model\\model_skinning.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\pmx_load.cpp" "D:\\a\\_temp\\closure-census-evidence\\source'
+                 's\\observed-Od\\src\\model\\add_model.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\model_query_helpers.cpp" "D:\\a\\_temp\\closure-census-evi'
+                 'dence\\sources\\observed-Od\\src\\model\\model_dispose.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\bone_sort.cpp" "D:\\a\\_temp\\closure-cens'
+                 'us-evidence\\sources\\observed-Od\\src\\model\\post_load_init.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\fill_panel.cpp" "D:\\a\\_temp\\clo'
+                 'sure-census-evidence\\sources\\observed-Od\\src\\window\\wm_paint.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_timeline_gfx.cpp" "D:\\a\\'
+                 '_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_control_text.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_ctlcolor'
+                 '.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_edit_commit.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\'
+                 'dialog_procs.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\frame_range_apply.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed'
+                 '-Od\\src\\io\\pmm_save.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\io\\io_device_helpers.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obser'
+                 'ved-Od\\src\\io\\vpd_file.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\io\\vmd_save.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od'
+                 '\\src\\io\\pmm_load_dispatch.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\io\\pmm_load_v2.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obser'
+                 'ved-Od\\src\\io\\pmm_playback_options.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\io\\pmm_load_v1.cpp" "D:\\a\\_temp\\closure-census-evidence\\sour'
+                 'ces\\observed-Od\\src\\window\\ui_scroll_mouse.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_panel_paint.cpp" "D:\\a\\_temp\\closure-censu'
+                 's-evidence\\sources\\observed-Od\\src\\window\\ui_refresh.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_notify.cpp" "D:\\a\\_temp\\closure-'
+                 'census-evidence\\sources\\observed-Od\\src\\window\\ui_hscroll.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_dropfiles.cpp" "D:\\a\\_temp\\'
+                 'closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_panel_sweep.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_view_refresh.cp'
+                 'p" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_model_reload.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui'
+                 '_selection_reeval.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_editor_click.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obser'
+                 'ved-Od\\src\\window\\timeline_selection.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_frame_step.cpp" "D:\\a\\_temp\\closure-census-evide'
+                 'nce\\sources\\observed-Od\\src\\window\\ui_frame_refresh.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_mousemove.cpp" "D:\\a\\_temp\\closur'
+                 'e-census-evidence\\sources\\observed-Od\\src\\window\\ui_windowsize.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\mic_window.cpp" "D:\\a\\_te'
+                 'mp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\subsystem_init.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\reset_app_state.cpp" '
+                 '"D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\scene_ownership.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\app_utiliti'
+                 'es.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\shutdown_cleanup.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\on'
+                 'i_kinect.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\oni_skeleton_pump.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src'
+                 '\\io\\vsq_load.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\dialog_select_ops.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed'
+                 '-Od\\src\\window\\ui_viewport_refresh.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_viewport_layout.cpp" "D:\\a\\_temp\\closure-census-ev'
+                 'idence\\sources\\observed-Od\\src\\window\\ui_mouse_misc.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\ui_palette.cpp" "D:\\a\\_temp\\closure-'
+                 'census-evidence\\sources\\observed-Od\\src\\window\\command_file_menu.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\command_view_menu.cpp" '
+                 '"D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\physics_model_dialog.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\'
+                 'model_order_dialog.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\gravity_setting_dialog.cpp" "D:\\a\\_temp\\closure-census-evidence\\sourc'
+                 'es\\observed-Od\\src\\window\\english_name_dialog.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\enhance_model_io.cpp" "D:\\a\\_temp\\closure-'
+                 'census-evidence\\sources\\observed-Od\\src\\window\\misc_dialogs.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\command_frame_edit.cpp" "D:\\'
+                 'a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\frame_clipboard.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\global_key'
+                 '_registration.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\command_panel_toggles.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\obs'
+                 'erved-Od\\src\\window\\bone_pose_clipboard.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\window\\bone_pose_edit.cpp" "D:\\a\\_temp\\closure-census-e'
+                 'vidence\\sources\\observed-Od\\src\\window\\command_frame_register.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\features\\dialog_helpers.cpp" "D:\\'
+                 'a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\features\\audio_pose_helpers.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\draw'
+                 '_glyph.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\toon_textures.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\re'
+                 'nder\\scene_font.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\render\\mme\\mme_bridge.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed'
+                 '-Od\\src\\exports\\effect_api.cpp" "D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\app\\late_ports.cpp"'
+                 '\n').encode()
+        rows=['D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\include\\mikudancestudio\\subrecord_layout.hpp(206,11): warning C4200: nonstandard extension used: zero-sized array in struct/union [D:\\a\\_temp\\closure-census-build\\observed-Od\\native\\mikudancestudio_core.vcxproj]', '  bone_sort.cpp', "  (compiling source file '../../../closure-census-evidence/sources/observed-Od/src/model/model_skinning.cpp')", '      D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\include\\mikudancestudio\\subrecord_layout.hpp(206,11):', '      This member will be ignored by a defaulted constructor or copy/move assignment operator', '      D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\include\\mikudancestudio\\subrecord_layout.hpp(206,11):', '      the template instantiation context (the oldest one first) is', '          D:\\a\\_temp\\closure-census-evidence\\sources\\observed-Od\\src\\model\\model_skinning.cpp(667,20):', "          see reference to class template instantiation 'mikudancestudio::mdl::SkinnedVertex<0>' being compiled"]
+        self.assertLess(len(compile)+len('\n'.join(rows).encode()),64*1024)
+        def log(command,context):return native_log(command+('\n'.join(context)+'\n').encode(),recipe,'mikudancestudio_core','6')
+        baseline=rows[:1]+rows[2:]
+        expected=r.native_commands(native_log(compile,recipe,'mikudancestudio_core','6'),b'',recipe)
+        self.assertEqual(r.native_commands(log(compile,baseline),b'',recipe),expected)
+        self.assertEqual(r.native_commands(log(compile,rows),b'',recipe),expected)
+        self.assertEqual(expected[0][1:],r.command_words(compile.decode().splitlines()[1].split('CL.exe ',1)[1]))
+        self.assertIn('/MP4',expected[0]);self.assertEqual(len(expected[0]),184)
+        for prefix in (['  bone_sort.cpp','  accessory.cpp'],['  BONE_SORT.CPP']):
+            self.assertEqual(r.native_commands(log(compile,rows[:1]+prefix+rows[2:]),b'',recipe),expected)
+        for flag in ('/O1','-O1','/Ox'):
+            continued=log(compile,rows+["  "+flag])
+            self.assertEqual(r.native_commands(continued,b'',recipe),[expected[0]+[flag]])
+        bad_prefixes=[['  unknown.cpp'],['  bone_sort.cpp','  bone_sort.cpp'],['  bone_sort.cpp','  BONE_SORT.CPP'],
+                      [' bone_sort.cpp'],['   bone_sort.cpp'],['  bone_sort.cpp /O1'],['  /O1'],['  -O1'],
+                      ['  "bone_sort.cpp"'],["  'bone_sort.cpp'"],['  src/model/bone_sort.cpp'],
+                      ['  C:\\src\\bone_sort.cpp'],['  @bone_sort.cpp'],['  -bone_sort.cpp'],['  /bone_sort.cpp'],
+                      ['     6>bone_sort.cpp'],['     5>bone_sort.cpp'],['  '],['arbitrary text'],['Build succeeded.'],
+                      ['Lib:'],['ClCompile:'],['  C:\\VS\\cl.exe /c bone_sort.cpp'],[rows[0]],
+                      [rows[0].replace('mikudancestudio_core.vcxproj','foreign.vcxproj')],
+                      ['     6>Done Building Project "'+str(r.PureWindowsPath(recipe['native_target'])/'mikudancestudio_core.vcxproj')+'" (default targets).'],
+                      ['     1>Project "'+str(r.PureWindowsPath(recipe['native_target'])/'foreign.vcxproj')+'" on node 1 (default targets).']]
+        for prefix in bad_prefixes:
+            with self.subTest(prefix=prefix),self.assertRaises(ValueError):r.native_commands(log(compile,rows[:1]+prefix+rows[2:]),b'',recipe)
+        bone=str(r.PureWindowsPath(recipe['source'])/'src/model/bone_sort.cpp').encode()
+        for command in (compile.replace(bone,bone.replace(b'bone_sort',b'unknown')),
+                        compile.rstrip()+b' "'+bone+b'"\n',
+                        compile.rstrip()+b' "'+str(r.PureWindowsPath(recipe['source'])/'foreign/bone_sort.cpp').encode()+b'"\n',
+                        compile.replace(b'model_skinning.cpp',b'foreign_skinning.cpp')):
+            with self.subTest(command=command[-180:]),self.assertRaises(ValueError):r.native_commands(log(command,rows),b'',recipe)
+        for index in range(2,len(rows)):
+            for change in ('missing','altered','swapped'):
+                bad=rows[:]
+                if change=='missing':bad.pop(index)
+                elif change=='altered':bad[index]+=' /O1'
+                else:bad[index],bad[index-1]=bad[index-1],bad[index]
+                with self.subTest(index=index,change=change),self.assertRaises(ValueError):r.native_commands(log(compile,bad),b'',recipe)
+        for index in range(1,len(rows)):
+            with self.subTest(truncated=index),self.assertRaises(ValueError):r.native_commands(log(compile,rows[:index]),b'',recipe)
+        for index in range(3,len(rows)):
+            with self.subTest(interior=index),self.assertRaises(ValueError):r.native_commands(log(compile,rows[:index]+['  bone_sort.cpp']+rows[index:]),b'',recipe)
+        with self.assertRaises(ValueError):r.native_commands(log(compile,[rows[0],'  bone_sort.cpp']),b'',recipe)
+        for stderr in (rows[0],rows[1],rows[2]):
+            with self.subTest(stderr=stderr),self.assertRaisesRegex(ValueError,'unordered native stderr'):r.native_commands(log(compile,rows),stderr.encode(),recipe)
+
     def test_25_project_output_preserves_full_owner_path(self):
         recipe=r.recipe('D:/a/_temp','control','Od');root=r.PureWindowsPath(recipe['native_target'])
         owner=root/'mikudancestudio_core.vcxproj'

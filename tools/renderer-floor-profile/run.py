@@ -1602,6 +1602,11 @@ def command_words(line):
     return result
 
 
+def _compiler_progress(line,indent):
+    token=line[len(indent):] if line.startswith(indent) else ''
+    return token.lower() if re.fullmatch(r'[^\\/\s]+[.]cpp',token,re.I) else None
+
+
 def native_commands(stdout,stderr,r):
     require(not stderr.strip(),'unordered native stderr')
     require(r['commands']['native-build'][-3:]==['--parallel','1','--verbose'],'serial native recipe')
@@ -1660,6 +1665,13 @@ def native_commands(stdout,stderr,r):
             else:
                 require(source==PureWindowsPath(r['source'])/'include/mikudancestudio/subrecord_layout.hpp' and (warning[2],warning[3])==('206','11') and
                         warning[5]=='nonstandard extension used: zero-sized array in struct/union','closed C4200 diagnostic')
+                progress=set()
+                while at<len(lines):
+                    basename=_compiler_progress(lines[at],indent)
+                    if basename is None:break
+                    require(not basename.startswith(('-', '@')) and not any(char in basename for char in '"\':<>|?*') and
+                            basename not in progress and sum(path.name.lower()==basename for path in sources)==1,'C4200 compiler progress identity')
+                    progress.add(basename);at+=1
                 require(at+7<=len(lines),'truncated C4200 diagnostic')
                 context=lines[at:at+7]
                 compiled=re.fullmatch(re.escape(indent)+r"\(compiling source file '([^']+)'\)",context[0])
@@ -1697,8 +1709,9 @@ def native_commands(stdout,stderr,r):
             require(not re.match(r'(?:"?[/-][A-Za-z]|"?@|"?[A-Za-z]:.*[.](?:cpp|obj|lib)|\S+[.](?:cpp|obj|lib)(?:["\s]|$)|\(compiling source file|This member|the template instantiation|see reference|.*warning C|.*\(\d+,\d+\):)',text,re.I),'orphan native argument or diagnostic')
             continue
         continuation=line[len(indent):] if not number and line.startswith(indent) else ''
-        if task=='ClCompile' and re.fullmatch(r'[^\\/\s]+[.]cpp',continuation,re.I):
-            require(continuation.lower() in [PureWindowsPath(v).name.lower() for v in active[1:] if v.lower().endswith('.cpp')],'unrelated compiler progress');continue
+        progress=_compiler_progress(line,indent) if not number and task=='ClCompile' else None
+        if progress is not None:
+            require(progress in [PureWindowsPath(v).name.lower() for v in active[1:] if v.lower().endswith('.cpp')],'unrelated compiler progress');continue
         if task=='Link' and re.fullmatch(r'\s+Creating library .+[.]lib and object .+[.]exp',line):continue
         require(task in ('ClCompile','Lib','Link') and continuation and not continuation[0].isspace(),'ambiguous native command content')
         args=command_words(continuation)

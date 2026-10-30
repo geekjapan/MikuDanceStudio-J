@@ -1211,7 +1211,6 @@ def semantic_peer(capture, overrides):
     require(set(records) <= {ref['path'] for ref in capture.authority.commands}, 'known negative command record')
     peer = candidate_capture(capture, {name: raw for name, raw in overrides.items() if name not in records})
     if records:
-        # Negative peers bind explicit mutated bytes but keep the producer's closed record commitments.
         content = {**peer.content, **records}
         content['artifact-manifest.json'] = encode_json({name: digest(raw) for name, raw in content.items()
                                                         if name != 'artifact-manifest.json'})

@@ -20,6 +20,9 @@ BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v6-witness-extent'
 CENSUS_SCHEMA = 'mds-renderer-required-closure-census-v1'
+CENSUS_MANIFEST_REPRESENTATION = 'bounded-graph-references-v1'
+CENSUS_BUILDS = ('control-Od','observed-Od','control-O2','observed-O2')
+CENSUS_STATUSES = ('CENSUS_INCOMPLETE_UNRESOLVED','CENSUS_COMPLETE_DIAGNOSTIC_ONLY')
 CENSUS_BASE = 'b1d81447991df6d1e530f8032170d1a8c308c56f'
 CENSUS_PATHS = ['.github/workflows/renderer-closure-census.yml'] + [
     'tools/renderer-floor-profile/'+name for name in ('run.py','observer.rs','test_run.py')]
@@ -453,23 +456,28 @@ def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None
 
 
 def write_bound_document(path,value):
+    binding_path=path.with_name(path.name+'.binding.json')
     try:bound_preflight(value)
     except BoundDocumentLimit as error:
-        return {'schema':BOUND_SCHEMA,'kind':'incomplete','reason':str(error),
+        witness={'schema':BOUND_SCHEMA,'kind':'incomplete','phase':'preflight','reason':str(error),
                 'original_created':False,'semantic_status':'UNRUN'}
+        binding_path.write_bytes(bound_bytes(witness))
+        return witness
     raw=bound_bytes(value)
     path.write_bytes(raw)
+    original={'name':path.name,'size':len(raw),'sha256':digest(raw)}
     try:_,index,pages=bound_document(value,path.name,serialized=raw)
     except BoundDocumentLimit as error:
-        path.with_name(path.name+'.binding.json').write_bytes(bound_bytes({
-            'schema':BOUND_SCHEMA,'kind':'incomplete','reason':str(error),
-            'original':{'name':path.name,'size':len(raw),'sha256':digest(raw)},
-            'semantic_status':'UNRUN'}))
-        return
+        witness={'schema':BOUND_SCHEMA,'kind':'incomplete','phase':'partition','reason':str(error),
+                 'original_created':True,'original':original,'semantic_status':'UNRUN'}
+        binding_path.write_bytes(bound_bytes(witness))
+        return witness
 
     for name,body in pages.items():
         target=path.parent/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(body)
-    path.with_name(path.name+'.binding.json').write_bytes(index)
+    binding_path.write_bytes(index)
+    return {'kind':'complete','binding':{'name':binding_path.name,'size':len(index),'sha256':digest(index)},
+            'original':original}
 
 
 def bound_json(raw):
@@ -581,6 +589,73 @@ def admit_bound_document(binding_name,inventory,read):
     require(next(stream,None) is None,'no extra bounded records')
     raw=bound_bytes(result)
     require(len(raw)==original['size'] and digest(raw)==original['sha256'],'reconstructed exact opaque serialization binding')
+    return result
+
+
+def admit_census_manifest(inventory,read):
+    """Read owned producer files or an externally authenticated portable inventory."""
+    require(type(inventory) is dict and len(inventory)<=200000,'bounded external member count')
+    for name in inventory:bound_name(name)
+    def document(prefix,original):
+        scoped={}
+        for name,row in inventory.items():
+            if not name.startswith(prefix):continue
+            local=name[len(prefix):]
+            if local in (original,original+'.binding.json') or local.casefold().startswith((original+'.pages/').casefold()):
+                require(type(row) is dict and set(row)=={'mode','size','sha256'} and
+                        type(row['mode']) is int and row['mode']==0o644,'required Census JSON portable mode')
+            scoped[local]={key:row[key] for key in ('size','sha256')}
+        return admit_bound_document(original+'.binding.json',scoped,lambda name:read(prefix+name))
+    root=document('','manifest.json')
+    require(type(root) is dict and root.get('schema')==CENSUS_SCHEMA and
+            root.get('manifest_representation')==CENSUS_MANIFEST_REPRESENTATION,'Census manifest representation')
+    builds=root.get('builds')
+    require(type(builds) is list and len(builds)==len(CENSUS_BUILDS) and
+            all(type(build) is dict and build.get('id')==id for build,id in zip(builds,CENSUS_BUILDS)),
+            'ordered four Census builds')
+    for build in builds:
+        id=build['id'];descriptor=build.get('closure_census')
+        require(type(descriptor) is dict and set(descriptor)=={'binding','original','graph_schema','status'} and
+                descriptor['graph_schema']==CENSUS_SCHEMA and descriptor['status'] in CENSUS_STATUSES,
+                'closed Census graph descriptor')
+        for key,suffix in (('binding','.binding.json'),('original','')):
+            identity=descriptor[key];name=id+'/closure-census.json'+suffix
+            require(type(identity) is dict and set(identity)=={'name','size','sha256'} and identity['name']==name and
+                    type(identity['size']) is int and 0<=identity['size']<=BOUND_LIMITS['document_bytes'] and
+                    (key!='binding' or identity['size']<=BOUND_PAGE_BYTES) and type(identity['sha256']) is str and
+                    re.fullmatch('[0-9a-f]{64}',identity['sha256']),'canonical Census graph identity')
+            require(name in inventory and inventory[name]==dict(mode=0o644,size=identity['size'],sha256=identity['sha256']) and
+                    type(inventory[name]['mode']) is int and type(inventory[name]['size']) is int,
+                    'external Census graph identity')
+    for build in builds:
+        id=build['id'];descriptor=build['closure_census']
+        graph=document(id+'/','closure-census.json')
+        require(type(graph) is dict and graph.get('schema')==descriptor['graph_schema'] and
+                graph.get('status')==descriptor['status'],'Census graph schema/status agreement')
+        del graph
+    return root
+
+
+def finish_census_documents(out,manifest,variants,receipts):
+    receipts=receipts|{'manifest.json':write_bound_document(out/'manifest.json',manifest)}
+    failures=[]
+    for name in [id+'/closure-census.json' for id in CENSUS_BUILDS]+['manifest.json']:
+        receipt=receipts.get(name)
+        if type(receipt) is not dict or receipt.get('kind')!='complete':
+            failures.append({'document':name,'reason':receipt.get('reason','missing complete receipt') if type(receipt) is dict else 'missing complete receipt'})
+    if not failures:
+        try:admit_census_manifest(previous.evidence_inventory(out),lambda name:(out/name).read_bytes())
+        except (ValueError,OSError,KeyError,IndexError) as error:
+            failures.append({'document':'manifest.json','reason':str(error)[:1024]})
+    result={'schema':CENSUS_SCHEMA,'variants':variants,'expected_variants':list(CENSUS_BUILDS),
+            'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',
+            'fixture_contract':{name:sorted(tests) for name,tests in FIXTURE_TESTS.items()},
+            'document_completeness':'incomplete' if failures else 'complete','document_failures':failures}
+    bound_preflight(result)
+    write_json(out/'closure-census-result.json',result)
+    census_custody(out)
+    require(not failures,'incomplete Census documents; see closure-census-result.json')
+    write_json(out/'closure-census-seal.json',{'schema':CENSUS_SCHEMA,'files':previous.evidence_inventory(out)})
     return result
 
 
@@ -1796,8 +1871,8 @@ def census_evidence(directory,parsed,r,env,census):
     except (ValueError,OSError,KeyError,struct.error) as error:
         census.unknowns.append({'kind':'AcquisitionPrerequisite','reason':str(error)})
     result=census.summary(images)
-    write_bound_document(directory/'closure-census.json',result)
-    return result
+    receipt=write_bound_document(directory/'closure-census.json',result)
+    return result,receipt
 
 
 FIXTURE_TESTS = {
@@ -2548,7 +2623,8 @@ def run(out,build_root,toolchain,census_mode=False):
        'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,'source_admission':MAIN_SOURCE_ADMISSION,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
     acquire_source_admission(out,m,env)
-    parsed={};variant_results={}
+    if census_mode:m['manifest_representation']=CENSUS_MANIFEST_REPRESENTATION
+    parsed={};variant_results={};document_receipts={}
     for opt in ('Od','O2'):
         for variant in ('control','observed'):
             r=recipe(runner_temp,variant,opt,census_mode);commands=r['commands']
@@ -2602,8 +2678,13 @@ def run(out,build_root,toolchain,census_mode=False):
                 b.update(after=c.source_inventory(source),objects=objects)
                 write_json(out/'manifest.json',m)
                 if census_mode:
-                    b['closure_census']=census_evidence(directory,(native,rust),r,e,census)
-                    variant_results[id]=b['closure_census']['status']
+                    summary,receipt=census_evidence(directory,(native,rust),r,e,census)
+                    variant_results[id]=summary['status']
+                    document_receipts[id+'/closure-census.json']=receipt
+                    if receipt['kind']=='complete':
+                        b['closure_census']={'graph_schema':CENSUS_SCHEMA,'status':summary['status'],
+                            **{key:receipt[key]|{'name':id+'/'+receipt[key]['name']} for key in ('binding','original')}}
+                    del summary
                     write_json(out/'manifest.json',m)
                 elif variant=='observed':
                     b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
@@ -2622,14 +2703,7 @@ def run(out,build_root,toolchain,census_mode=False):
                     write_json(out/'manifest.json',m)
     finish_source_admission(out,m,env)
     if census_mode:
-        write_bound_document(out/'manifest.json',m)
-        result={'schema':CENSUS_SCHEMA,'variants':variant_results,'expected_variants':['control-Od','observed-Od','control-O2','observed-O2'],
-                'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',
-                'fixture_contract':{name:sorted(tests) for name,tests in FIXTURE_TESTS.items()}}
-        write_json(out/'closure-census-result.json',result)
-        census_custody(out)
-        write_json(out/'closure-census-seal.json',{'schema':CENSUS_SCHEMA,'files':previous.evidence_inventory(out)})
-        return result
+        return finish_census_documents(out,m,variant_results,document_receipts)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     write_json(out/'result.json',result);write_json(out/'seal.json',{'schema':SCHEMA,'files':previous.evidence_inventory(out)})
     return replay(out)

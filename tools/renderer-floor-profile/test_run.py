@@ -2287,7 +2287,7 @@ class CensusControls(unittest.TestCase):
             return receipt,instructions(r.pe_code(raw)[3](first,last,True)),b''
         census=r.ClosureCensus();parsed=({'operations':rows},{'operations':rows})
         with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'write_bound_document',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
-            result=r.census_evidence(directory,parsed,recipe,{},census)
+            result,receipt=r.census_evidence(directory,parsed,recipe,{},census)
         self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
         self.assertEqual(len([label for label in commands if '-instructions-' in label]),4)
         self.assertTrue(result['pending']);self.assertEqual(result['decoded'],3)
@@ -2324,7 +2324,7 @@ class CensusControls(unittest.TestCase):
                     self.assertEqual(saved[path],value)
                     if path.name=='closure-census-progress.json':progress.append(saved[path])
                 with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',save),patch.object(r,'write_bound_document',save),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
-                    result=r.census_evidence(directory,({'operations':rows},observed),{'source':'source','evidence':str(directory)},{},r.ClosureCensus())
+                    result,receipt=r.census_evidence(directory,({'operations':rows},observed),{'source':'source','evidence':str(directory)},{},r.ClosureCensus())
                 runtime=lambda summary:next(image['witness'] for image in summary['images'] if image['file']=='runtime-pre-0-module.bin')
                 first,last=[0x1000,0x1008],[0x1020,0x1028]
                 self.assertEqual(runtime(progress[0])['pending'],[first])
@@ -2349,10 +2349,14 @@ class CensusControls(unittest.TestCase):
 
     def test_four_variants_continue_only_after_proven_writer_closure(self):
         recorder=r.record
-        for failure_at in (None,'git-head','native-build','expired-fourth'):
+        for failure_at in (None,'git-head','native-build','expired-fourth','complete-documents'):
             files={};calls=[];fixtures=[];acquired=[];saved={}
             out=Path('C:/runner/temp/closure-census-evidence');build=Path('C:/runner/temp/closure-census-build');toolchain=Path('C:/runner/temp/floor-profile-deps/build/generators/conan_toolchain.cmake')
             def save(path,value):saved[path]=copy.deepcopy(value);files[path]=json.dumps(value).encode()
+            def bound_save(path,value):
+                save(path,value)
+                return {'kind':'complete','original':{'name':path.name,'size':1,'sha256':'0'*64},
+                        'binding':{'name':path.name+'.binding.json','size':1,'sha256':'1'*64}}
             def record(directory,label,argv,cwd,env,timeout=1200):
                 calls.append((directory.name,label))
                 raw=r.ACCEPTED_MAIN['merge'].encode() if label in ('git-head','git-first-parent-ancestry') else '\n'.join(r.CENSUS_PATHS).encode() if label=='git-paths' else b''
@@ -2369,9 +2373,9 @@ class CensusControls(unittest.TestCase):
                 return row
             def acquire(directory,*args):
                 acquired.append(directory.name)
-                if len(acquired)==1:raise ValueError('closed diagnostic failure')
+                if len(acquired)==1 and failure_at!='complete-documents':raise ValueError('closed diagnostic failure')
                 if failure_at=='expired-fourth' and len(acquired)==4:clock['now']+=1201
-                return {'status':'CENSUS_INCOMPLETE_UNRESOLVED'}
+                return {'status':'CENSUS_INCOMPLETE_UNRESOLVED'},bound_save(directory/'closure-census.json',{})
             def glob(path,pattern):return [file for file in files if file.parent==path and file.suffix=='.json']
             def inventory(path):
                 self.assertNotIn(out/'writer-pending.json',files,'source read while writer closure unknown')
@@ -2407,7 +2411,8 @@ class CensusControls(unittest.TestCase):
                 patch.object(r,'source_expected',return_value=({}, {}, {})),
                 patch.object(r,'record',record),
                 patch.object(r,'write_json',save),
-                patch.object(r,'write_bound_document',save),
+                patch.object(r,'write_bound_document',bound_save),
+                patch.object(r,'admit_census_manifest',return_value={}),
                 patch.object(r,'native_commands',return_value=[]),
                 patch.object(r,'cargo_binary',return_value='synthetic-cargo'),
                 patch.object(r,'parse',lambda raw,language,observed:{'dll':{'path':'dll'}} if language=='native' else {}),
@@ -2417,15 +2422,20 @@ class CensusControls(unittest.TestCase):
             ]
             with ExitStack() as stack:
                 for context in patches:stack.enter_context(context)
-                if failure_at in (None,'expired-fourth'):
+                if failure_at in (None,'expired-fourth','complete-documents'):
                     if failure_at=='expired-fourth':
-                        with patch.object(r,'finish_source_admission',side_effect=finish):result=r.run(out,build,toolchain,True)
+                        with patch.object(r,'finish_source_admission',side_effect=finish),self.assertRaisesRegex(ValueError,'incomplete Census documents'):
+                            r.run(out,build,toolchain,True)
                         self.assertEqual(finalized,[True])
-                    else:result=r.run(out,build,toolchain,True)
+                    elif failure_at=='complete-documents':result=r.run(out,build,toolchain,True)
+                    else:
+                        with self.assertRaisesRegex(ValueError,'incomplete Census documents'):r.run(out,build,toolchain,True)
+                    result=saved[out/'closure-census-result.json']
                     self.assertEqual(len(result['variants']),4)
                     self.assertEqual(len(acquired),4,{str(k):v for k,v in saved.items() if k.name=='variant-failure.json'});self.assertEqual(fixtures,['mesh_dump','x_files']*4)
                     self.assertNotIn(out/'seal.json',saved)
-                    self.assertIn(out/'closure-census-seal.json',saved)
+                    self.assertEqual(result['document_completeness'],'complete' if failure_at=='complete-documents' else 'incomplete')
+                    self.assertEqual(out/'closure-census-seal.json' in saved,failure_at=='complete-documents')
                 else:
                     with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):r.run(out,build,toolchain,True)
                     self.assertEqual(len(acquired),0)
@@ -2965,11 +2975,13 @@ class BoundedDocumentControls(unittest.TestCase):
             if item is value:calls.append(True)
             return serializer(item)
         with patch.object(r,'bound_bytes',serialize),patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(Path,'mkdir'):
-            r.write_bound_document(path,value)
+            receipt=r.write_bound_document(path,value)
         self.assertEqual(len(calls),1)
         self.assertEqual(files[path],serializer(value))
         members={name.relative_to(path.parent).as_posix():raw for name,raw in files.items()}
         inventory={name:{'size':len(raw),'sha256':r.digest(raw)} for name,raw in members.items()}
+        self.assertEqual(receipt,{'kind':'complete','binding':dict(name='closure-census.json.binding.json',**inventory['closure-census.json.binding.json']),
+                                  'original':dict(name='closure-census.json',**inventory['closure-census.json'])})
         self.assertEqual(r.admit_bound_document('closure-census.json.binding.json',inventory,members.__getitem__),value)
 
     def test_bound_preflight_covers_serializer_and_small_limits(self):
@@ -2997,6 +3009,7 @@ class BoundedDocumentControls(unittest.TestCase):
     def test_bound_preflight_refusal_never_serializes_or_writes(self):
         cyclic=[];cyclic.append(cyclic)
         class StringSubclass(str):pass
+        serializer=r.bound_bytes
         for value,limits in [('x'*33,{'document_bytes':32*12+8}),
                              ('x'*33,{'cumulative_bytes':64}),
                              ({'a':0},{'references':1}),([[[0]]],{'depth':2}),
@@ -3005,24 +3018,248 @@ class BoundedDocumentControls(unittest.TestCase):
             path=Path('/inert/manifest.json');binding=path.with_name('manifest.json.binding.json')
             files={path:b'previous original\n',binding:b'previous binding\n'};before=dict(files)
             with self.subTest(kind=type(value),limits=limits),patch.dict(r.BOUND_LIMITS,limits),\
-                 patch.object(r,'bound_bytes',side_effect=AssertionError('serializer before refusal')),\
+                 patch.object(r,'bound_bytes',side_effect=lambda item:serializer(item) if type(item) is dict and item.get('kind')=='incomplete' else self.fail('original serializer before refusal')),\
                  patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)):
                 result=r.write_bound_document(path,value)
-            self.assertEqual(files,before)
+            self.assertEqual(files[path],before[path])
+            self.assertEqual(r.bound_json(files[binding]),result)
             self.assertEqual(result['kind'],'incomplete');self.assertFalse(result['original_created'])
+            self.assertEqual(result['phase'],'preflight')
             self.assertEqual(result['semantic_status'],'UNRUN')
         files={};path=Path('/inert/new.json')
-        with patch.dict(r.BOUND_LIMITS,document_bytes=1),patch.object(r,'bound_bytes',side_effect=AssertionError('serializer')),\
+        with patch.dict(r.BOUND_LIMITS,document_bytes=1),patch.object(r,'bound_bytes',side_effect=lambda item:serializer(item) if type(item) is dict and item.get('kind')=='incomplete' else self.fail('original serializer')),\
              patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)):
             r.write_bound_document(path,0)
-        self.assertEqual(files,{})
+        self.assertEqual(set(files),{path.with_name('new.json.binding.json')})
 
     def test_bound_writer_retains_original_on_partition_overflow(self):
         files={};path=Path('/inert/manifest.json');value={'created_ns':123,'long':'x'*200}
         with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(r,'bound_document',side_effect=r.BoundDocumentLimit('partition overflow')):
-            r.write_bound_document(path,value)
+            receipt=r.write_bound_document(path,value)
         self.assertEqual(files[path],r.bound_bytes(value))
         self.assertEqual(r.bound_json(files[path.with_name('manifest.json.binding.json')])['kind'],'incomplete')
+        self.assertEqual(r.bound_json(files[path.with_name('manifest.json.binding.json')]),receipt)
+        self.assertEqual(receipt,{'schema':r.BOUND_SCHEMA,'kind':'incomplete','phase':'partition','reason':'partition overflow',
+                                  'original_created':True,'semantic_status':'UNRUN',
+                                  'original':{'name':'manifest.json','size':len(files[path]),'sha256':r.digest(files[path])}})
+
+
+class CensusManifestControls(unittest.TestCase):
+    def fixture(self):
+        out=Path('/owned-census');files={};graphs={};receipts={}
+        manifest={'schema':r.CENSUS_SCHEMA,'manifest_representation':r.CENSUS_MANIFEST_REPRESENTATION,
+                  'created_ns':1781234567890123456,'root_metadata':{'preserved':True},'builds':[]}
+        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(Path,'mkdir'):
+            for ordinal,id in enumerate(r.CENSUS_BUILDS):
+                graph={'schema':r.CENSUS_SCHEMA,'status':r.CENSUS_STATUSES[ordinal%2],
+                       'unique':{'build':id,'ordinal':ordinal},'payload':[ordinal,{},[],None,True,'雪'],
+                       'ordinary_data':{'$ref':'other/closure-census.json'}}
+                graphs[id]=graph
+                receipt=r.write_bound_document(out/id/'closure-census.json',graph)
+                self.assertEqual(receipt['kind'],'complete')
+                receipts[id+'/closure-census.json']=receipt
+                manifest['builds'].append({'id':id,'unique_metadata':[ordinal,id],
+                    'closure_census':{'graph_schema':r.CENSUS_SCHEMA,'status':graph['status'],
+                        **{key:receipt[key]|{'name':id+'/'+receipt[key]['name']} for key in ('binding','original')}}})
+            self.assertEqual(r.write_bound_document(out/'manifest.json',manifest)['kind'],'complete')
+        files[out/'unrelated.exe']=b'executable'
+        return out,manifest,graphs,receipts,files
+
+    def inventory(self,out,files):
+        return {path.relative_to(out).as_posix():{'mode':0o755 if path.suffix=='.exe' else 0o644,
+                'size':len(raw),'sha256':r.digest(raw)} for path,raw in files.items()}
+
+    def admit(self,out,files,inventory=None):
+        def read(name):
+            self.assertFalse(name=='manifest.json' or name.endswith('/closure-census.json'),'opaque original-body read')
+            return files[out/name]
+        return r.admit_census_manifest(self.inventory(out,files) if inventory is None else inventory,read)
+
+    def rewrite(self,out,files,name,value):
+        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(Path,'mkdir'):
+            return r.write_bound_document(out/name,value)
+
+    def baseline(self):
+        out,manifest,graphs,receipts,files=self.fixture()
+        self.assertEqual(self.admit(out,files),manifest)
+        return out,manifest,graphs,receipts,files
+
+    def finalize(self,out,manifest,graphs,receipts,files):
+        with patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),patch.object(Path,'mkdir'),\
+             patch.object(Path,'read_bytes',lambda path:files[path]),\
+             patch.object(r,'write_json',lambda path,value:files.__setitem__(path,r.bound_bytes(value))),\
+             patch.object(r.previous,'evidence_inventory',lambda directory:self.inventory(directory,files)),\
+             patch.object(r,'census_custody',return_value={'state':'closed'}):
+            return r.finish_census_documents(out,manifest,{id:graph['status'] for id,graph in graphs.items()},receipts)
+
+    def test_census_manifest_four_distinct_graphs_roundtrip(self):
+        out,manifest,graphs,receipts,files=self.baseline()
+        self.assertEqual(len({r.digest(r.bound_bytes(graph)) for graph in graphs.values()}),4)
+        for build in manifest['builds']:
+            id=build['id'];descriptor=build['closure_census']
+            self.assertEqual(build['unique_metadata'],[r.CENSUS_BUILDS.index(id),id])
+            self.assertEqual(descriptor['status'],graphs[id]['status'])
+            self.assertEqual(files[out/id/'closure-census.json'],r.bound_bytes(graphs[id]))
+            for key in ('binding','original'):
+                identity=descriptor[key];raw=files[out/identity['name']]
+                self.assertEqual(identity,{'name':id+'/'+receipts[id+'/closure-census.json'][key]['name'],
+                                           'size':len(raw),'sha256':r.digest(raw)})
+        self.assertEqual(manifest['root_metadata'],{'preserved':True})
+
+    def test_census_manifest_requires_ordered_four_builds(self):
+        for kind in ('missing','extra','duplicate','reorder'):
+            out,manifest,_,_,files=self.baseline()
+            if kind=='missing':manifest['builds'].pop()
+            elif kind=='extra':manifest['builds'].append(copy.deepcopy(manifest['builds'][0]))
+            elif kind=='duplicate':manifest['builds'][1]=copy.deepcopy(manifest['builds'][0])
+            else:manifest['builds'].reverse()
+            self.rewrite(out,files,'manifest.json',manifest)
+            with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,'ordered four Census builds'):self.admit(out,files)
+
+    def test_census_manifest_closed_tag_and_descriptor(self):
+        for kind in ('unknown-tag','missing-tag','extra-key','status','graph-schema'):
+            out,manifest,_,_,files=self.baseline();descriptor=manifest['builds'][0]['closure_census']
+            if kind=='unknown-tag':manifest['manifest_representation']='unknown'
+            elif kind=='missing-tag':del manifest['manifest_representation']
+            elif kind=='extra-key':descriptor['extra']=0
+            elif kind=='status':descriptor['status']='Unknown'
+            else:descriptor['graph_schema']='foreign'
+            self.rewrite(out,files,'manifest.json',manifest)
+            guard='Census manifest representation' if kind.endswith('tag') else 'closed Census graph descriptor'
+            with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,guard):self.admit(out,files)
+
+    def test_census_manifest_canonical_identity_controls(self):
+        for key in ('original','binding'):
+            for kind in ('cross-variant','alias','traversal','extra-key','bool-size','negative-size','huge-size','sha'):
+                out,manifest,_,_,files=self.baseline();identity=manifest['builds'][0]['closure_census'][key]
+                if kind=='cross-variant':identity['name']=identity['name'].replace('control-Od','observed-Od')
+                elif kind=='alias':identity['name']=identity['name'].upper()
+                elif kind=='traversal':identity['name']='control-Od/../'+identity['name']
+                elif kind=='extra-key':identity['extra']=0
+                elif kind=='bool-size':identity['size']=True
+                elif kind=='negative-size':identity['size']=-1
+                elif kind=='huge-size':identity['size']=r.BOUND_LIMITS['document_bytes']+1
+                else:identity['sha256']='A'*64
+                self.rewrite(out,files,'manifest.json',manifest)
+                with self.subTest(key=key,kind=kind),self.assertRaisesRegex(ValueError,'canonical Census graph identity'):self.admit(out,files)
+
+    def test_census_manifest_external_descriptor_identity_controls(self):
+        for key in ('original','binding'):
+            for kind in ('size','sha','missing'):
+                out,manifest,_,_,files=self.baseline();inventory=self.inventory(out,files)
+                name=manifest['builds'][0]['closure_census'][key]['name']
+                if kind=='size':inventory[name]['size']+=1
+                elif kind=='sha':inventory[name]['sha256']='0'*64
+                else:del inventory[name]
+                with self.subTest(key=key,kind=kind),self.assertRaisesRegex(ValueError,'external Census graph identity'):self.admit(out,files,inventory)
+
+    def test_census_manifest_required_portable_modes(self):
+        out,manifest,_,_,files=self.baseline()
+        names=['manifest.json','manifest.json.binding.json',next(name for name in self.inventory(out,files) if name.startswith('manifest.json.pages/'))]
+        names += [manifest['builds'][0]['closure_census'][key]['name'] for key in ('original','binding')]
+        names += [next(name for name in self.inventory(out,files) if name.startswith('control-Od/closure-census.json.pages/'))]
+        for name in names:
+            inventory=self.inventory(out,files);inventory[name]['mode']=0o666
+            guard='external Census graph identity' if name in [manifest['builds'][0]['closure_census'][key]['name'] for key in ('original','binding')] else 'required Census JSON portable mode'
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,guard):self.admit(out,files,inventory)
+
+    def test_census_manifest_graph_schema_and_status_agreement(self):
+        for field,value in (('schema','foreign'),('status',r.CENSUS_STATUSES[1])):
+            out,manifest,graphs,_,files=self.baseline();id=r.CENSUS_BUILDS[0]
+            graphs[id][field]=value
+            receipt=self.rewrite(out,files,id+'/closure-census.json',graphs[id])
+            manifest['builds'][0]['closure_census'].update({key:receipt[key]|{'name':id+'/'+receipt[key]['name']} for key in ('binding','original')})
+            self.rewrite(out,files,'manifest.json',manifest)
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,'Census graph schema/status agreement'):self.admit(out,files)
+
+    def test_census_manifest_page_membership_and_same_bytes(self):
+        for prefix in ('','control-Od/'):
+            for kind in ('missing','extra','size','sha','bytes','case-alias','traversal'):
+                out,_,_,_,files=self.baseline();inventory=self.inventory(out,files)
+                original='manifest.json' if not prefix else 'closure-census.json'
+                page=next(name for name in inventory if name.startswith(prefix+original+'.pages/'))
+                guard='external page binding';error=ValueError
+                if kind=='missing':del inventory[page];guard=original+'.pages/';error=KeyError
+                elif kind=='extra':inventory[prefix+original+'.pages/99999.json']=dict(inventory[page]);guard='complete closed page membership'
+                elif kind=='size':inventory[page]['size']+=1
+                elif kind=='sha':inventory[page]['sha256']='0'*64
+                elif kind=='bytes':files[out/page]+=b' ';guard='same bytes bounded identity before parse'
+                elif kind=='case-alias':inventory[prefix+page[len(prefix):].upper()]=dict(inventory[page]);guard='complete closed page membership'
+                else:inventory[prefix+original+'.pages/../other']=dict(inventory[page]);guard='unsafe|canonical|relative|path|member'
+                with self.subTest(prefix=prefix,kind=kind),self.assertRaisesRegex(error,guard):self.admit(out,files,inventory)
+
+    def test_census_finalizer_complete_documents_keep_unknown_semantics(self):
+        out,manifest,graphs,receipts,files=self.baseline()
+        result=self.finalize(out,manifest,graphs,receipts,files)
+        self.assertEqual(result['document_completeness'],'complete');self.assertEqual(result['document_failures'],[])
+        self.assertEqual(result['variants']['control-Od'],'CENSUS_INCOMPLETE_UNRESOLVED')
+        self.assertEqual(result['admission'],'NotAuthorized');self.assertIn(out/'closure-census-seal.json',files)
+
+    def test_census_finalizer_graph_and_root_limit_failures(self):
+        preflight=r.bound_preflight;partition=r.bound_document
+        for document in ('control-Od/closure-census.json','manifest.json'):
+            for phase in ('preflight','partition'):
+                out,manifest,graphs,receipts,files=self.baseline()
+                value=manifest if document=='manifest.json' else graphs['control-Od']
+                def fail_preflight(item):
+                    if item is value:raise r.BoundDocumentLimit('target preflight limit')
+                    return preflight(item)
+                def fail_partition(item,*args,**kwargs):
+                    if item is value:raise r.BoundDocumentLimit('target partition limit')
+                    return partition(item,*args,**kwargs)
+                with patch.object(r,'bound_preflight',fail_preflight if phase=='preflight' else preflight),\
+                     patch.object(r,'bound_document',fail_partition if phase=='partition' else partition):
+                    if document!='manifest.json':
+                        receipts[document]=self.rewrite(out,files,document,value)
+                        del manifest['builds'][0]['closure_census']
+                    with self.subTest(document=document,phase=phase),self.assertRaisesRegex(ValueError,'incomplete Census documents'):
+                        self.finalize(out,manifest,graphs,receipts,files)
+                witness=r.bound_json(files[out/(document+'.binding.json')])
+                self.assertEqual(witness['kind'],'incomplete');self.assertEqual(witness['phase'],phase)
+                self.assertEqual(witness['reason'],'target '+phase+' limit')
+                self.assertEqual(witness['original_created'],phase=='partition')
+                result=r.bound_json(files[out/'closure-census-result.json'])
+                self.assertEqual(result['document_completeness'],'incomplete')
+                self.assertEqual(result['document_failures'],[{'document':document,'reason':witness['reason']}])
+                self.assertNotIn(out/'closure-census-seal.json',files)
+
+    def test_census_finalizer_rejects_missing_receipt_and_readback(self):
+        for kind in ('missing-receipt','missing-binding','bad-page'):
+            out,manifest,graphs,receipts,files=self.baseline();document='control-Od/closure-census.json'
+            if kind=='missing-receipt':del receipts[document]
+            elif kind=='missing-binding':del files[out/(document+'.binding.json')]
+            else:
+                page=next(path for path in files if 'control-Od/closure-census.json.pages/' in path.as_posix())
+                files[page]+=b' '
+            with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,'incomplete Census documents'):
+                self.finalize(out,manifest,graphs,receipts,files)
+            result=r.bound_json(files[out/'closure-census-result.json'])
+            self.assertEqual(result['document_completeness'],'incomplete');self.assertEqual(len(result['document_failures']),1)
+            self.assertNotIn(out/'closure-census-seal.json',files)
+
+    def test_census_run_refuses_previous_success_directory(self):
+        out=Path('/previous-success');build=Path('/new-build');toolchain=Path('/toolchain')
+        with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true'}),\
+             patch.object(Path,'is_file',return_value=True),patch.object(Path,'exists',lambda path:path==out),\
+             patch.object(r,'write_json',side_effect=AssertionError('previous evidence modified')),\
+             self.assertRaisesRegex(ValueError,'fresh external evidence/build roots'):
+            r.run(out,build,toolchain,True)
+
+    def test_census_entry_exits_nonzero_after_document_failure(self):
+        out,manifest,graphs,receipts,files=self.baseline()
+        del receipts['control-Od/closure-census.json']
+        entry=ast.parse(Path(r.__file__).read_text()).body[-1]
+        self.assertIsInstance(entry,ast.If)
+        namespace={'__name__':'__main__','main':lambda:self.finalize(out,manifest,graphs,receipts,files),
+                   'sys':sys,'json':json,'struct':struct,'tarfile':tarfile}
+        stderr=io.StringIO()
+        with patch.object(sys,'argv',['run.py','--run','--closure-census']),patch.object(sys,'stderr',stderr),\
+             self.assertRaises(SystemExit) as failure:
+            exec(compile(ast.Module(body=[entry],type_ignores=[]),str(r.__file__),'exec'),namespace)
+        self.assertEqual(failure.exception.code,1)
+        self.assertEqual(json.loads(stderr.getvalue())['result'],'IncompleteDiagnostic')
+        self.assertEqual(r.bound_json(files[out/'closure-census-result.json'])['document_completeness'],'incomplete')
+        self.assertNotIn(out/'closure-census-seal.json',files)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

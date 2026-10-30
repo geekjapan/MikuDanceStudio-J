@@ -3,6 +3,7 @@ import argparse
 from collections import namedtuple
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import sys
@@ -11,6 +12,9 @@ from full_compiler import UNITS, verify_cursor_tool, verify_native_cursor_inputs
 
 MAX_FILE = 512 * 1024 * 1024
 MAX_PACKET = 4 * 1024 * 1024 * 1024
+MAX_AUTHORITY = 8 * 1024 * 1024
+AUTHORITY_REPRESENTATION = 'native-unclassified-definitions-v1'
+AUTHORITY_FIELDS = ('unit', 'target', 'target_c_widths_bits', 'compiler_session', 'unclassified_definitions')
 
 
 class FactsError(ValueError):
@@ -44,7 +48,111 @@ def loads(data):
         return result
     def invalid_constant(value):
         raise FactsError('nonfinite JSON number ' + value)
-    return json.loads(data, object_pairs_hook=unique, parse_constant=invalid_constant)
+    def finite(value):
+        result = float(value)
+        need(math.isfinite(result), 'overflow JSON number')
+        return result
+    return json.loads(data, object_pairs_hook=unique, parse_constant=invalid_constant, parse_float=finite)
+
+
+def authority_projection(facts):
+    return dict(schema=1, kind='c2rust-independent-unknown-authority', authorization='analysis_only',
+                **{field: facts[field] for field in AUTHORITY_FIELDS})
+
+
+def read_authority(root, pair):
+    path = safe_file(root, pair['authority'])
+    need(0 < path.stat().st_size <= MAX_AUTHORITY, 'unknown authority byte bound')
+    data = path.read_bytes()
+    need(0 < len(data) <= MAX_AUTHORITY and sha(data) == pair['files']['authority'],
+         'unknown authority size or digest differs')
+    value = loads(data)
+    need(type(value) is dict and set(value) == set(AUTHORITY_FIELDS) | {'schema', 'kind', 'authorization'},
+         'unknown authority fields differ')
+    need(type(value['schema']) is int and value['schema'] == 1
+         and value['kind'] == 'c2rust-independent-unknown-authority'
+         and value['authorization'] == 'analysis_only', 'unknown authority schema differs')
+    need(type(value['unit']) is str and value['unit'] == pair['unit']
+         and value['target'] == 'x86_64-pc-linux-gnu'
+         and same(value['target_c_widths_bits'], dict(char=8, short=16, int=32, long=64,
+                     long_long=64, pointer=64, float=32, double=64)), 'unknown authority target or unit differs')
+    need(same(value['compiler_session'], {
+        'raw_cbor_sha256': sha(safe_file(root, pair['cbor']).read_bytes()),
+        'typed_ast_sha256': sha(safe_file(root, pair['typed_ast']).read_bytes())}),
+        'unknown authority compiler session differs')
+    need(type(value['unclassified_definitions']) is list, 'unknown authority census differs')
+    return value
+
+
+def authority_packet(root, entries, tool):
+    """Verify opaque packet members before opening only the compact authorities."""
+    root = root.absolute()
+    before = manifest(root)
+    need(same(loads(safe_file(root, 'seal.json').read_bytes()), before), 'packet seal differs')
+    packet = loads(safe_file(root, 'packet.json').read_bytes())
+    packet_pairs(packet, entries)
+    authority_files = {pair['authority'] for pair in packet['units']}
+    need({name for name in before if name.endswith('.unknown-authority.json')} == authority_files,
+         'missing or extra unknown authority member')
+    for pair in packet['units']:
+        for role, digest in pair['files'].items():
+            need(sha(safe_file(root, pair[role]).read_bytes()) == digest, 'paired raw AST or emission digest differs')
+    need(same(loads(safe_file(root, packet['database']).read_bytes()), entries), 'current compile commands differ')
+    verify_cursor_tool(tool)
+    expected_tool = {'compiler': 'tool/bin/c2rust-transpile', 'source_receipt': 'tool/source-receipt.json',
+                    'patch': 'tool/source-evidence/c2rust-source.patch',
+                    'source_evidence': 'tool/source-evidence/c2rust-patch.json'}
+    need(packet['tool'] == expected_tool, 'unexpected retained tool layout')
+    verify_cursor_tool(safe_file(root, packet['tool']['compiler']))
+    current = tool.parent.parent
+    for name in ('bin/c2rust', 'bin/c2rust-transpile', 'source-receipt.json',
+                 'source-evidence/c2rust-source.patch', 'source-evidence/c2rust-patch.json'):
+        need(sha(safe_file(root, 'tool/' + name).read_bytes()) == sha((current / name).read_bytes()),
+             'current compiler or source receipt differs')
+    sources = loads(safe_file(root, packet['native_files']).read_bytes())
+    need(type(sources) is dict and set(c['file'] for c in entries) <= sources.keys(), 'native source coverage differs')
+    for name, digest in sources.items():
+        need(type(name) is str and Path(name).is_absolute() and sha(Path(name).read_bytes()) == digest,
+             'current native source or header differs')
+    need(set(packet['verifier_sources']) == {'closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'},
+         'incomplete verifier source identity')
+    for name, snapshot in packet['verifier_sources'].items():
+        need(safe_file(root, snapshot).read_bytes() == Path(__file__).with_name(name).read_bytes(), 'verifier source identity differs')
+    need(manifest(root) == before, 'packet changed during authority admission')
+    return packet, before
+
+
+def packet_pairs(packet, commands):
+    need(type(packet) is dict and type(packet.get('schema')) is int and packet['schema'] == 2
+         and packet.get('authorization') == 'analysis_only'
+         and packet.get('unknown_authority_representation') == AUTHORITY_REPRESENTATION, 'invalid packet schema')
+    need(type(commands) is list and len(commands) == len(UNITS)
+         and len({c['file'] for c in commands}) == len(UNITS)
+         and sorted(str(Path(c['file']).relative_to(c['directory'])) for c in commands) == list(UNITS),
+         'exact all24 units differ')
+    pairs = packet['units']
+    need(type(pairs) is list and len(pairs) == len(commands)
+         and {p['unit'] for p in pairs} == {c['file'] for c in commands}, 'fact TU coverage differs')
+    roles = {'facts': '.closed-format.json', 'authority': '.unknown-authority.json', 'inventory': '.variadic.json',
+             'cbor': '.cursor.cbor', 'typed_ast': '.typed-ast.txt', 'rust_on': '.rs', 'rust_off': '.rs'}
+    used = set()
+    for pair in pairs:
+        need(type(pair) is dict and set(pair) == set(roles) | {'unit', 'files'}
+             and type(pair['files']) is dict and set(pair['files']) == set(roles), 'incomplete paired AST binding')
+        stem = Path(pair['unit']).stem.replace('.', '_')
+        for role, suffix in roles.items():
+            name = pair[role]
+            need(type(name) is str and name not in used and Path(name).name == stem + suffix,
+                 'duplicate or foreign paired unit path')
+            need(name.startswith('off/' if role == 'rust_off' else 'on/'), 'paired file role differs')
+            expected = pair['facts'].removesuffix('.closed-format.json') + suffix
+            if role == 'rust_off':
+                expected = 'off/' + expected.removeprefix('on/')
+            need(name == expected, 'paired file origin differs')
+            used.add(name)
+        need(pair['authority'] == pair['facts'].removesuffix('.closed-format.json') + '.unknown-authority.json',
+             'authority origin differs')
+    return pairs
 
 
 def key(symbol):
@@ -1189,13 +1297,15 @@ def replay(root):
     before = manifest(root)
     need(loads(safe_file(root, 'seal.json').read_bytes()) == before, 'packet seal differs')
     packet = loads(safe_file(root, 'packet.json').read_bytes())
-    need(packet.get('schema') == 1 and packet.get('authorization') == 'analysis_only', 'invalid packet schema')
     def read(name):
         return loads(safe_file(root, name).read_bytes())
     need(set(packet['verifier_sources']) == {'closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'}, 'incomplete verifier source identity')
     for name, snapshot in packet['verifier_sources'].items():
         need(safe_file(root, snapshot).read_bytes() == Path(__file__).with_name(name).read_bytes(), 'verifier source identity differs')
     commands = read(packet['database'])
+    packet_pairs(packet, commands)
+    need({name for name in before if name.endswith('.unknown-authority.json')}
+         == {pair['authority'] for pair in packet['units']}, 'missing or extra unknown authority member')
     need(len(commands) == len(UNITS) and len({c['file'] for c in commands}) == len(UNITS), 'missing extra or duplicate TU commands')
     need(sorted(str(Path(c['file']).relative_to(c['directory'])) for c in commands) == list(UNITS), 'exact all24 units differ')
     command_map = {c['file']: c for c in commands}
@@ -1222,10 +1332,10 @@ def replay(root):
     symbols, incoming, extras = {}, {}, {}
     need(len({u['rust_on'] for u in packet['units']}) == len(commands), 'generated TU module identity merged')
     for pair in packet['units']:
-        required = {'facts', 'inventory', 'cbor', 'typed_ast', 'rust_off', 'rust_on'}
+        required = {'facts', 'authority', 'inventory', 'cbor', 'typed_ast', 'rust_off', 'rust_on'}
         need(set(pair) == required | {'unit', 'files'} and set(pair['files']) == required, 'incomplete paired AST binding')
         stem = Path(pair['unit']).stem.replace('.', '_')
-        suffixes = {'facts': '.closed-format.json', 'inventory': '.variadic.json', 'cbor': '.cursor.cbor',
+        suffixes = {'facts': '.closed-format.json', 'authority': '.unknown-authority.json', 'inventory': '.variadic.json', 'cbor': '.cursor.cbor',
                     'typed_ast': '.typed-ast.txt', 'rust_on': '.rs', 'rust_off': '.rs'}
         for field, suffix in suffixes.items():
             need(Path(pair[field]).name == stem + suffix, 'generated module or paired AST unit origin differs')
@@ -1245,6 +1355,7 @@ def replay(root):
                 observed_native_files.add(buffer['physical_path'])
                 need(native_files.get(buffer['physical_path']) == buffer['sha256'], 'native source or header manifest differs')
         definitions, calls, unclassified = check_unit(facts, inventory, command_map[pair['unit']])
+        need(same(read_authority(root, pair), authority_projection(facts)), 'unknown authority projection differs')
         for row in definitions.values():
             symbol = key(row['symbol'])
             need(symbol not in symbols, 'duplicate compiler definition symbol')

@@ -130,7 +130,7 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
         for field in ('declaration', 'location', 'signature', 'symbol'):
             self.reports = copy.deepcopy(original)
             self.reject_definition(lambda d: d.update({field: True}), 'field types|static C source identity')
-        for value in (-1, 2**64, '7', None):
+        for value in (0, -1, 2**64, '7', None):
             self.reports = copy.deepcopy(original)
             self.reject_definition(lambda d: d.update(declaration=value), 'field types')
 
@@ -166,6 +166,16 @@ class IndependentUnknownSchemaTests(unittest.TestCase):
                 self.preserve()
         self.reports = []
         with self.assertRaisesRegex(ValueError, 'missing independent'):
+            self.preserve()
+
+    def test_duplicate_unit_and_declaration_authorities_are_rejected(self):
+        original = copy.deepcopy(self.reports)
+        self.reports.append(copy.deepcopy(self.reports[0]))
+        with self.assertRaisesRegex(ValueError, 'duplicate independent unknown unit'):
+            self.preserve()
+        self.reports = original
+        self.reports[0]['unclassified_definitions'].append(copy.deepcopy(self.reports[0]['unclassified_definitions'][0]))
+        with self.assertRaisesRegex(ValueError, 'duplicate unclassified declaration'):
             self.preserve()
 
     def test_plan_names_and_units_cannot_be_replaced_by_matching_ids(self):
@@ -315,6 +325,8 @@ class CommonPlanReceiptTests(unittest.TestCase):
     def test_report_writer_controls_require_source_discovery_and_execution(self):
         from check_common_plan import check_test_receipts
         names = ['closed_variadic_plan_command_reorder_preserves_owned_plan',
+                 'closed_variadic_plan_unknown_authority_preserves_complete_projection',
+                 'closed_variadic_plan_unknown_authority_exact_cap_and_one_over_refuse',
                  'closed_variadic_plan_paged_report_matches_legacy_logical',
                  'closed_variadic_plan_test_only_oracle_propagates_write_failure',
                  'closed_variadic_plan_report_flush_failure_publishes_no_partial_output',
@@ -328,6 +340,7 @@ class CommonPlanReceiptTests(unittest.TestCase):
             (source / 'c_ast').mkdir(parents=True)
             listing, execution = root / 'listing', root / 'execution'
             def write(source_names, listed, passed):
+                (source / 'c_ast/closed_variadic.rs').write_text('')
                 (source / 'c_ast/closed_plan_tests.rs').write_text(''.join('fn ' + n + '() {}\n' for n in source_names[:-1]))
                 (source / 'program.rs').write_text('fn ' + source_names[-1] + '() {}\n')
                 listing.write_text(''.join('tests::' + n + ': test\n' for n in listed))

@@ -1,9 +1,11 @@
+import copy
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import closed_format_facts as F
 from full_compiler import UNITS
@@ -285,11 +287,13 @@ def synthetic_packet_fixture(root):
         coherent_graph_fixture(facts, inventory)
         prefix = str(index) + '/' + Path(UNITS[index]).stem.replace('.', '_')
         pair = {'unit': unit, 'facts': 'on/' + prefix + '.closed-format.json', 'inventory': 'on/' + prefix + '.variadic.json',
+                'authority': 'on/' + prefix + '.unknown-authority.json',
                 'cbor': 'on/' + prefix + '.cursor.cbor', 'typed_ast': 'on/' + prefix + '.typed-ast.txt',
                 'rust_on': 'on/' + prefix + '.rs', 'rust_off': 'off/' + prefix + '.rs'}
         facts['compiler_session'] = {'raw_cbor_sha256': F.sha(b'synthetic binding, not actual AST'),
                                      'typed_ast_sha256': F.sha(b'synthetic binding, not actual AST')}
         write(pair['facts'], facts); write(pair['inventory'], inventory)
+        write(pair['authority'], F.authority_projection(facts))
         for field in ('cbor', 'typed_ast'):
             write(pair[field], b'synthetic binding, not actual AST')
         for mode in ('on', 'off'):
@@ -319,7 +323,8 @@ def synthetic_packet_fixture(root):
     for name in ('closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'):
         write('verifier-source/' + name, Path(__file__).with_name(name).read_bytes())
         verifier_sources[name] = 'verifier-source/' + name
-    packet = {'schema': 1, 'authorization': 'analysis_only', 'units': units,
+    packet = {'schema': 2, 'unknown_authority_representation': F.AUTHORITY_REPRESENTATION,
+              'authorization': 'analysis_only', 'units': units,
               'database': 'compile_commands.json', 'native_files': 'native-files.json', 'inventory_plan': 'inventory-plan.json',
               'verifier_sources': verifier_sources,
               'tool': {'compiler': 'tool/bin/c2rust-transpile', 'patch': 'tool/source-evidence/c2rust-source.patch', 'source_receipt': 'tool/source-receipt.json', 'source_evidence': 'tool/source-evidence/c2rust-patch.json'},
@@ -350,6 +355,126 @@ class ClosedFormatFactsTests(unittest.TestCase):
         self.assertEqual(result['incoming_calls'], 4865)
         self.assertEqual(result['lowerability'], 'blocked')
         self.assertEqual(result['public_callback'], 'unproved')
+
+    def test_authority_projection_is_type_strict_and_keeps_empty_units(self):
+        for pair in self.packet['units']:
+            facts = F.loads((self.root / pair['facts']).read_bytes())
+            self.assertTrue(F.same(F.read_authority(self.root, pair), F.authority_projection(facts)))
+        self.assertTrue(any(not F.read_authority(self.root, p)['unclassified_definitions'] for p in self.packet['units']))
+        for left, right in [(True, 1), (1, 1.0), ([False], [0]), ({'nested': [True]}, {'nested': [1]})]:
+            self.assertFalse(F.same(left, right))
+
+    def test_authority_resealed_metadata_and_projection_controls(self):
+        pair = self.packet['units'][0]
+        path = self.root / pair['authority']
+        original = path.read_bytes()
+        packet_path = self.root / 'packet.json'
+        original_packet = packet_path.read_bytes()
+        changes = [lambda a: a.update(schema=True), lambda a: a.update(schema=1.0),
+                   lambda a: a.update(unit='/foreign.c'), lambda a: a.update(target='foreign'),
+                   lambda a: a['target_c_widths_bits'].update(char=8.0),
+                   lambda a: a['compiler_session'].update(raw_cbor_sha256='0' * 64),
+                   lambda a: a.update(extra=True), lambda a: a.pop('unclassified_definitions'),
+                   lambda a: a['unclassified_definitions'].pop(),
+                   lambda a: a['unclassified_definitions'][0].update(declaration=100.0),
+                   lambda a: a['unclassified_definitions'][0].update(declaration=True),
+                   lambda a: a['unclassified_definitions'][0].update(declaration=2**64),
+                   lambda a: a['unclassified_definitions'][0]['symbol'].update(static='late_name'),
+                   lambda a: a['unclassified_definitions'][0]['location']['spelling'].update(bytes_hex='00'),
+                   lambda a: a['unclassified_definitions'][0].update(signature={'unproved': 'late reason'}),
+                   lambda a: a['unclassified_definitions'][0].update(location={'unproved': 'late origin'})]
+        try:
+            for mutate in changes:
+                value = F.loads(original)
+                mutate(value)
+                path.write_text(json.dumps(value))
+                packet = F.loads(original_packet)
+                packet['units'][0]['files']['authority'] = F.sha(path.read_bytes())
+                packet_path.write_text(json.dumps(packet))
+                (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+                with self.assertRaises((F.FactsError, ValueError)):
+                    F.replay(self.root)
+        finally:
+            path.write_bytes(original)
+            packet_path.write_bytes(original_packet)
+            (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+
+    def test_authority_bound_duplicate_nonfinite_and_overflow_controls(self):
+        pair = copy.deepcopy(self.packet['units'][0])
+        path = self.root / pair['authority']
+        original = path.read_bytes()
+        try:
+            exact = original + b' ' * (F.MAX_AUTHORITY - len(original))
+            path.write_bytes(exact)
+            pair['files']['authority'] = F.sha(exact)
+            F.read_authority(self.root, pair)
+            path.write_bytes(exact + b' ')
+            pair['files']['authority'] = F.sha(exact + b' ')
+            with self.assertRaisesRegex(F.FactsError, 'byte bound'):
+                F.read_authority(self.root, pair)
+            for raw in (b'{"schema":1,"schema":1}', b'{"schema":NaN}', b'{"schema":Infinity}', b'{"schema":1e999}'):
+                path.write_bytes(raw)
+                pair['files']['authority'] = F.sha(raw)
+                with self.assertRaises((F.FactsError, ValueError)):
+                    F.read_authority(self.root, pair)
+        finally:
+            path.write_bytes(original)
+
+    def test_authority_packet_roles_are_exact_all24(self):
+        commands = F.loads((self.root / 'compile_commands.json').read_bytes())
+        changes = [lambda p: p.update(schema=1), lambda p: p.pop('unknown_authority_representation'),
+                   lambda p: p.update(unknown_authority_representation='foreign'),
+                   lambda p: p['units'].pop(), lambda p: p['units'].append(p['units'][0]),
+                   lambda p: p['units'][0].pop('authority'),
+                   lambda p: p['units'][0]['files'].pop('authority'),
+                   lambda p: p['units'][0].update(authority=p['units'][1]['authority']),
+                   lambda p: p['units'][0].update(authority=p['units'][0]['facts']),
+                   lambda p: p['units'][0].update(authority='on/foreign.unknown-authority.json')]
+        for mutate in changes:
+            packet = copy.deepcopy(self.packet)
+            mutate(packet)
+            with self.assertRaises((F.FactsError, ValueError)):
+                F.packet_pairs(packet, commands)
+
+    def test_common_authority_admission_uses_current_sources_and_opaque_full_facts(self):
+        names = ['packet.json', 'compile_commands.json', 'native-files.json']
+        names += [pair['authority'] for pair in self.packet['units']]
+        saved = {name: (self.root / name).read_bytes() for name in names}
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory)
+            packet = copy.deepcopy(self.packet)
+            commands, sources = [], {}
+            for pair, relative in zip(packet['units'], UNITS):
+                path = current / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'int current_source;\n')
+                unit = str(path)
+                commands.append(dict(directory=str(current), file=unit, arguments=['clang', '-c', unit]))
+                sources[unit] = F.sha(path.read_bytes())
+                pair['unit'] = unit
+                authority = F.loads((self.root / pair['authority']).read_bytes())
+                authority['unit'] = unit
+                (self.root / pair['authority']).write_text(json.dumps(authority))
+                pair['files']['authority'] = F.sha((self.root / pair['authority']).read_bytes())
+            try:
+                for name, value in [('packet.json', packet), ('compile_commands.json', commands), ('native-files.json', sources)]:
+                    (self.root / name).write_text(json.dumps(value))
+                (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+                tool = self.root / 'tool/bin/c2rust-transpile'
+                decoder = F.loads
+                def metadata_only(raw):
+                    self.assertNotIn(b'"CompleteReport"', raw)
+                    return decoder(raw)
+                with patch.object(F, 'loads', side_effect=metadata_only):
+                    admitted, _ = F.authority_packet(self.root, commands, tool)
+                self.assertEqual(len(admitted['units']), len(UNITS))
+                path.write_bytes(b'int late_source;\n')
+                with self.assertRaisesRegex(F.FactsError, 'current native source'):
+                    F.authority_packet(self.root, commands, tool)
+            finally:
+                for name, raw in saved.items():
+                    (self.root / name).write_bytes(raw)
+                (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
 
     def test_resealed_identity_and_coverage_controls(self):
         cases = [

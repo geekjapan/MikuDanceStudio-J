@@ -19,6 +19,27 @@ python3 -B tools/vkd3d-rust-probe/check_common_plan.py \
 
 Compiler tests, full24 resource acceptance and byte equality require actual hosted execution. Source checks do not establish stable Rust build, cursor CFG analysis, native ABI, callbacks, CMP, four-host runtime or product integration. A hosted OOM fails this candidate and requires a storage-design decision. It does not permit a smaller command universe.
 
+Independent closed-format packets use packet schema 2 and the mandatory
+`unknown_authority_representation: native-unclassified-definitions-v1` tag.
+Every unit binds an `authority` role with a same-stem `.unknown-authority.json`
+file, including units with no unclassified definitions. The native producer
+borrows the completed facts after compiler-session insertion and serializes the
+exact eight-field authority through an 8 MiB sink before opening its output.
+An oversized authority refuses explicitly. All six fields and nested values of
+each unclassified definition remain intact.
+
+Full replay still checks the complete native graph, census, source buffers,
+raw CBOR, typed AST and generated Rust. It also requires recursive type-strict
+authority equality with the verified facts. The common collector admits the
+sealed exact all24 packet, current compiler and source receipts, current source
+bytes and independent compiler sessions. It opens only the bounded authorities
+for the existing SQLite full source/name-byte preservation join. It hashes full
+facts as opaque packet members. Packet limits remain 4,096 files, 4 GiB total
+and 512 MiB per member. The common report retains schema 2 and diagnostic-only
+authorization. Historical packet schema 1 requires its original frozen verifier.
+Actual all24 authority fit and native/Python replay remain hosted gates until
+measured. No lowering or runtime adoption is established by this representation.
+
 Prepared native intake uses schema 3 with a version 1 invocation envelope. The ordinary report path keeps schema 2 and its native `format_locations` body ranges and buffer hashes. Prepared export omits that unused key before collection; native input capture and same-CBOR instance binding remain unchanged. The envelope contains the actual command selected from the private native compilation database, parser-selected arguments and the expected result of the native argument-adjustment pipeline. One typed compiler boundary binds this evidence to the intended row and extra arguments, checks the target and regenerated cc1 invocation, rejects all native unsupported reasons, and requires complete physical-buffer, builtin-buffer, AST-source and lexer coverage. A separate prepared-only FFI entry rejects a failed native `Tool.run()`, including recoverable diagnostics with a structurally valid AST.
 
 `PreparedProgram` owns the output transaction and publication. Its final commit checks every captured physical source, including units excluded from emission. When a filter excludes all units, a successful commit publishes only the complete diagnostic report after that check. A changed source refuses publication. The transaction and its publish method are private to the program module; the driver cannot publish after an early return.

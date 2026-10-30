@@ -369,6 +369,7 @@ def collect_closed_format_facts(tool, database, output, run, syntax):
             def relative(p):
                 return p.relative_to(output).as_posix()
             pairs.append({'unit': unit, 'facts': relative(path), 'inventory': relative(inventory),
+                          'authority': relative(path.with_name(prefix + '.unknown-authority.json')),
                           'cbor': relative(path.with_name(prefix + '.cursor.cbor')),
                           'typed_ast': relative(path.with_name(prefix + '.typed-ast.txt')),
                           'rust_on': relative(path.with_name(prefix + '.rs')),
@@ -396,7 +397,8 @@ def collect_closed_format_facts(tool, database, output, run, syntax):
         for name in ('closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'):
             shutil.copy2(Path(__file__).with_name(name), snapshots / name)
             verifier_sources[name] = 'verifier-source/' + name
-        packet = {'schema': 1, 'authorization': 'analysis_only', 'units': pairs, 'tool': names,
+        packet = {'schema': 2, 'unknown_authority_representation': 'native-unclassified-definitions-v1',
+                  'authorization': 'analysis_only', 'units': pairs, 'tool': names,
                   'database': 'compile_commands.json', 'native_files': 'native-files.json', 'verifier_sources': verifier_sources,
                   'inventory_plan': 'inventory-plan.json', 'commands': commands, 'executions': 'executions.json',
                   'native_syntax': 'native-syntax.json', 'authentic_job_proof': False,
@@ -423,6 +425,7 @@ def collect_closed_format_fixture(tool, clang, output, run):
 #include <stdio.h>
 #line 9000 "presumed-format-facts.c"
 volatile unsigned counter;
+static int __attribute__((ms_abi)) unknown_authority_fixture(int value) { return value; }
 int once(void) { return ++counter; }
 int consume(const char *format, va_list args) {
     va_list copy;
@@ -465,10 +468,19 @@ void caller(int choose) {
     if len(paths) != 1:
         raise ValueError('format fixture raw fact coverage differs')
     facts = json.loads(paths[0].read_text())
-    from closed_format_facts import check_unit, sha
+    from closed_format_facts import check_unit, sha, read_authority, authority_projection, same
     prefix = paths[0].name.removesuffix('.closed-format.json')
     check_unit(facts, json.loads(paths[0].with_name(prefix + '.variadic.json').read_text()),
                json.loads(database.read_text())[0])
+    authority_path = paths[0].with_name(prefix + '.unknown-authority.json')
+    pair = dict(unit=facts['unit'], authority=authority_path.relative_to(output).as_posix(),
+                cbor=paths[0].with_name(prefix + '.cursor.cbor').relative_to(output).as_posix(),
+                typed_ast=paths[0].with_name(prefix + '.typed-ast.txt').relative_to(output).as_posix(),
+                files=dict(authority=digest(authority_path)))
+    if not same(read_authority(output, pair), authority_projection(facts)):
+        raise ValueError('native fixture unknown authority projection differs')
+    if not facts['unclassified_definitions']:
+        raise ValueError('native fixture did not retain attributed unknown signature')
     if facts['compiler_session'] != {
             'raw_cbor_sha256': sha(paths[0].with_name(prefix + '.cursor.cbor').read_bytes()),
             'typed_ast_sha256': sha(paths[0].with_name(prefix + '.typed-ast.txt').read_bytes())}:

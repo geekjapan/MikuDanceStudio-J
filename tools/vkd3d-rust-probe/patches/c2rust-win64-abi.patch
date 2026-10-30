@@ -2505,13 +2505,60 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,2119 @@
+@@ -0,0 +1,2200 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
 +pub struct ClosedFormatReport {
 +    pub inventory: Value,
 +    pub facts: Value,
++}
++
++
++const UNKNOWN_AUTHORITY_LIMIT: usize = 8 * 1024 * 1024;
++
++struct UnknownAuthorityBytes(Vec<u8>);
++
++impl std::io::Write for UnknownAuthorityBytes {
++    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++        if bytes.len() > UNKNOWN_AUTHORITY_LIMIT.saturating_sub(self.0.len()) {
++            return Err(std::io::Error::other("independent unknown authority exceeds 8 MiB"));
++        }
++        self.0.extend_from_slice(bytes);
++        Ok(bytes.len())
++    }
++
++    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
++}
++
++impl ClosedFormatReport {
++    pub fn unknown_authority_bytes(&self) -> serde_json::Result<Vec<u8>> {
++        #[derive(serde::Serialize)]
++        struct Authority<'a> {
++            schema: u8,
++            kind: &'static str,
++            authorization: &'static str,
++            unit: &'a Value,
++            target: &'a Value,
++            target_c_widths_bits: &'a Value,
++            compiler_session: &'a Value,
++            unclassified_definitions: &'a Value,
++        }
++        let facts = &self.facts;
++        let authority = Authority {
++            schema: 1,
++            kind: "c2rust-independent-unknown-authority",
++            authorization: "analysis_only",
++            unit: &facts["unit"],
++            target: &facts["target"],
++            target_c_widths_bits: &facts["target_c_widths_bits"],
++            compiler_session: &facts["compiler_session"],
++            unclassified_definitions: &facts["unclassified_definitions"],
++        };
++        let mut sink = UnknownAuthorityBytes(Vec::new());
++        serde_json::to_writer(&mut sink, &authority)?;
++        Ok(sink.0)
++    }
 +}
 +
 +struct ReportGraph<'a> {
@@ -3954,6 +4001,40 @@ new file mode 100644
 +    use super::*;
 +
 +    #[test]
++    fn closed_variadic_plan_unknown_authority_preserves_complete_projection() {
++        let mut facts = json!({"unit": "unit.c", "target": "target", "target_c_widths_bits": {"char": 8},
++            "compiler_session": {"raw_cbor_sha256": "raw", "typed_ast_sha256": "typed"},
++            "unclassified_definitions": [{"declaration": 7, "location": {"spelling": {"bytes_hex": "00ff"}},
++                "reason": "native attributed function signature unclassified", "state": "Unproved",
++                "symbol": {"unit": "unit.c", "static": "unknown"},
++                "signature": {"canonical": {"unproved": "attributed"}, "const": true, "volatile": false, "restrict": true}}]});
++        for empty in [false, true] {
++            if empty { facts["unclassified_definitions"] = json!([]); }
++            let report = ClosedFormatReport { inventory: Value::Null, facts: facts.clone() };
++            let value: Value = serde_json::from_slice(&report.unknown_authority_bytes().unwrap()).unwrap();
++            assert_eq!(value.as_object().unwrap().len(), 8);
++            assert_eq!(value["schema"], 1);
++            assert_eq!(value["kind"], "c2rust-independent-unknown-authority");
++            assert_eq!(value["authorization"], "analysis_only");
++            for field in ["unit", "target", "target_c_widths_bits", "compiler_session", "unclassified_definitions"] {
++                assert_eq!(value[field], facts[field]);
++            }
++        }
++    }
++
++    #[test]
++    fn closed_variadic_plan_unknown_authority_exact_cap_and_one_over_refuse() {
++        let mut report = ClosedFormatReport { inventory: Value::Null, facts: json!({
++            "unit": "", "target": "target", "target_c_widths_bits": {}, "compiler_session": {},
++            "unclassified_definitions": []}) };
++        let overhead = report.unknown_authority_bytes().unwrap().len();
++        report.facts["unit"] = Value::String("x".repeat(UNKNOWN_AUTHORITY_LIMIT - overhead));
++        assert_eq!(report.unknown_authority_bytes().unwrap().len(), UNKNOWN_AUTHORITY_LIMIT);
++        report.facts["unit"] = Value::String("x".repeat(UNKNOWN_AUTHORITY_LIMIT - overhead + 1));
++        assert!(report.unknown_authority_bytes().is_err());
++    }
++
++    #[test]
 +    fn closed_format_facts_consumption_retains_stars_lengths_and_unknowns() {
 +        assert_eq!(c2rust_ast_exporter::sha256(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 +        let parsed = TypedAstContext::format_consumption(b"%*.*zu:%lld:%s\0");
@@ -5343,7 +5424,9 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
          Err(e) => {
              warn!(
                  "Error: {}. Skipping {}; is it well-formed C?",
-@@ -704,12 +737,24 @@
+@@ -702,14 +735,26 @@
+     }
+
      // Convert this into a typed AST
 +    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::TypedImport, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
      let typed_context = {
@@ -5368,7 +5451,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
      if tcfg.dump_typed_context {
          println!("Clang AST");
          println!("{:#?}", typed_context);
-@@ -718,19 +763,48 @@
+@@ -718,19 +763,52 @@
      if tcfg.pretty_typed_context {
          println!("Pretty-printed Clang AST");
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
@@ -5382,6 +5465,10 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 +        facts["compiler_session"] = serde_json::json!({
 +            "raw_cbor_sha256": c2rust_ast_exporter::sha256(&raw_cbor),
 +            "typed_ast_sha256": c2rust_ast_exporter::sha256(typed_ast.as_bytes())});
++        let authority = report.unknown_authority_bytes().expect("serialize bounded unknown authority");
++        std::fs::write(output_path.with_extension("unknown-authority.json"), authority)
++            .expect("write unknown authority");
++        let facts = &report.facts;
 +        serde_json::to_writer_pretty(File::create(output_path.with_extension("closed-format.json")).expect("create format facts"), &facts)
 +            .expect("write format facts");
 +        std::fs::write(output_path.with_extension("typed-ast.txt"), typed_ast)

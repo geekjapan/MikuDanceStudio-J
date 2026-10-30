@@ -15,6 +15,14 @@ use super::solver::Joint;
 use super::world_objects::{BodyDesc, BodyHandle, JointDesc, Pose, WorldObjects};
 use super::InvalidArgument;
 
+pub(crate) type DynamicsParts<'a, P> = (
+    &'a mut [RigidBody],
+    &'a mut [IslandObject],
+    &'a mut [Joint],
+    P,
+    &'a mut [DispatcherManifold],
+);
+
 pub struct DiscreteCollisionWorld {
     objects: WorldObjects,
     broadphase: DbvtBroadphase,
@@ -48,13 +56,7 @@ impl DiscreteCollisionWorld {
 
     pub(crate) fn dynamics_parts(
         &mut self,
-    ) -> (
-        &mut [RigidBody],
-        &mut [IslandObject],
-        &mut [Joint],
-        impl Iterator<Item = [usize; 2]> + '_,
-        &mut [DispatcherManifold],
-    ) {
+    ) -> DynamicsParts<'_, impl Iterator<Item = [usize; 2]> + '_> {
         let (bodies, objects, joints) = self.objects.solver_parts();
         let broadphase = &self.broadphase;
         (

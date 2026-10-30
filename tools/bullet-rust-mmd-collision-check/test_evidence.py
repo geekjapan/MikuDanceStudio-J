@@ -41,7 +41,7 @@ class ByteAuthorityTests(unittest.TestCase):
                                st_dev=1, st_ino=1, st_mtime_ns=1, st_ctime_ns=1)
         directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755)
         def status(path):
-            return directory if str(path) == '/inert-cache' else info
+            return directory if path == Path('/inert-cache') else info
         streams = [io.BytesIO(first), io.BytesIO(replacement)]
         for stream in streams:
             stream.fileno = lambda: 123
@@ -91,7 +91,7 @@ class ByteAuthorityTests(unittest.TestCase):
         from evidence import ByteIdentity, Capture, ExpectedEvidence
         expected = ExpectedEvidence({'tiny.json': ByteIdentity.of(b'{}')}, [])
         def status(path):
-            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if str(path) == '/inert-cache' else \
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if path == Path('/inert-cache') else \
                    SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_nlink=1, st_size=1)
         with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['tiny.json'])]), \
              patch.object(Path, 'lstat', status), patch.object(Path, 'open') as opened:
@@ -109,7 +109,7 @@ class ByteAuthorityTests(unittest.TestCase):
         for mode, links in [(stat.S_IFLNK | 0o777, 1), (stat.S_IFREG | 0o644, 2),
                             (stat.S_IFREG | 0o4644, 1)]:
             def status(path):
-                return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if str(path) == '/inert-cache' else \
+                return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755) if path == Path('/inert-cache') else \
                        SimpleNamespace(st_mode=mode, st_nlink=links, st_size=2)
             with patch('evidence.os.walk', return_value=[('/inert-cache', [], ['tiny.json'])]), \
                  patch.object(Path, 'lstat', status), patch.object(Path, 'open') as opened:

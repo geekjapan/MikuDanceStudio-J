@@ -134,9 +134,15 @@ fn mmd_world_mode_toggle_preserves_static_bit_and_mass() {
             w.set_kinematic(first, true).unwrap();
             assert_eq!(w.objects().bodies()[1].snapshot().inverse_mass, mass);
             w.set_kinematic(first, false).unwrap();
-            assert_eq!(w.objects().data()[1].collision_flags, if a == 0 { 1 } else { 0 });
+            assert_eq!(
+                w.objects().data()[1].collision_flags,
+                if a == 0 { 1 } else { 0 }
+            );
             assert_eq!(w.objects().bodies()[1].snapshot().inverse_mass, mass);
-            assert_eq!(w.objects().objects()[1].activation.state, ActivationState::DisableDeactivation);
+            assert_eq!(
+                w.objects().objects()[1].activation.state,
+                ActivationState::DisableDeactivation
+            );
             w.perform_discrete_collision_detection();
         }
     }
@@ -151,15 +157,24 @@ fn mmd_world_motion_reseat_and_stop_remain_distinct() {
         w.set_motion_state(a, at(100.0)).unwrap();
         w.perform_discrete_collision_detection();
         assert!(w.manifolds().iter().any(|m| m.bodies == [1, 2]));
-        assert_eq!(w.objects().bodies()[1].snapshot().world.origin, at(0.0).origin);
+        assert_eq!(
+            w.objects().bodies()[1].snapshot().world.origin,
+            at(0.0).origin
+        );
         w.reseat(a, at(50.0)).unwrap();
         w.perform_discrete_collision_detection();
         assert!(w.manifolds().iter().all(|m| m.bodies != [1, 2]));
-        assert_eq!(w.objects().data()[1].motion.get_world_transform().origin, at(100.0).origin);
+        assert_eq!(
+            w.objects().data()[1].motion.get_world_transform().origin,
+            at(100.0).origin
+        );
         w.stop_at(a, at(0.0).origin).unwrap();
         w.perform_discrete_collision_detection();
         assert!(w.manifolds().iter().any(|m| m.bodies == [1, 2]));
-        assert_eq!(w.objects().data()[1].motion.get_world_transform().origin, at(100.0).origin);
+        assert_eq!(
+            w.objects().data()[1].motion.get_world_transform().origin,
+            at(100.0).origin
+        );
     }
 }
 
@@ -170,14 +185,26 @@ fn mmd_world_joint_uid_does_not_suppress_collision() {
             let mut w = MmdCollisionWorld::new();
             let a = w.create_body(body(0, 0.0), 1).unwrap();
             let b = w.create_body(body(1, 0.25), 1).unwrap();
-            let frame = Pose { position: Vec3::ZERO, rotation: Quat([0.0, 0.0, 0.0, 1.0]) };
-            w.create_joint(JointDesc {
-                bodies: [a, b], frames: [frame; 2],
-                linear_lower: Vec3::ZERO, linear_upper: Vec3::ZERO,
-                angular_lower: Vec3::ZERO, angular_upper: Vec3::ZERO,
-                spring_enabled: [spring; 6], spring_stiffness: [if spring { 2.0 } else { 0.0 }; 6],
-                use_linear_reference_frame_a: false, disable_collisions: true,
-            }, uid).unwrap();
+            let frame = Pose {
+                position: Vec3::ZERO,
+                rotation: Quat([0.0, 0.0, 0.0, 1.0]),
+            };
+            w.create_joint(
+                JointDesc {
+                    bodies: [a, b],
+                    frames: [frame; 2],
+                    linear_lower: Vec3::ZERO,
+                    linear_upper: Vec3::ZERO,
+                    angular_lower: Vec3::ZERO,
+                    angular_upper: Vec3::ZERO,
+                    spring_enabled: [spring; 6],
+                    spring_stiffness: [if spring { 2.0 } else { 0.0 }; 6],
+                    use_linear_reference_frame_a: false,
+                    disable_collisions: true,
+                },
+                uid,
+            )
+            .unwrap();
             assert_eq!(w.objects().joint_data()[0].mmd_uid, Some(uid));
             assert!(!w.objects().joint_data()[0].disable_collisions);
             w.perform_discrete_collision_detection();

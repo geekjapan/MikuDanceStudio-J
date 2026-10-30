@@ -782,10 +782,94 @@ diff --git a/c2rust-ast-exporter/src/clang_ast.rs b/c2rust-ast-exporter/src/clan
 diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 --- a/c2rust-ast-exporter/src/lib.rs
 +++ b/c2rust-ast-exporter/src/lib.rs
-@@ -14,6 +14,13 @@
+@@ -14,6 +14,97 @@
      fn default() -> Self {
          Self::CharPtrBuiltinVaList
      }
++}
++
++
++/// Internal opt-in observations; failures never affect compilation.
++pub mod retention_diagnostics {
++    use std::fs::{File, OpenOptions};
++    use std::io::{Read, Write};
++    use std::sync::{Mutex, OnceLock};
++    use std::time::Instant;
++
++    #[derive(Clone, Copy, Debug)]
++    pub enum Stage { NativeExport, NativeMarshal, NativeDrop, CborDecode, CborProcess,
++        TypedImport, NativeIntake, UnitRetain, PlanCapture, SymbolClosure, PerUnitBind,
++        PlanReport, Serialization, Emit, Telemetry }
++    #[derive(Clone, Copy, Debug)]
++    pub enum Edge { Begin, End, Observation }
++    #[derive(Default)]
++    pub struct Counts {
++        pub unit_index: Option<usize>, pub retained_units: Option<usize>,
++        pub cbor_bytes: Option<usize>, pub cursor_json_bytes: Option<usize>,
++        pub source_bytes: Option<usize>, pub decls: Option<usize>,
++        pub exprs: Option<usize>, pub types: Option<usize>,
++    }
++    struct State { file: File, start: Instant, sequence: u64, bytes: usize, stopped: bool,
++        unit: Option<usize>, retained: Option<usize> }
++    static STATE: OnceLock<Option<Mutex<State>>> = OnceLock::new();
++    fn number(value: Option<usize>) -> String {
++        value.map(|n| n.to_string()).unwrap_or_else(|| "null".into())
++    }
++    fn state() -> Option<&'static Mutex<State>> {
++        STATE.get_or_init(|| {
++            if std::env::var_os("MDS_C2RUST_RETENTION_DIAGNOSTICS").as_deref() != Some(std::ffi::OsStr::new("1")) { return None; }
++            let opened = (|| {
++                let path = std::env::var_os("MDS_C2RUST_RETENTION_LOG").ok_or(())?;
++                let mut options = OpenOptions::new();
++                options.append(true);
++                #[cfg(target_os = "linux")]
++                { use std::os::unix::fs::OpenOptionsExt; options.custom_flags(0x20000); }
++                let file = options.open(path).map_err(|_| ())?;
++                if !file.metadata().map_err(|_| ())?.is_file() { return Err(()); }
++                Ok(Mutex::new(State { file, start: Instant::now(), sequence: 0, bytes: 0,
++                    stopped: false, unit: None, retained: None }))
++            })();
++            match opened { Ok(s) => Some(s), Err(()) => { let _ = writeln!(std::io::stderr().lock(), "RETENTION_DIAGNOSTIC_UNAVAILABLE open"); None } }
++        }).as_ref()
++    }
++    pub fn observe<T, R>(stage: Stage, input: &T, operation: impl FnOnce(&T) -> R) -> R {
++        mark(stage, Edge::Begin, Counts::default());
++        let value = operation(input);
++        mark(stage, Edge::End, Counts::default());
++        value
++    }
++    pub fn mark(stage: Stage, edge: Edge, counts: Counts) {
++        let Some(state) = state() else { return; };
++        let Ok(mut s) = state.lock() else { return; };
++        if s.stopped { return; }
++        if matches!(stage, Stage::PlanCapture) { s.unit = None; }
++        if counts.unit_index.is_some() { s.unit = counts.unit_index; }
++        if counts.retained_units.is_some() { s.retained = counts.retained_units; }
++        let mut raw = String::new();
++        let proc_ok = File::open("/proc/self/status").and_then(|f| f.take(65536).read_to_string(&mut raw)).is_ok() && raw.len() < 65536;
++        let read_kib = |key: &str| -> Option<usize> {
++            if !proc_ok { return None; }
++            let mut words = raw.lines().find(|l| l.starts_with(key))?.split_whitespace();
++            words.next()?;
++            let value = words.next()?.parse::<usize>().ok()?;
++            if words.next()? != "kB" || words.next().is_some() { return None; }
++            Some(value)
++        };
++        let rss = read_kib("VmRSS:");
++        let hwm = read_kib("VmHWM:");
++        let limit = s.sequence >= 4095 || s.bytes >= 4 * 1024 * 1024 - 2048;
++        let status = if limit { "truncated" } else if rss.is_none() || hwm.is_none() { "unavailable" } else { "ok" };
++        let (stage, edge) = if limit { (Stage::Telemetry, Edge::Observation) } else { (stage, edge) };
++        let line = format!("{{\"schema\":1,\"pid\":{},\"sequence\":{},\"monotonic_ns\":{},\"stage\":\"{:?}\",\"edge\":\"{:?}\",\"status\":\"{}\",\"rss_kib\":{},\"hwm_kib\":{},\"counts\":{{\"unit_index\":{},\"retained_units\":{},\"cbor_bytes\":{},\"cursor_json_bytes\":{},\"source_bytes\":{},\"decls\":{},\"exprs\":{},\"types\":{}}}}}\n",
++            std::process::id(), s.sequence, s.start.elapsed().as_nanos().min(u64::MAX as u128), stage, edge, status,
++            number(rss), number(hwm), number(s.unit), number(s.retained), number(counts.cbor_bytes),
++            number(counts.cursor_json_bytes), number(counts.source_bytes), number(counts.decls), number(counts.exprs), number(counts.types));
++        if line.len() > 2048 || s.file.write_all(line.as_bytes()).and_then(|_| s.file.flush()).is_err() {
++            let _ = writeln!(std::io::stderr().lock(), "RETENTION_DIAGNOSTIC_UNAVAILABLE write"); s.stopped = true; return;
++        }
++        s.sequence += 1; s.bytes += line.len();
++        if limit { s.stopped = true; }
++    }
 +}
 +
 +pub fn sha256(data: &[u8]) -> String {
@@ -796,7 +880,7 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
  }
 
  pub fn get_clang_major_version() -> Option<u32> {
-@@ -36,12 +43,45 @@
+@@ -36,12 +127,45 @@
      extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
@@ -847,7 +931,21 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 
      // let cbor_path = file_path.with_extension("cbor");
      // let mut cbor_file = File::create(&cbor_path)?;
-@@ -71,7 +111,9 @@
+@@ -48,9 +172,13 @@
+     // cbor_file.write_all(&buffer[..])?;
+     // eprintln!("Dumped CBOR to {}", cbor_path.to_string_lossy());
+
++    crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::CborDecode, crate::retention_diagnostics::Edge::Begin, crate::retention_diagnostics::Counts { cbor_bytes: Some(buffer.len()), ..Default::default() });
+     let items: Value = from_slice(&buffer[..]).unwrap();
++    crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::CborDecode, crate::retention_diagnostics::Edge::End, crate::retention_diagnostics::Counts { cbor_bytes: Some(buffer.len()), ..Default::default() });
+
++    crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::CborProcess, crate::retention_diagnostics::Edge::Begin, crate::retention_diagnostics::Counts { cbor_bytes: Some(buffer.len()), ..Default::default() });
+     let ast = clang_ast::process(items)
+         .map_err(|e| Error::new(ErrorKind::InvalidData, format!("{}", e)))?;
++    crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::CborProcess, crate::retention_diagnostics::Edge::End, crate::retention_diagnostics::Counts { cbor_bytes: Some(buffer.len()), ..Default::default() });
+     Ok((ast, preprocessed))
+ }
+@@ -71,7 +199,9 @@
      extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
@@ -858,7 +956,7 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
      let mut args_owned = vec![CString::new("ast_exporter").unwrap()];
      args_owned.push(CString::new(file_path.to_str().unwrap()).unwrap());
      args_owned.push(CString::new("-p").unwrap());
-@@ -81,22 +123,30 @@
+@@ -81,22 +211,36 @@
          args_owned.push(CString::new(["-extra-arg=", arg].join("")).unwrap())
      }
 
@@ -878,6 +976,7 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 -            emit_preprocessed.into(),
 -        );
 +        let mut status = 0;
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeExport, crate::retention_diagnostics::Edge::Begin, Default::default());
 +        let ptr = if prepared {
 +            ast_exporter_prepared(args_ptrs.len() as c_int, args_ptrs.as_ptr(),
 +                debug.into(), emit_preprocessed.into(), &mut status)
@@ -885,8 +984,13 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 +            ast_exporter(args_ptrs.len() as c_int, args_ptrs.as_ptr(), debug.into(), emit_preprocessed.into())
 +        };
          drop(lock);
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeExport, crate::retention_diagnostics::Edge::End, Default::default());
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeMarshal, crate::retention_diagnostics::Edge::Begin, Default::default());
          hashmap = marshal_result(ptr);
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeMarshal, crate::retention_diagnostics::Edge::End, crate::retention_diagnostics::Counts { cbor_bytes: Some(hashmap.values().map(|(buffer, _)| buffer.len()).sum()), ..Default::default() });
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeDrop, crate::retention_diagnostics::Edge::Begin, Default::default());
          drop_export_result(ptr);
++        crate::retention_diagnostics::mark(crate::retention_diagnostics::Stage::NativeDrop, crate::retention_diagnostics::Edge::End, Default::default());
 -    }
 -    hashmap
 +        if prepared && status != 0 {
@@ -897,7 +1001,7 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
  }
 
  #[allow(non_camel_case_types)]
-@@ -122,6 +172,9 @@
+@@ -122,6 +266,9 @@
      // void drop_export_result(ExportResult *result);
      fn drop_export_result(ptr: *mut ffi::ExportResult);
 
@@ -911,7 +1015,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan.rs b/c2rust-transpile/src/c_
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,498 @@
 +use super::*;
 +use serde_derive::Serialize;
 +use std::collections::{BTreeMap, BTreeSet};
@@ -1254,7 +1358,9 @@ new file mode 100644
 +        }
 +        if units.is_empty() { return Err("empty complete command universe".into()); }
 +        let mut plan = Self { units };
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::SymbolClosure, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
 +        plan.close_symbols();
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::SymbolClosure, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
 +        Ok(plan)
 +    }
 +
@@ -1356,12 +1462,15 @@ new file mode 100644
 +    }
 +
 +    pub(crate) fn report(&self) -> serde_json::Value {
-+        serde_json::json!({"schema": 1, "status": "ClosedDiagnosticPlan", "lowering": "not_authorized",
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
++        let report = serde_json::json!({"schema": 1, "status": "ClosedDiagnosticPlan", "lowering": "not_authorized",
 +            "units": self.units.values().map(|u| serde_json::json!({"identity": u.identity,
 +                "source_sha256": u.sources.iter().map(|(p,b)| (p.to_string_lossy().into_owned(), c2rust_ast_exporter::sha256(b))).collect::<BTreeMap<_,_>>(),
 +                "native_ast_exports": 1, "typed_imports": 1,
 +                "declarations": u.declarations.values().collect::<Vec<_>>(), "calls": u.calls.values().collect::<Vec<_>>()
-+            })).collect::<Vec<_>>()})
++            })).collect::<Vec<_>>()});
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanReport, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
++        report
 +    }
 +}
 +
@@ -4592,8 +4701,9 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
          Err(e) => {
              warn!(
                  "Error: {}. Skipping {}; is it well-formed C?",
-@@ -704,12 +737,22 @@
+@@ -704,12 +737,24 @@
      // Convert this into a typed AST
++    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::TypedImport, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
      let typed_context = {
          let conv = ConversionContext::new(input_path, &untyped_context);
 +        if conv.invalid_clang_ast && tcfg.diagnostic_common_plan { return Err(()); }
@@ -4603,6 +4713,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
          conv.into_typed_context()
      };
 
++    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::TypedImport, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { cursor_json_bytes: typed_context.cursor_inputs.as_ref().map(String::len), decls: Some(typed_context.c_decls.len()), exprs: Some(typed_context.c_exprs.len()), types: Some(typed_context.c_types.len()), ..Default::default() });
 +    if tcfg.diagnostic_common_plan { println!("COMMON_PLAN_TYPED_IMPORT {}", input_path.display()); }
 +    Ok((typed_context, preprocessed_source, instance))
 +}
@@ -4615,7 +4726,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
      if tcfg.dump_typed_context {
          println!("Clang AST");
          println!("{:#?}", typed_context);
-@@ -718,19 +761,48 @@
+@@ -718,19 +763,48 @@
      if tcfg.pretty_typed_context {
          println!("Pretty-printed Clang AST");
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
@@ -4861,7 +4972,7 @@ diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,486 @@
+@@ -0,0 +1,503 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
@@ -4947,7 +5058,10 @@ new file mode 100644
 +
 +pub(crate) fn native_sources(ast: &mut TypedAstContext, source: &Path, effective: &serde_json::Value, extra: &[&str]) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
 +    let raw = ast.cursor_inputs.take().ok_or_else(|| format_err!("missing native input capture"))?;
-+    crate::native_intake::capture(&raw, ast, source, effective, extra)
++    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::NativeIntake, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, c2rust_ast_exporter::retention_diagnostics::Counts { cursor_json_bytes: Some(raw.len()), ..Default::default() });
++    let result = crate::native_intake::capture(&raw, ast, source, effective, extra);
++    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::NativeIntake, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { source_bytes: result.as_ref().ok().map(|sources| sources.values().map(Vec::len).sum()), ..Default::default() });
++    result
 +}
 +
 +impl PreparedProgram {
@@ -4989,6 +5103,7 @@ new file mode 100644
 +                if !admitted.insert(index) { return Err(format_err!("duplicate command membership")); }
 +                let (_, command, source, effective) = command_identity(row, extra, &domain)?;
 +                fs::write(&database, serde_json::to_vec(&vec![native_database_row(&effective)])?)?;
++                c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::UnitRetain, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, c2rust_ast_exporter::retention_diagnostics::Counts { unit_index: Some(index), retained_units: Some(units.len()), ..Default::default() });
 +                let (mut ast, preprocessed, instance) = prepare_single(tcfg, &source, &database, extra, None)
 +                    .map_err(|_| format_err!("common plan native preparation failed"))?;
 +                let instance = instance.expect("prepared native AST digest");
@@ -5007,16 +5122,25 @@ new file mode 100644
 +                    || units.insert(key, PreparedUnit { identity, ast, preprocessed }).is_some() {
 +                    return Err(format_err!("duplicate effective command or emission identity"));
 +                }
++                c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::UnitRetain, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { retained_units: Some(units.len()), source_bytes: Some(snapshots.values().flat_map(|sources| sources.values()).map(Vec::len).sum()), ..Default::default() });
 +            }
 +        }
 +        if admitted.len() != rows.len() { return Err(format_err!("incomplete semantic command intake")); }
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanCapture, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
 +        let plan = ClosedVariadicPlan::capture(units.iter().map(|(key,u)|
 +            (&u.identity, &u.ast, snapshots.remove(key).expect("prepared source snapshot"))))
 +            .map_err(|e| format_err!("common plan: {e}"))?;
-+        for unit in units.values() { plan.bind(&unit.identity, &unit.ast).map_err(|e| format_err!("common plan: {e}"))?; }
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PlanCapture, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
++        for unit in units.values() {
++            c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PerUnitBind, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, Default::default());
++            plan.bind(&unit.identity, &unit.ast).map_err(|e| format_err!("common plan: {e}"))?;
++            c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PerUnitBind, c2rust_ast_exporter::retention_diagnostics::Edge::End, Default::default());
++        }
 +        let root = tcfg.output_dir.as_ref().unwrap();
 +        fs::create_dir_all(root)?;
-+        fs::write(root.join("closed-variadic-plan.json"), serde_json::to_vec_pretty(&plan.report())?)?;
++        fs::write(root.join("closed-variadic-plan.json"),
++            c2rust_ast_exporter::retention_diagnostics::observe(c2rust_ast_exporter::retention_diagnostics::Stage::Serialization,
++                &plan.report(), |report| serde_json::to_vec_pretty(report))?)?;
 +        println!("COMMON_PLAN_CLOSED {}", units.len());
 +        Ok(Self { units, emission, plan, transaction })
 +    }
@@ -5043,11 +5167,15 @@ new file mode 100644
 +        let source = cmd.abs_file().canonicalize().expect("prepared input source");
 +        let key = self.emission.get(&(source.clone(), cmd.output.clone(), cmd.arguments.clone())).expect("selected command outside prepared universe");
 +        let unit = self.units.remove(key).expect("prepared context consumed more than once");
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PerUnitBind, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, c2rust_ast_exporter::retention_diagnostics::Counts { retained_units: Some(self.units.len() + 1), ..Default::default() });
 +        let bound = self.plan.bind(&unit.identity, &unit.ast).expect("common plan binding before transformations");
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::PerUnitBind, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { retained_units: Some(self.units.len() + 1), ..Default::default() });
 +        println!("COMMON_PLAN_EMIT {}", source.display());
 +        let output = get_output_path(tcfg, &source, ancestor, build);
 +        if output.exists() { panic!("common plan refuses colliding output paths"); }
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::Emit, c2rust_ast_exporter::retention_diagnostics::Edge::Begin, c2rust_ast_exporter::retention_diagnostics::Counts { retained_units: Some(self.units.len() + 1), ..Default::default() });
 +        let result = emit_prepared_unit(tcfg, &source, output, unit.ast, unit.preprocessed, Some(bound));
++        c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::Emit, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { retained_units: Some(self.units.len()), ..Default::default() });
 +        if result.is_err() { panic!("common plan conversion failed"); }
 +        result
 +    }

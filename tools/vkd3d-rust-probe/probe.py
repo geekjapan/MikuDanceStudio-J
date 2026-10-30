@@ -180,7 +180,7 @@ class _RunDiagnostics:
                 pass
 
 
-def run(command, log, *, diagnostics=None, **kwargs):
+def run(command, log, *, diagnostics=None, retention_log=None, **kwargs):
     timeout = kwargs.pop("timeout", None)
     started = datetime.now(timezone.utc).isoformat()
     start = time.monotonic()
@@ -189,11 +189,25 @@ def run(command, log, *, diagnostics=None, **kwargs):
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, **kwargs)
         observer = None
+        retention = None
+        retention_stream = None
         try:
+            if retention_log is not None:
+                from diagnose_common_plan_retention import RetentionForwarder
+                try:
+                    retention_stream = retention_log.open('rb')
+                    retention = RetentionForwarder(retention_stream, process.pid)
+                except OSError:
+                    try:
+                        print('RETENTION_DIAGNOSTIC_UNAVAILABLE open', flush=True)
+                    except OSError:
+                        pass
             if diagnostics is not None:
                 observer = _RunDiagnostics(diagnostics, kwargs.get('cwd'))
                 observer.emit('start', process, command, log, start)
             while True:
+                if retention is not None and time.monotonic() >= retention.next_read:
+                    retention.drain()
                 pid, status, usage = os.wait4(process.pid, os.WNOHANG)
                 if pid:
                     process.returncode = os.waitstatus_to_exitcode(status)
@@ -219,6 +233,13 @@ def run(command, log, *, diagnostics=None, **kwargs):
                     if observer is not None:
                         observer.emit('finish', process, command, log, start, usage, dict(pid=reaped_pid, status=status))
             finally:
+                if retention is not None:
+                    retention.drain(final=True)
+                if retention_stream is not None:
+                    try:
+                        retention_stream.close()
+                    except OSError:
+                        pass
                 if observer is not None:
                     observer.close()
     return {"command": command, "exit_code": 124 if timed_out else process.returncode,
@@ -283,6 +304,22 @@ def extern_inventory(sources):
                        for abi, groups in sorted(by_abi.items())}}
 
 
+def compilation_entries(source, original, clang, sources=None):
+    if sources is None:
+        sources = sorted((source / "libs/vkd3d-shader").glob("*.c"))
+        sources += sorted((source / "libs/vkd3d-common").glob("*.c"))
+    entries = []
+    for path in sources:
+        flags = ["-DHAVE_CONFIG_H", "-D_WIN32_WINNT=0x0600", "-std=c99"]
+        flags += ["-I" + str(source / p) for p in (".", "include", "include/private", "libs/vkd3d-shader")]
+        flags += ["-I" + str(original.parent / p / "include") for p in ("hdr", "spv")]
+        if path.parent.name == "vkd3d-shader":
+            flags += ["-DLIBVKD3D_SHADER_SOURCE", "-DVKD3D_DEBUG_ENV=VKD3D_SHADER_DEBUG"]
+        entries.append({"directory": str(source), "file": str(path),
+                        "arguments": [str(clang.resolve()), *flags, "-c", str(path)]})
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -325,15 +362,7 @@ def main():
         from full_compiler import UNITS
         if sorted(str(p.relative_to(source)) for p in sources) != list(UNITS):
             parser.error("configured source differs from exact pinned 24-unit inventory")
-    entries = []
-    for path in sources:
-        flags = ["-DHAVE_CONFIG_H", "-D_WIN32_WINNT=0x0600", "-std=c99"]
-        flags += ["-I" + str(source / p) for p in (".", "include", "include/private", "libs/vkd3d-shader")]
-        flags += ["-I" + str(original.parent / p / "include") for p in ("hdr", "spv")]
-        if path.parent.name == "vkd3d-shader":
-            flags += ["-DLIBVKD3D_SHADER_SOURCE", "-DVKD3D_DEBUG_ENV=VKD3D_SHADER_DEBUG"]
-        entries.append({"directory": str(source), "file": str(path),
-                        "arguments": [str(args.clang.resolve()), *flags, "-c", str(path)]})
+    entries = compilation_entries(source, original, args.clang, sources)
     database = artifacts / "compile_commands.json"
     database.write_text(json.dumps(entries, indent=2) + "\n")
     result = {"status": "incomplete", "source": str(original), "translation_units": len(sources),

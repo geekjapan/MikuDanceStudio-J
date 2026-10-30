@@ -24,3 +24,15 @@ Prepared native intake uses schema 3 with a version 1 invocation envelope. The o
 `PreparedProgram` owns the output transaction and publication. Its final commit checks every captured physical source, including units excluded from emission. When a filter excludes all units, a successful commit publishes only the complete diagnostic report after that check. A changed source refuses publication. The transaction and its publish method are private to the program module; the driver cannot publish after an early return.
 
 Hosted native controls include recoverable `#error`, modules and VFS-overlay refusals after a legal baseline, coordinated metadata negatives, source changes in filtered and unemitted units, and report-only filter-zero publication. Test names and successful executions are compared with the definitions in applied source. The separate `arm64-ordinary-types` job checks the actual patched ordinary tool source on an Ubuntu ARM64 host with `DOCS_RS=1`. It skips native exporter building and proves typing only; it does not execute the exporter, test native ABI or replace the LLVM18/full24 gates. All new hosted checks require an actual run before acceptance.
+
+The `w4-shader-retention-diagnostic` push branch reuses same-run preparation to
+run the complete all24 ON command once with internal Rust phase observations.
+`MDS_C2RUST_RETENTION_DIAGNOSTICS=1` and an owned `MDS_C2RUST_RETENTION_LOG`
+sidecar opt in; ordinary runs have telemetry disabled. Validated complete events
+are forwarded promptly by the existing parent wait loop. Records contain counts
+and Linux process RSS/HWM (not live heap), with 4,096 event, 4 MiB total, 2 KiB
+line and 64 KiB proc-read limits. Missing measurements remain null. Logging
+failures do not change the compiler result. This diagnostic grants only
+`authorization=diagnostic_only`, `paired_acceptance=UNRUN`; the unchanged all24
+Rust/TOML paired gate is still required after a measured fix. It establishes no
+root cause or performance improvement.

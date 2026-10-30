@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix]
+    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix, w4-shader-unknown-wrapper-fix, w4-shader-retention-diagnostic]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +23,7 @@ defaults:
 
 jobs:
   arm64-ordinary-types:
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     env:
@@ -90,6 +91,8 @@ jobs:
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_common_plan.py
+          python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_retention_diagnostics.py
+          python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_retention_diagnostics.py
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_run_diagnostics.py
           PYTHONPATH=tools/vkd3d-rust-probe python3 -B -m unittest \
@@ -153,6 +156,7 @@ jobs:
           if-no-files-found: error
 
   extract:
+    if: github.ref != 'refs/heads/w4-shader-retention-diagnostic'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 115
@@ -221,6 +225,50 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: shader-format-facts-all24
+          path: ${{ runner.temp }}/format-facts/evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+  retention-diagnostic:
+    if: github.ref == 'refs/heads/w4-shader-retention-diagnostic'
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: shader-format-facts-input
+          path: ${{ runner.temp }}/format-facts
+      - name: Install the matching translator runtime
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/format-facts/evidence"
+          exec > >(tee "$RUNNER_TEMP/format-facts/evidence/runtime-setup.log") 2>&1
+          printf 'https://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-cpp18 libllvm18
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Extract prepared source and actual compiler
+        run: |
+          mkdir -p "$RUNNER_TEMP/format-facts/evidence"
+          tar -xzf "$RUNNER_TEMP/format-facts/input.tar.gz" -C "$RUNNER_TEMP/format-facts"
+          python3 -B tools/vkd3d-rust-probe/check_runtime.py --tool "$RUNNER_TEMP/format-facts/tool"
+      - name: Observe all24 common-plan ON exactly once
+        timeout-minutes: 38
+        run: |
+          python3 -B tools/vkd3d-rust-probe/diagnose_common_plan_retention.py \
+            --tool "$RUNNER_TEMP/format-facts/tool/bin/c2rust-transpile" \
+            --source "$RUNNER_TEMP/format-facts/prepared/work-linux-native/vkd3d-2.1" \
+            --clang /usr/bin/clang-18 \
+            --output "$RUNNER_TEMP/format-facts/evidence/retention" --timeout 1800
+      - name: Retain ON-only partial diagnostic observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-retention-diagnostic
           path: ${{ runner.temp }}/format-facts/evidence/
           retention-days: 7
           if-no-files-found: error

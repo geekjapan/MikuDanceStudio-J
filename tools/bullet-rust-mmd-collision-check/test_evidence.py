@@ -159,10 +159,14 @@ class ByteAuthorityTests(unittest.TestCase):
 class CommandRecordFramingTests(unittest.TestCase):
     def fixture(self):
         from evidence import ByteIdentity, Capture, ExpectedEvidence, command_index, command_path, digest, encode_json
-        records = [{'label': label, 'argv': ['inert', label], 'pid': None,
+        records = [{'label': label, 'argv': ['inert', label], 'cwd': '/inert', 'pid': None,
+                    'executable': {'path': '/inert/tool', 'target': '/inert/tool', 'sha256': digest(b'tool')},
+                    'executable_end': {'path': '/inert/tool', 'target': '/inert/tool', 'sha256': digest(b'tool')},
+                    'stdin_sha256': None, 'start_utc': None, 'end_utc': None, 'seconds': 0.0,
+                    'stdout_sha256': digest(b''), 'stderr_sha256': digest(b''), 'returncode': None,
                     'generated_before': {'generated/a.rs': digest(b'a'), 'mutants/x/b.rs': digest(b'b')},
                     'generated_end': {'generated/a.rs': digest(b'a'), 'mutants/x/b.rs': digest(b'b')},
-                    'waited': False, 'streams_closed': False, 'outputs': {}, 'inputs_before': {}}
+                    'waited': False, 'streams_closed': False, 'outputs': {}, 'inputs_before': {}, 'inputs_end': {}}
                    for label in ['first', 'second']]
         content, refs = {}, []
         for ordinal, record in enumerate(records, 1):

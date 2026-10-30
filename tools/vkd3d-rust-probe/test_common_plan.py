@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from check_common_plan import canonical, validate_plan
+from check_common_plan import canonical, preserved_unknowns, validate_plan
 
 
 class CommonPlanDataTests(unittest.TestCase):
@@ -70,6 +70,121 @@ class CommonPlanDataTests(unittest.TestCase):
     def test_native_counts_are_not_substituted_by_reimports(self):
         self.reject(lambda u: u.update(typed_imports=2), 'export/import count')
         self.reject(lambda u: u.update(native_ast_exports=0), 'export/import count')
+
+
+class IndependentUnknownSchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.unit = '/fixture/blob.c'
+        definition = dict(declaration=7, location={'unproved': 'native importer origin missing'},
+                          signature={'unproved': 'unsupported type or wrapper limit'}, state='Unproved',
+                          reason='native attributed function signature unclassified',
+                          symbol=dict(unit=self.unit, static='vkd3d_blob_Release'))
+        self.reports = json.loads(json.dumps([dict(unit=self.unit, unclassified_definitions=[definition])]))
+        self.counts = dict(unknown_definitions=[dict(unit=self.unit, id=7, name='vkd3d_blob_Release',
+                                                   blockers=['UnknownSignature'])])
+        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+
+    def preserve(self):
+        return preserved_unknowns(self.reports, self.counts, {self.unit})
+
+    def reject_definition(self, mutate, reason):
+        mutate(self.reports[0]['unclassified_definitions'][0])
+        with self.assertRaisesRegex(ValueError, reason):
+            self.preserve()
+
+    def test_static_source_name_is_preserved(self):
+        self.counts['unknown_definitions'].append(dict(unit=self.unit, id=8, name='another_unknown'))
+        self.assertEqual(self.preserve(), {(self.unit, 'vkd3d_blob_Release')})
+
+    def test_missing_and_extra_record_fields_are_rejected(self):
+        original = copy.deepcopy(self.reports)
+        for field in original[0]['unclassified_definitions'][0]:
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.pop(field), 'schema differs')
+        self.reports = copy.deepcopy(original)
+        self.reject_definition(lambda d: d.update(name='guessed_alias'), 'schema differs')
+
+    def test_scalar_field_types_are_rejected(self):
+        original = copy.deepcopy(self.reports)
+        for field in ('declaration', 'location', 'signature', 'symbol'):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update({field: True}), 'field types|static C source identity')
+        for value in (-1, 2**64, '7', None):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update(declaration=value), 'field types')
+
+    def test_state_and_reason_remain_unproved(self):
+        original = copy.deepcopy(self.reports)
+        for field, value in (('state', 'Proved'), ('reason', 'unknown'), ('state', True), ('reason', False)):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update({field: value}), 'evidence differs')
+
+    def test_global_and_ambiguous_symbols_fail_closed(self):
+        original = copy.deepcopy(self.reports)
+        for symbol in (None, {'linker': 'vkd3d_blob_Release'}, {'unit': self.unit},
+                       {'unit': self.unit, 'static': 'vkd3d_blob_Release', 'linker': 'alias'}):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d.update(symbol=symbol), 'static C source identity')
+
+    def test_static_symbol_unit_and_name_are_required(self):
+        original = copy.deepcopy(self.reports)
+        for field, value in (('unit', '/other.c'), ('unit', True), ('static', ''), ('static', True), ('static', None)):
+            self.reports = copy.deepcopy(original)
+            self.reject_definition(lambda d: d['symbol'].update({field: value}), 'static source identity differs')
+
+    def test_report_unit_is_bound_to_validated_plan_sources(self):
+        for unit in ('/other.c', '', True, None):
+            self.reports[0]['unit'] = unit
+            with self.assertRaisesRegex(ValueError, 'independent unknown unit differs'):
+                self.preserve()
+
+    def test_missing_empty_and_wrongly_typed_census_is_rejected(self):
+        for definitions in (None, {}, True, []):
+            self.reports[0]['unclassified_definitions'] = definitions
+            with self.assertRaisesRegex(ValueError, 'must be a list|missing independent'):
+                self.preserve()
+        self.reports = []
+        with self.assertRaisesRegex(ValueError, 'missing independent'):
+            self.preserve()
+
+    def test_plan_names_and_units_cannot_be_replaced_by_matching_ids(self):
+        original = copy.deepcopy(self.counts)
+        for field, value in (('name', 'wrong_name'), ('unit', '/other.c')):
+            self.counts = copy.deepcopy(original)
+            self.counts['unknown_definitions'][0][field] = value
+            with self.assertRaisesRegex(ValueError, 'lost an original'):
+                self.preserve()
+        self.counts['unknown_definitions'] = []
+        with self.assertRaisesRegex(ValueError, 'lost an original'):
+            self.preserve()
+
+    def test_nonobject_reports_and_definitions_are_rejected(self):
+        original = copy.deepcopy(self.reports)
+        for value in (None, True, [], 'definition'):
+            self.reports = copy.deepcopy(original)
+            self.reports[0]['unclassified_definitions'] = [value]
+            with self.assertRaisesRegex(ValueError, 'schema differs'):
+                self.preserve()
+            self.reports = [value]
+            with self.assertRaisesRegex(ValueError, 'report must be an object'):
+                self.preserve()
+
+    def test_each_unknown_unit_and_name_pair_is_preserved(self):
+        second = copy.deepcopy(self.reports[0])
+        second['unit'] = '/fixture/other.c'
+        second['unclassified_definitions'][0]['symbol']['unit'] = second['unit']
+        reports = self.reports + [second]
+        counts = copy.deepcopy(self.counts)
+        counts['unknown_definitions'].append(dict(unit=second['unit'], id=7, name='vkd3d_blob_Release'))
+        sources = {self.unit, second['unit']}
+        self.assertEqual(preserved_unknowns(reports, counts, sources),
+                         {(unit, 'vkd3d_blob_Release') for unit in sources})
+        with self.assertRaisesRegex(ValueError, 'lost an original'):
+            preserved_unknowns(reports, self.counts, sources)
+
+    def test_coordinated_flat_name_alias_is_rejected(self):
+        self.counts['unknown_definitions'][0]['name'] = 'wrong_name'
+        self.reject_definition(lambda d: d.update(name='wrong_name'), 'schema differs')
 
 
 if __name__ == '__main__':

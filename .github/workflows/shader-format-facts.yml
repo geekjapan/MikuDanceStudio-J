@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission]
+    branches: [w4-shader-format-report-graph, w4-shader-common-plan, w4-shader-prepared-location-omission, w4-shader-common-symbol-schema-fix]
   workflow_dispatch:
 
 permissions:

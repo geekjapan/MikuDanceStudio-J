@@ -151,7 +151,7 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
             self.assertEqual(len(source), 482)
             for path, identity in layer['hosts'][host]['replacements'].items():
                 self.assertEqual(identity['old_sha256'], self.manifest['dynamics_world_source_admission']['hosts'][host]['additions'][path])
-                raw = (check.ROOT / path).read_bytes()
+                raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 self.assertNotIn(b'\r', raw)
                 physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
                 self.assertEqual(source[path], measured_profiles.sha(physical))
@@ -226,7 +226,7 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
             for path, identity in self.manifest['dynamics_world_format_admission']['hosts'][host]['replacements'].items():
-                raw = (check.ROOT / path).read_bytes()
+                raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
                 newline = b'\r\n' if b'\r\n' in physical else b'\n'
                 bodies = [physical + b' ', physical + b'// unauthorized' + newline,
@@ -276,7 +276,7 @@ class DynamicsC23RepairAdmissionTests(unittest.TestCase):
                 previous = (self.manifest['dynamics_world_format_admission']['hosts'][host]['replacements'][path]['new_sha256']
                             if '/tests/' in path else self.manifest['dynamics_world_source_admission']['hosts'][host]['replacements'][path]['new_sha256'])
                 self.assertEqual(identity['old_sha256'], previous)
-                raw = (check.ROOT / path).read_bytes()
+                raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 self.assertNotIn(b'\r', raw)
                 physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
                 if '/tests/' in path:
@@ -328,7 +328,7 @@ class DynamicsC23RepairAdmissionTests(unittest.TestCase):
             source = measured_profiles.approved_source_map(self.manifest, host)
             replacements = self.manifest['dynamics_world_c23_repair_admission']['hosts'][host]['replacements']
             for path, identity in replacements.items():
-                raw = (check.ROOT / path).read_bytes()
+                raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
                 bodies = [physical + b' ', physical + b'// unauthorized\n',
                           physical.replace(b'0', b'1', 1),

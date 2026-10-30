@@ -381,6 +381,49 @@ class NativeLifetimeFramingTests(unittest.TestCase):
 
 
 class CommandRecipeTests(unittest.TestCase):
+    def test_mmd_allocator_roles_refuse_ordinary_callbacks_and_wrong_address_order(self):
+        from evidence import validate_native_lifetimes
+        inputs = 'H empty mixed-explicit-operations\nX\n'
+        ordinary = b'ROLE 0 START ordinary mmd-aligned-request\nBODY_REGISTER 0 0 128\nROLE 1 END 0\n'
+        summary = validate_native_lifetimes(ordinary, inputs, observed=False, role='ordinary')
+        self.assertEqual(summary['domain'], 'mmd-aligned-request')
+        self.assertEqual(summary['callback_events'], 0)
+        self.assertIs(summary['physical_closure'], False)
+        custom = (b'ROLE 0 START ascending mmd-aligned-request\nROLE 0 1 A 128 0 16\n'
+                  b'ROLE 0 2 A 144 8 16\nBODY_REGISTER 0 0 128\n'
+                  b'ROLE 1 3 F 144 0 0\nROLE 1 4 F 128 0 0\nROLE 1 END 0\n')
+        self.assertEqual(validate_native_lifetimes(custom, inputs, observed=False, role='ascending')['callback_events'], 4)
+        for changed, role in [(custom.replace(b'ascending', b'ordinary'), 'ordinary'),
+                              (custom.replace(b'ascending', b'descending'), 'descending'),
+                              (custom.replace(b'ROLE 1 4 F 128 0 0\n', b''), 'ascending')]:
+            with self.assertRaises(ValueError):
+                validate_native_lifetimes(changed, inputs, observed=False, role=role)
+
+    def test_dynamics_recipe_has_distinct_mode_all_allocator_roles_and_pdb_outputs(self):
+        from evidence import command_schedule
+        from hooks import DYNAMICS_MUTANTS
+        for system, root, out, exe in [('Linux', '/source', '/capture', '/tool'),
+                                      ('Windows', 'C:/source', 'D:/capture', 'C:/tool.exe')]:
+            context = {'schema':1, 'system':system, 'root':root, 'out':out,
+                       'tools':{name:exe for name in ['python','git','rustup','rustc','rust_linker','compiler','archiver','native_linker']}}
+            source = 'recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp'
+            recipe = command_schedule(context, [source], [], dynamics=True)
+            commands = {entry.label:entry for entry in recipe}
+            for consumer in ('native', 'observed'):
+                for role in ('ordinary', 'ascending', 'descending', 'alternating'):
+                    label = consumer + '-run' + ('-' + role if role != 'ordinary' else '')
+                    self.assertEqual(commands[label].argv[-1], role)
+                    self.assertTrue(commands[label].corpus)
+            self.assertEqual(sum(entry.label.startswith('mutant-run-') for entry in recipe), len(DYNAMICS_MUTANTS))
+            self.assertIn('mmd_dynamics', commands['rust-observed-build'].argv)
+            self.assertIn('mmd_dynamics_', commands['dedicated-run'].argv)
+            self.assertEqual(len(commands['rust-observed-build'].outputs), 2 if system == 'Windows' else 1)
+            if system == 'Windows':
+                self.assertTrue(commands['rust-observed-build'].outputs[-1].endswith('.pdb'))
+            flag = '/DDW_DYNAMICS=1' if system == 'Windows' else '-DDW_DYNAMICS=1'
+            self.assertIn(flag, commands['native-consumer-build'].argv)
+            self.assertIn('observed-object-4', commands)
+
     def test_inert_command_recipe_preserves_order_roles_and_generation(self):
         from evidence import command_schedule
         from hooks import MUTANTS

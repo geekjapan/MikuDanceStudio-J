@@ -10,6 +10,17 @@ SPRING = NATIVE + 'BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint
 ALLOCATOR = NATIVE + 'LinearMath/btAlignedAllocator.cpp'
 OBSERVATION_PATHS = (OWNER, CORE + 'dispatcher.rs', SHIM, DISPATCHER, WORLD, SAP, SPRING, ALLOCATOR)
 NATIVE_OBSERVATIONS = (DISPATCHER, WORLD, ALLOCATOR)
+DYNAMICS = CORE + 'mmd_dynamics_world.rs'
+DYNAMIC_NATIVE = NATIVE + 'BulletDynamics/Dynamics/btDiscreteDynamicsWorld.cpp'
+SOLVER_NATIVE = NATIVE + 'BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp'
+
+
+def observation_paths(dynamics=False):
+    return OBSERVATION_PATHS + ((DYNAMICS, DYNAMIC_NATIVE, SOLVER_NATIVE) if dynamics else ())
+
+
+def native_observations(dynamics=False):
+    return NATIVE_OBSERVATIONS + ((DYNAMIC_NATIVE, SOLVER_NATIVE) if dynamics else ())
 
 
 def require(ok, message):
@@ -31,7 +42,7 @@ def replace(root, path, old, new, changes):
     changes.append({'path': path, 'offset': offset, 'old': a.decode(), 'new': b.decode()})
 
 
-def instrument(root, here):
+def instrument(root, here, dynamics=False):
     changes = []
     def edit(path, old, new):
         replace(root, path, old, new, changes)
@@ -83,6 +94,21 @@ def instrument(root, here):
          '    fn detect(&mut self, objects: &WorldObjects) {\n        for key in crate::observer::drain() { self.dispatcher.release(super::pair_cache::AlgorithmKey(key)); }')
     before = (root / OWNER).read_bytes().decode()
     edit(OWNER, before, before + '\n' + (here / 'fixture.rs').read_text())
+    if dynamics:
+        before = (root / DYNAMICS).read_text()
+        edit(DYNAMICS, before, before + '\n' + (here / 'dynamics_fixture.rs').read_text())
+        edit(SHIM, '    W->w.stepSimulation(dt, max_sub_steps, fixed_step);',
+             '    const int returned = W->w.stepSimulation(dt, max_sub_steps, fixed_step);\n    dw_return(returned);')
+        edit(DYNAMIC_NATIVE, '//process some debugging flags',
+             'dw_clock(numSimulationSubSteps, (numSimulationSubSteps > maxSubSteps ? maxSubSteps : numSimulationSubSteps), fixedTimeStep, m_localTime);\n\t//process some debugging flags')
+        prepare = 'm_constraintSolver->prepareSolve(getCollisionWorld()->getNumCollisionObjects(), getCollisionWorld()->getDispatcher()->getNumManifolds());'
+        edit(DYNAMIC_NATIVE, prepare, 'dw_prepare(getCollisionWorld()->getNumCollisionObjects(), getCollisionWorld()->getDispatcher()->getNumManifolds());\n\t' + prepare)
+        complete = 'm_constraintSolver->allSolved(solverInfo, m_debugDrawer, m_stackAlloc);'
+        edit(DYNAMIC_NATIVE, complete, complete + '\n\tdw_all_solved();')
+        signature = 'btScalar btSequentialImpulseConstraintSolver::solveGroup(btCollisionObject** bodies,int numBodies,btPersistentManifold** manifoldPtr, int numManifolds,btTypedConstraint** constraints,int numConstraints,const btContactSolverInfo& infoGlobal,btIDebugDraw* debugDrawer,btStackAlloc* stackAlloc,btDispatcher* /*dispatcher*/)\n{'
+        edit(SOLVER_NATIVE, signature, signature + '\n\tdw_group(bodies,numBodies,manifoldPtr,numManifolds,constraints,numConstraints);')
+        finish = 'm_tmpSolverContactFrictionConstraintPool.resize(0);'
+        edit(SOLVER_NATIVE, finish, finish + '\n\tdw_workspace(m_tmpSolverBodyPool.size(),m_tmpSolverBodyPool.capacity());')
     return changes
 
 
@@ -140,8 +166,28 @@ MUTANTS = {
 }
 
 
-def mutate(root, name):
+DYNAMICS_MUTANTS = {
+    'executed-return': (DYNAMICS, 'Ok(step.requested)', 'Ok(step.executed)', 'step-return'),
+    'substep-gravity': (DYNAMICS, 'for _ in 0..step.executed {', 'for _ in 0..step.executed {\n                self.collision.prepare_dynamics_step(step.dt);', 'dynamics'),
+    'pair-owner': (OWNER, 'pair.proxies.map(|key| sweep.handle(key).unwrap().owner)', 'pair.proxies.map(|_| 0)', 'schedule'),
+    'contact-only-union': (DYNAMICS, 'self.islands.calculate(objects, pairs, &constraints);', 'self.islands.calculate(objects, pairs.filter(|pair| manifolds.iter().any(|m| !m.manifold.contacts().is_empty() && (m.bodies == *pair || m.bodies == [pair[1], pair[0]]))), &constraints);', 'schedule'),
+    'workspace-group-reset': (DYNAMICS, 'result = solve_group(', 'if island.manifolds.iter().all(|&index| island_manifolds[index].bodies.iter().all(|&body| !bodies[body].snapshot().is_kinematic)) && constraints.iter().all(|&index| joints[index].bodies.iter().all(|&body| !bodies[body].snapshot().is_kinematic)) { *workspace = SolverWorkspace::default(); }\n                        result = solve_group(', 'workspace'),
+    'workspace-step-reset': (DYNAMICS, 'let workspace = &mut self.solver;', 'self.solver = SolverWorkspace::default();\n        let workspace = &mut self.solver;', 'workspace'),
+    'missing-impulse-writeback': (CORE + 'solver.rs', 'solver.writeback(bodies, manifolds);', 'let saved: Vec<_> = manifolds.iter().map(|m| m.points.iter().map(|p| p.applied_impulse).collect::<Vec<_>>()).collect();\n    solver.writeback(bodies, manifolds);\n    for (m, saved) in manifolds.iter_mut().zip(saved) { for (p, value) in m.points.iter_mut().zip(saved) { p.applied_impulse = value; } }', 'manifolds'),
+    'wrong-com': (CORE + 'world_objects.rs', 'self.bodies[i].set_center_of_mass_transform(predicted);', 'self.bodies[i].set_world_transform(predicted);', 'current-transform'),
+    'zero-step-sync': (OWNER, 'if synchronize {', 'if synchronize && remainder < 0.0 {', 'motion-state'),
+    'force-clear': (OWNER, 'self.objects.clear_forces();', 'let _ = &self.objects;', 'forces'),
+    'mass-zero-on-toggle': (CORE + 'world_objects.rs', 'self.set_flags(i, if on { flags | 2 } else { flags & !2 });', 'self.set_flags(i, if on { flags | 2 } else { flags & !2 });\n        if on { self.bodies[i].set_mass_properties(0.0, Vec3::ZERO); }', 'mass-flags'),
+    'sap-order': MUTANTS['reverse-dispatch-order'],
+}
+
+
+def mutants(dynamics=False):
+    return DYNAMICS_MUTANTS if dynamics else MUTANTS
+
+
+def mutate(root, name, dynamics=False):
     changes = []
-    path, old, new, _ = MUTANTS[name]
+    path, old, new, _ = mutants(dynamics)[name]
     replace(root, path, old, new, changes)
     return changes

@@ -2,7 +2,7 @@ name: Bullet private MMD collision world scaffold
 
 on:
   push:
-    branches: [w6-mmd-collision-owner]
+    branches: [w6-mmd-collision-owner, w6-mmd-dynamics-native]
   workflow_dispatch:
 
 permissions:
@@ -13,6 +13,136 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  dynamics_native:
+    name: Actual MMD dynamics world (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Check framing and source admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B -O tools/bullet-rust-mmd-collision-check/test_check.py -v
+          python3 -B tools/bullet-rust-mmd-collision-check/test_evidence.py -v
+      - name: Measure genuine MMD dynamics and directed controls
+        shell: bash
+        env:
+          CXX: clang++
+        run: python3 -B tools/bullet-rust-mmd-collision-check/check.py --dynamics --out-dir "$RUNNER_TEMP/mmd-dynamics-world" --authority "$RUNNER_TEMP/mmd-dynamics-authority.json"
+      - name: Save complete dynamics evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-dynamics-world-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-dynamics-world
+          if-no-files-found: error
+          include-hidden-files: true
+
+  dynamics_windows_native:
+    name: Actual MMD dynamics world (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    outputs:
+      authority_size: ${{ steps.producer.outputs.authority_size }}
+      authority_sha256: ${{ steps.producer.outputs.authority_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Measure genuine MMD dynamics with MSVC
+        id: producer
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python -B tools\bullet-rust-mmd-collision-check\check.py --dynamics --out-dir "%RUNNER_TEMP%\mmd-dynamics-world" --authority "%RUNNER_TEMP%\mmd-dynamics-authority.json"
+          exit /b %ERRORLEVEL%
+      - name: Save complete Windows dynamics evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-dynamics-world-windows-2022
+          path: ${{ runner.temp }}/mmd-dynamics-world
+          if-no-files-found: error
+          include-hidden-files: true
+      - name: Save detached Windows dynamics authority
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-dynamics-authority-windows-2022
+          path: ${{ runner.temp }}/mmd-dynamics-authority.json
+          if-no-files-found: error
+
+  dynamics_windows_replay:
+    name: Actual Windows dynamics source replay (${{ matrix.os }})
+    needs: [dynamics_native, dynamics_windows_native]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: mmd-dynamics-world-windows-2022
+          path: ${{ runner.temp }}/windows-mmd-dynamics-world
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: mmd-dynamics-authority-windows-2022
+          path: ${{ runner.temp }}/windows-mmd-dynamics-authority
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Admit distinct Windows dynamics authority and replay
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          AUTHORITY_SIZE: ${{ needs.dynamics_windows_native.outputs.authority_size }}
+          AUTHORITY_SHA256: ${{ needs.dynamics_windows_native.outputs.authority_sha256 }}
+        run: python3 -B tools/bullet-rust-mmd-collision-check/check.py --dynamics --out-dir "$RUNNER_TEMP/mmd-dynamics-world-replay" --replay-dir "$RUNNER_TEMP/windows-mmd-dynamics-world" --authority "$RUNNER_TEMP/windows-mmd-dynamics-authority/mmd-dynamics-authority.json" --authority-size "$AUTHORITY_SIZE" --authority-sha256 "$AUTHORITY_SHA256"
+      - name: Admit distinct Windows dynamics authority and replay with MSVC
+        if: runner.os == 'Windows'
+        shell: cmd
+        env:
+          AUTHORITY_SIZE: ${{ needs.dynamics_windows_native.outputs.authority_size }}
+          AUTHORITY_SHA256: ${{ needs.dynamics_windows_native.outputs.authority_sha256 }}
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-mmd-collision-check\check.py --dynamics --out-dir "%RUNNER_TEMP%\mmd-dynamics-world-replay" --replay-dir "%RUNNER_TEMP%\windows-mmd-dynamics-world" --authority "%RUNNER_TEMP%\windows-mmd-dynamics-authority\mmd-dynamics-authority.json" --authority-size "%AUTHORITY_SIZE%" --authority-sha256 "%AUTHORITY_SHA256%"
+          exit /b %ERRORLEVEL%
+      - name: Save strict dynamics replay and controls
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-dynamics-world-windows-replay-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-dynamics-world-replay
+          if-no-files-found: error
+          include-hidden-files: true
+
   native:
     name: Actual MMD collision world (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

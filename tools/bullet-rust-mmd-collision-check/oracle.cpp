@@ -38,6 +38,32 @@ static void transform(const btTransform& t) {for(int i=0;i<3;++i)vector(t.getBas
 static float number(std::istringstream& in) {std::string s;in>>s;unsigned u=std::stoul(s,nullptr,16);float f;std::memcpy(&f,&u,4);return f;}
 static void pose(std::istringstream& in,float p[3],float q[4]) {for(int i=0;i<3;++i)p[i]=number(in);for(int i=0;i<4;++i)q[i]=number(in);}
 static void matrix(const float p[3],const float q[4],float m[16]) {frame(p,q).getOpenGLMatrix(m);}
+#ifdef DW_DYNAMICS
+static mds_mmd_world* active_world;
+static unsigned returned_calls;
+extern "C" void dw_return(int result) { if(++returned_calls!=1)std::abort();std::cout<<"R "<<row<<' '<<result<<'\n'; }
+extern "C" void dw_clock(int requested,int executed,float dt,float remainder) {
+    std::cout<<"K "<<row<<' '<<requested<<' '<<executed;scalar(dt);scalar(remainder);std::cout<<'\n';
+}
+extern "C" void dw_prepare(int bodies,int count) {std::cout<<"Y "<<row<<" P "<<bodies<<' '<<count<<'\n';}
+extern "C" void dw_all_solved() {std::cout<<"Y "<<row<<" A\n";}
+extern "C" void dw_workspace(int live,int capacity) {std::cout<<"V "<<row<<' '<<live<<' '<<capacity<<'\n';}
+extern "C" void dw_group(btCollisionObject** bodies,int count,btPersistentManifold** contacts,int manifold_count,btTypedConstraint** joints,int joint_count) {
+    std::cout<<"Y "<<row<<" G "<<(count?bodies[0]->getIslandTag():-1)<<' '<<count;
+    for(int i=0;i<count;++i)std::cout<<' '<<owner(bodies[i]);
+    std::cout<<' '<<manifold_count;
+    for(int i=0;i<manifold_count;++i) {
+        int index=0;while(index<active_world->disp.getNumManifolds() && active_world->disp.getManifoldByIndexInternal(index)!=contacts[i])++index;
+        if(index==active_world->disp.getNumManifolds())std::abort();std::cout<<' '<<index;
+    }
+    std::cout<<' '<<joint_count;
+    for(int i=0;i<joint_count;++i) {
+        size_t index=0;while(index<active_world->joints.size() && active_world->joints[index]!=joints[i])++index;
+        if(index==active_world->joints.size())std::abort();std::cout<<' '<<index;
+    }
+    std::cout<<'\n';
+}
+#endif
 static void snapshot(mds_mmd_world* w,const std::string& op) {
     if(!w) {std::cout<<"O "<<row<<' '<<op<<" 0 0 0\n";return;}
     auto& pairs=w->bp.getOverlappingPairCache()->getOverlappingPairArray();
@@ -49,6 +75,15 @@ static void snapshot(mds_mmd_world* w,const std::string& op) {
         scalar(b->rb->getInvMass());scalar(b->rb->getFriction());scalar(b->rb->getRestitution());
         vector(b->rb->getLinearVelocity());vector(b->rb->getAngularVelocity());vector(b->rb->getInterpolationLinearVelocity());vector(b->rb->getInterpolationAngularVelocity());
         for(int j=0;j<3;++j)std::cout<<' '<<h->m_minEdges[j];for(int j=0;j<3;++j)std::cout<<' '<<h->m_maxEdges[j];std::cout<<'\n';
+#ifdef DW_DYNAMICS
+        std::cout<<"W "<<row<<' '<<i<<' '<<b->rb->getIslandTag()<<' '<<b->rb->getCompanionId();
+        scalar(b->rb->getInvMass());vector(b->rb->getInvInertiaDiagLocal());
+        for(int r=0;r<3;++r)vector(b->rb->getInvInertiaTensorWorld()[r]);
+        vector(b->rb->getLinearVelocity());vector(b->rb->getAngularVelocity());
+        vector(b->rb->getInterpolationLinearVelocity());vector(b->rb->getInterpolationAngularVelocity());
+        vector(b->rb->getGravity());vector(b->rb->getTotalForce());vector(b->rb->getTotalTorque());
+        scalar(b->rb->getDeactivationTime());scalar(b->rb->getHitFraction());std::cout<<'\n';
+#endif
     }
 #ifdef DW_OBSERVED
     if(!w->bp.mdsAcceleratorEnabled())std::abort();
@@ -90,9 +125,15 @@ static void snapshot(mds_mmd_world* w,const std::string& op) {
     }
 #endif
 }
-int main() {
+int main(int argc,char** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdout),_O_BINARY);
+#endif
+#ifdef DW_DYNAMICS
+    if(argc!=2)return 2;
+    if(!dynamics_allocator(argv[1]))return 2;
+#else
+    if(argc!=1)return 2;
 #endif
     mds_mmd_world* w=nullptr;std::string line;
     while(std::getline(std::cin,line)) {
@@ -104,7 +145,27 @@ int main() {
             if(mds_mmd_body_create(w,kind,params[0],params[1],params[2],p,q,mode,mass,0,0,.25f,.5f,short(group),short(mask),&b))return 4;
             b->rb->setUserPointer(reinterpret_cast<void*>(intptr_t(w->bodies.size())));
             std::fprintf(stderr,"BODY_REGISTER %zu %zu %llu\n",row,w->bodies.size()-1,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(b->rb)));
-        } else if(op=="D")w->w.performDiscreteCollisionDetection();
+        }
+#ifdef DW_DYNAMICS
+        else if(op=="N") {
+            active_world=w;returned_calls=0;
+            float dt=number(in);int maximum;in>>maximum;float fixed=number(in);
+            int status=mds_mmd_world_step(w,dt,maximum,fixed);
+#ifdef DW_OBSERVED
+            if(returned_calls!=1)return 5;
+#else
+            if(returned_calls!=0)return 5;
+#endif
+            std::cout<<"STATUS "<<row<<' '<<status<<'\n';if(status)return 4;
+        }
+        else if(op=="G") {float a=number(in),b=number(in),c=number(in);if(mds_mmd_world_set_gravity(w,a,b,c))return 4;}
+        else if(op=="L" || op=="FRC") {
+            size_t i;in>>i;float a[3],b[3];for(auto& f:a)f=number(in);for(auto& f:b)f=number(in);
+            if(op=="L") {w->bodies.at(i)->rb->setLinearVelocity(vec3(a));w->bodies.at(i)->rb->setAngularVelocity(vec3(b));}
+            else {w->bodies.at(i)->rb->applyCentralForce(vec3(a));w->bodies.at(i)->rb->applyTorque(vec3(b));}
+        }
+#endif
+        else if(op=="D")w->w.performDiscreteCollisionDetection();
         else if(op=="U")w->w.updateAabbs();
         else if(op=="F") {int on;in>>on;if(mds_mmd_world_set_floor(w,on))return 4;}
         else if(op=="S") {size_t i;in>>i;w->w.updateSingleAabb(w->bodies.at(i)->rb);}
@@ -117,6 +178,9 @@ int main() {
             for(int i=0;i<w->disp.getNumManifolds();++i) {auto* m=w->disp.getManifoldByIndexInternal(i);for(int j=0;j<m->getNumContacts();++j) {auto& p=m->getContactPoint(j);p.m_appliedImpulse=1.25f;p.m_appliedImpulseLateral1=.5f;p.m_appliedImpulseLateral2=-.25f;p.m_lateralFrictionInitialized=true;p.m_lateralFrictionDir1=btVector3(1,0,0);p.m_lateralFrictionDir2=btVector3(0,0,1);}}
         } else if(op=="J") {size_t a,b;int uid,spring;in>>a>>b>>uid>>spring;float zero[3]={},q[4]={0,0,0,1},springs[6];for(auto& f:springs)f=spring?2.0f:0.0f;if(mds_mmd_joint_create(w,w->bodies.at(a),w->bodies.at(b),zero,q,zero,q,zero,zero,zero,zero,springs,uid))return 4;std::fprintf(stderr,"JOINT_CREATE %zu %zu %llu %d\n",row,w->joints.size()-1,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(w->joints.back())),uid);}
         else if(op=="X") {mds_mmd_world_destroy(w);w=nullptr;
+#ifdef DW_DYNAMICS
+            dynamics_allocator_closed();
+#endif
 #ifdef DW_OBSERVED
             if(!algorithms.empty() || !manifolds.empty())return 5;
 #endif

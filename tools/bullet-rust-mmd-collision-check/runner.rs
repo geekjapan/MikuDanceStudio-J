@@ -4,7 +4,12 @@ mod core;
 mod observer;
 use core::activation::ActivationState;
 use core::math::{Quat, Transform, Vec3};
-use core::mmd_collision_world::MmdCollisionWorld;
+#[cfg(not(mmd_dynamics))]
+use core::mmd_collision_world::MmdCollisionWorld as World;
+#[cfg(mmd_dynamics)]
+use core::mmd_dynamics_world::MmdDynamicsWorld as World;
+#[cfg(mmd_dynamics)]
+use core::{discrete_dynamics_world::DynamicsEvent, islands::SolverEvent};
 use core::world_objects::{BodyDesc, BodyHandle, JointDesc, Pose};
 use std::io::{self, BufRead};
 
@@ -16,7 +21,7 @@ fn number(words: &mut std::str::SplitWhitespace<'_>) -> usize { words.next().unw
 fn pose(words: &mut std::str::SplitWhitespace<'_>) -> Pose {
     Pose { position: Vec3(std::array::from_fn(|_|float(words))), rotation: Quat(std::array::from_fn(|_|float(words))) }
 }
-fn snapshot(w: Option<&MmdCollisionWorld>, row: usize, op: &str) {
+fn snapshot(w: Option<&World>, row: usize, op: &str) {
     let Some(w) = w else { println!("O {row} {op} 0 0 0"); return; };
     let sweep = w.fixture_sweep();
     println!("O {row} {op} {} {} {}", w.objects().bodies().len(),sweep.pairs().len(),w.manifolds().len());
@@ -28,6 +33,14 @@ fn snapshot(w: Option<&MmdCollisionWorld>, row: usize, op: &str) {
         scalar(s.inverse_mass);scalar(b.contact_body().friction);scalar(b.contact_body().restitution);
         for v in [s.linear_velocity,s.angular_velocity,s.interpolation_linear_velocity,s.interpolation_angular_velocity] {vector(v);}
         for edge in handle.min_edges.into_iter().chain(handle.max_edges) {print!(" {edge}");}println!();
+        #[cfg(mmd_dynamics)]
+        {
+            let object=&w.objects().objects()[i];
+            print!("W {row} {i} {} {}",object.island_tag,object.companion_id);
+            scalar(s.inverse_mass);vector(s.inverse_inertia_local);for v in s.inverse_inertia_world.0 {vector(Vec3(v));}
+            for v in [s.linear_velocity,s.angular_velocity,s.interpolation_linear_velocity,s.interpolation_angular_velocity,s.gravity_acceleration,s.total_force,s.total_torque] {vector(v);}
+            scalar(object.activation.deactivation_time);scalar(object.hit_fraction);println!();
+        }
     }
     for (axis,edges) in sweep.edges().iter().enumerate() {
         print!("S {row} {axis} {}",edges.len());
@@ -55,15 +68,36 @@ fn activation(state: usize) -> ActivationState {
     match state {0=>ActivationState::Moving,1=>ActivationState::Active,2=>ActivationState::IslandSleeping,3=>ActivationState::WantsDeactivation,4=>ActivationState::DisableDeactivation,5=>ActivationState::DisableSimulation,_=>panic!("activation")}
 }
 fn main() {
-    let mut world:Option<MmdCollisionWorld>=None;let mut handles:Vec<BodyHandle>=Vec::new();let mut row=0;
+    let mut world:Option<World>=None;let mut handles:Vec<BodyHandle>=Vec::new();let mut row=0;
     for line in io::stdin().lock().lines() {
         let line=line.unwrap();let mut words=line.split_whitespace();let op=words.next().unwrap();
         observer::row(row);
-        if op=="H" {assert!(world.is_none());words.next().unwrap();words.next().unwrap();world=Some(MmdCollisionWorld::new());handles.clear();}
+        if op=="H" {assert!(world.is_none());words.next().unwrap();words.next().unwrap();world=Some(World::new());handles.clear();}
         else if op=="X" {drop(world.take().unwrap());observer::empty();}
         else {
             let w=world.as_mut().unwrap();
             match op {
+                #[cfg(mmd_dynamics)]
+                "N"=>{
+                    let dt=float(&mut words);let maximum=number(&mut words) as i32;let fixed=float(&mut words);
+                    let returned=w.step_simulation(dt,maximum,fixed,|event| match event {
+                        DynamicsEvent::Clock(s)=>{print!("K {row} {} {}",s.requested,s.executed);scalar(s.dt);scalar(s.remainder);println!();},
+                        DynamicsEvent::Solver(SolverEvent::Prepare{num_bodies,num_manifolds})=>println!("Y {row} P {num_bodies} {num_manifolds}"),
+                        DynamicsEvent::Solver(SolverEvent::AllSolved)=>println!("Y {row} A"),
+                        DynamicsEvent::Solver(SolverEvent::SolveGroup{island,constraints})=>{
+                            print!("Y {row} G {} {}",island.island_id,island.bodies.len());for i in island.bodies {print!(" {i}");}
+                            print!(" {}",island.manifolds.len());for i in island.manifolds {print!(" {i}");}
+                            print!(" {}",constraints.len());for i in constraints {print!(" {i}");}println!();
+                        },
+                        DynamicsEvent::Workspace{live,capacity}=>println!("V {row} {live} {capacity}"),
+                    }).unwrap();
+                    println!("R {row} {returned}");
+                    println!("STATUS {row} 0");
+                },
+                #[cfg(mmd_dynamics)]
+                "G"=>w.set_gravity(Vec3(std::array::from_fn(|_|float(&mut words)))).unwrap(),
+                #[cfg(mmd_dynamics)]
+                "L"|"FRC"=>{let i=number(&mut words);let a=Vec3(std::array::from_fn(|_|float(&mut words)));let b=Vec3(std::array::from_fn(|_|float(&mut words)));w.fixture_dynamics(i,op,a,b);},
                 "C"=> {
                     let kind=number(&mut words);let mass=float(&mut words);let mode=number(&mut words) as i32;
                     let group=words.next().unwrap().parse().unwrap();let mask=words.next().unwrap().parse().unwrap();

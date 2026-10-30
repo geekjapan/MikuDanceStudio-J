@@ -8,17 +8,19 @@ import re
 import shutil
 import sys
 
-from cases import corpus
+from cases import corpus, dynamics_corpus
 from evidence import (Recorder, admit_capture, digest, include_occurrences, include_projection,
                       require, save, selected_members, selected_overrides, verify_archive, validate_native_lifetimes,
                       macro_source, policy, command_schedule, read_authority, encode_json, Capture, candidate_capture, actual_peer_controls, admit_replay, _admit_replay)
-from hooks import CORE, MUTANTS, NATIVE_OBSERVATIONS, OBSERVATION_PATHS, instrument, inverse, mutate
+from hooks import CORE, MUTANTS, NATIVE_OBSERVATIONS, OBSERVATION_PATHS, instrument, inverse, mutate, mutants, observation_paths, native_observations
 from trace import common, frames, semantic_projection, validate_lifetimes
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70'
 BASE_TREE = '005ae1183e9972df56689796cf87589117418e7d'
+DYNAMICS_BASE = '93e5ec6151e8bd3b4d86720b50cc0f2a321e4fcc'
+DYNAMICS_BASE_TREE = '7c8f9eaa46d5f05ca46bf180a0a139e547fe3489'
 FOLDERS = ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src/core',
            'rust/crates/mds-bullet/tests', 'rust/crates/mds-bullet-sys/shim',
            'rust/crates/mds-crtmath/src', 'tools/bullet-rust-mmd-collision-check']
@@ -50,18 +52,18 @@ def copy_sources(target):
         shutil.copyfile(ROOT / name, dst)
 
 
-def native_flags(root):
+def native_flags(root, dynamics=False):
     src, shim = root / 'recipes/bullet275/bullet-src/src', root / 'rust/crates/mds-bullet-sys/shim'
     if os.name == 'nt':
-        return ['/nologo', '/std:c++17', '/O2', '/MD', '/EHsc', '/fp:precise', '/DBT_NO_PROFILE=1',
+        return (['/DDW_DYNAMICS=1'] if dynamics else []) + ['/nologo', '/std:c++17', '/O2', '/MD', '/EHsc', '/fp:precise', '/DBT_NO_PROFILE=1',
                 '/DWIN32', '/showIncludes', '/I' + str(src), '/I' + str(shim), '/FI' + str(shim / 'det_math.h')]
-    return ['-std=c++17', '-O2', '-ffp-contract=off', '-fno-fast-math', '-fdeclspec', '-DBT_NO_PROFILE=1',
+    return (['-DDW_DYNAMICS=1'] if dynamics else []) + ['-std=c++17', '-O2', '-ffp-contract=off', '-fno-fast-math', '-fdeclspec', '-DBT_NO_PROFILE=1',
             '-H', '-I', shim / 'sse_emu', '-I', src, '-I', shim, '-include', shim / 'det_math.h']
 
 
-def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected):
+def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected, dynamics=False):
     controls = {}
-    for name, (_, _, _, field) in MUTANTS.items():
+    for name, (_, _, _, field) in mutants(dynamics).items():
         target = out / 'mutants' / name
         shutil.copytree(shadow, target)
         recorder.generated_roots = [shadow, target]
@@ -69,15 +71,15 @@ def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected):
         baseline = out / ('baseline-' + name + suffix)
         recorder.run('baseline-build-' + name, [*rargs, '--cfg', 'test', entry, '-o', baseline],
                      cwd=ROOT / 'rust', inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[baseline])
-        clean = frames(recorder.run('baseline-run-' + name, [baseline], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        clean = frames(recorder.run('baseline-run-' + name, [baseline], cwd=ROOT / 'rust', data=inputs.encode()), inputs, dynamics=dynamics)
         validate_lifetimes(clean)
         require(clean == expected, 'same-host full clean baseline ' + name)
-        changed = mutate(target, name)
+        changed = mutate(target, name, dynamics)
         recorder.save(out / ('mutation-' + name + '.json'), changed)
         executable = out / ('mutant-' + name + suffix)
         recorder.run('mutant-build-' + name, [*rargs, '--cfg', 'test', entry, '-o', executable],
                      cwd=ROOT / 'rust', inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[executable])
-        rows = frames(recorder.run('mutant-run-' + name, [executable], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        rows = frames(recorder.run('mutant-run-' + name, [executable], cwd=ROOT / 'rust', data=inputs.encode()), inputs, dynamics=dynamics)
         validate_lifetimes(rows)
         differences = [i for i, (a, b) in enumerate(zip(clean, rows)) if a != b]
         directed = [i for i, (a, b) in enumerate(zip(clean, rows))
@@ -92,7 +94,7 @@ def compiled_controls(recorder, out, shadow, rargs, suffix, inputs, expected):
     return controls
 
 
-def capture(out, authority_path):
+def capture(out, authority_path, dynamics=False):
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'compiler and actual capture are hosted-only')
     require((platform.system(), platform.machine().lower()) in {
         ('Windows', 'amd64'), ('Windows', 'x86_64'), ('Darwin', 'arm64'),
@@ -101,12 +103,12 @@ def capture(out, authority_path):
     require(ROOT != out and ROOT not in out.parents and out not in ROOT.parents, 'disjoint source and capture roots')
     out.mkdir(parents=True)
     recorder = Recorder(out, snapshot)
-    inputs, cases = corpus()
+    inputs, cases = dynamics_corpus() if dynamics else corpus()
     recorder.write(out / 'inputs.txt', inputs.encode())
     recorder.save(out / 'cases.json', cases)
-    status = {'schema': 1, 'status': 'UNRUN', 'base': BASE, 'base_tree': BASE_TREE,
+    status = {'schema': 1, 'status': 'UNRUN', 'base': DYNAMICS_BASE if dynamics else BASE, 'base_tree': DYNAMICS_BASE_TREE if dynamics else BASE_TREE,
               'host': {'system': platform.system(), 'machine': platform.machine()},
-              'scope': 'private MMD collision ownership', 'pending': PENDING,
+              'scope': 'private MMD dynamics ownership' if dynamics else 'private MMD collision ownership', 'pending': PENDING,
               'native_accelerator': 'unchanged genuine constructor; Rust query and allocation parity excluded'}
     recorder.save(out / 'report.json', status)
     try:
@@ -135,16 +137,27 @@ def capture(out, authority_path):
                      cwd=ROOT / 'rust', inputs=[ROOT / 'rust/crates/mds-crtmath/src/lib.rs'],
                      outputs=[out / 'libmds_crtmath.rlib', out / ('mds_crtmath.lib' if os.name == 'nt' else 'libmds_crtmath.a')])
         rargs = [*rust, '--extern', 'mds_crtmath=' + str(out / 'libmds_crtmath.rlib')]
+        if dynamics:
+            rargs += ['--cfg', 'mmd_dynamics']
         suffix, extension = ('.exe', '.obj') if os.name == 'nt' else ('', '.o')
         focused = out / ('dedicated' + suffix)
-        dedicated = ROOT / 'rust/crates/mds-bullet/tests/mmd_collision_world.rs'
+        dedicated = ROOT / ('rust/crates/mds-bullet/tests/mmd_dynamics_world.rs' if dynamics else 'rust/crates/mds-bullet/tests/mmd_collision_world.rs')
         recorder.run('dedicated-build', [*rargs, '--test', '-D', 'warnings', dedicated, '-o', focused],
                      cwd=ROOT / 'rust', inputs=[dedicated, out / 'libmds_crtmath.rlib'], outputs=[focused])
         dedicated_names = recorder.run('dedicated-list', [focused, '--list', '--format', 'terse'], cwd=ROOT / 'rust').decode().splitlines()
-        expected_dedicated = [line for line in dedicated_names if line.startswith('mmd_world_') and line.endswith(': test')]
+        prefix = 'mmd_dynamics_' if dynamics else 'mmd_world_'
+        expected_dedicated = [line for line in dedicated_names if line.startswith(prefix) and line.endswith(': test')]
+        if dynamics:
+            require(len(expected_dedicated) == 9, 'nine private dynamics behavior tests discovered')
+            source_names = re.findall(r'^fn (mmd_dynamics_[a-z0-9_]+)\(', dedicated.read_text(), re.M)
+            require(len(source_names) == 9 and sorted(expected_dedicated) == sorted(name + ': test' for name in source_names),
+                    'expected and discovered dynamics behavior test names agree')
         require(expected_dedicated, 'nonempty real dedicated behavior test inventory')
-        focused_log = recorder.run('dedicated-run', [focused, 'mmd_world_'], cwd=ROOT / 'rust').decode()
+        focused_log = recorder.run('dedicated-run', [focused, prefix, *(['--test-threads=1'] if dynamics else [])], cwd=ROOT / 'rust').decode()
         require(f'test result: ok. {len(expected_dedicated)} passed; 0 failed; 0 ignored;' in focused_log, 'all listed dedicated tests executed')
+        if dynamics:
+            require(all(f'test {name} ... ok' in focused_log.splitlines() for name in source_names),
+                    'every expected dynamics behavior test executed successfully')
         pure = out / ('pure' + suffix)
         recorder.run('pure-build', [*rargs, '--test', '-D', 'warnings', ROOT / 'rust/crates/mds-bullet/tests/pure_bullet.rs', '-o', pure],
                      cwd=ROOT / 'rust', inputs=[ROOT / 'rust/crates/mds-bullet/tests/pure_bullet.rs', out / 'libmds_crtmath.rlib'], outputs=[pure])
@@ -156,8 +169,8 @@ def capture(out, authority_path):
                 'complete listed pure suite executed')
         shadow = out / 'generated'
         copy_sources(shadow)
-        originals = {path: (shadow / path).read_bytes() for path in OBSERVATION_PATHS}
-        edits = instrument(shadow, HERE)
+        originals = {path: (shadow / path).read_bytes() for path in observation_paths(dynamics)}
+        edits = instrument(shadow, HERE, dynamics)
         inverse(shadow, edits, originals)
         recorder.save(out / 'observation-edits.json', edits)
         recorder.generated_roots.append(shadow)
@@ -166,7 +179,7 @@ def capture(out, authority_path):
         runner = shadow / 'tools/bullet-rust-mmd-collision-check/runner.rs'
         recorder.run('rust-observed-build', [*rargs, '--cfg', 'test', runner, '-o', rust_exe],
                      cwd=ROOT / 'rust', inputs=[runner, out / 'libmds_crtmath.rlib'], outputs=[rust_exe])
-        rust_rows = frames(recorder.run('rust-observed-run', [rust_exe], cwd=ROOT / 'rust', data=inputs.encode()), inputs)
+        rust_rows = frames(recorder.run('rust-observed-run', [rust_exe], cwd=ROOT / 'rust', data=inputs.encode()), inputs, dynamics=dynamics)
         recorder.save(out / 'rust-lifetimes.json', validate_lifetimes(rust_rows))
         src = ROOT / 'recipes/bullet275/bullet-src/src'
         sources = sorted(p for folder in ['BulletCollision', 'BulletDynamics', 'LinearMath'] for p in (src / folder).rglob('*.cpp'))
@@ -188,7 +201,7 @@ def capture(out, authority_path):
                 result.append({**occurrence, 'target': str(target), 'sha256': value})
             return result
         def compile_object(source, obj, label, root=ROOT, extra=()):
-            flags = native_flags(root)
+            flags = native_flags(root, dynamics)
             cwd = ROOT / 'rust'
             def argv(output):
                 return ([compiler, *flags, *extra, '/c', source, '/Fo' + str(output)] if os.name == 'nt'
@@ -219,7 +232,7 @@ def capture(out, authority_path):
             bindings.append({'source': source.relative_to(ROOT).as_posix(), 'source_sha256': digest(source.read_bytes()),
                              'object': obj.name, 'object_sha256': digest(recorder.read(obj))})
             if source.stem in {'btDbvt', 'btDbvtBroadphase'}:
-                flags = native_flags(ROOT)
+                flags = native_flags(ROOT, dynamics)
                 expanded = recorder.run('expanded-' + source.stem.lower(),
                     [compiler, *flags, '/E', source] if os.name == 'nt' else [compiler, *flags, '-E', source],
                     cwd=ROOT / 'rust', inputs=[source])
@@ -252,7 +265,7 @@ def capture(out, authority_path):
         hook_header = HERE / 'observer.h'
         hook_flags = ['/FI' + str(hook_header), '/DDW_OBSERVED=1'] if os.name == 'nt' else ['-include', hook_header, '-DDW_OBSERVED=1']
         overrides = []
-        for i, path in enumerate(NATIVE_OBSERVATIONS):
+        for i, path in enumerate(native_observations(dynamics)):
             obj = out / ('observed-' + Path(path).stem + extension)
             compile_object(shadow / path, obj, f'observed-object-{i}', shadow, hook_flags)
             overrides.append(obj)
@@ -277,16 +290,21 @@ def capture(out, authority_path):
             if platform.system() == 'Darwin':
                 selected_overrides(link_data, [str(p) for p in prefix])
             recorder.save(out / (name + '-link-selection.json'), sorted(selected))
-            raw = recorder.run(name + '-run', [exe], cwd=ROOT / 'rust', data=inputs.encode())
-            native_rows[name] = frames(raw, inputs, observed=name == 'observed')
-            if name == 'observed':
-                recorder.save(out / 'observed-trace-lifetimes.json', validate_lifetimes(native_rows[name]))
-            lifecycle = validate_native_lifetimes(recorder.read(out / (name + '-run.stderr')).replace(b'\r\n', b'\n'),
-                                                  inputs, observed=name == 'observed')
-            recorder.save(out / (name + '-lifetime-summary.json'), lifecycle)
-        require(common(native_rows['native']) == common(native_rows['observed']), 'common original/observed noninterference')
+            for role in (['ordinary', 'ascending', 'descending', 'alternating'] if dynamics else [None]):
+                label = name + '-run' + ('-' + role if role and role != 'ordinary' else '')
+                raw = recorder.run(label, [exe, role] if role else [exe], cwd=ROOT / 'rust', data=inputs.encode())
+                rows = frames(raw, inputs, observed=name == 'observed', dynamics=dynamics)
+                native_rows[name if role in {None, 'ordinary'} else name + '-' + role] = rows
+                if name == 'observed':
+                    require(rows == rust_rows, 'every allocator role matches exact Rust trace')
+                    recorder.save(out / (label.replace('-run', '-trace') + '-lifetimes.json'), validate_lifetimes(rows))
+                lifecycle = validate_native_lifetimes(recorder.read(out / (label + '.stderr')).replace(b'\r\n', b'\n'),
+                                                      inputs, observed=name == 'observed', role=role)
+                recorder.save(out / (label.replace('-run', '') + '-lifetime-summary.json'), lifecycle)
+        for role in (['', '-ascending', '-descending', '-alternating'] if dynamics else ['']):
+            require(common(native_rows['native' + role], dynamics=dynamics) == common(native_rows['observed' + role], dynamics=dynamics), 'common original/observed noninterference for each role')
         require(rust_rows == native_rows['observed'], 'ordered diagnostic native/Rust equality')
-        controls = compiled_controls(recorder, out, shadow, rargs, suffix, inputs, rust_rows)
+        controls = compiled_controls(recorder, out, shadow, rargs, suffix, inputs, rust_rows, dynamics)
         inverse(shadow, edits, originals)
         endings = []
         for (cwd, spelling), binding in include_aliases.items():
@@ -302,7 +320,7 @@ def capture(out, authority_path):
                         ('compiler', 'compile-000'), ('archiver', 'archive-build')]}}
         producer['tools'].update(python=python, rust_linker=rust_linker, native_linker=native_linker)
         recorder.save(out / 'producer.json', producer)
-        schedule = command_schedule(producer, [p.relative_to(ROOT).as_posix() for p in sources], libs)
+        schedule = command_schedule(producer, [p.relative_to(ROOT).as_posix() for p in sources], libs, dynamics=dynamics)
         require([(r['label'], tuple(r['argv']), r['cwd']) for r in recorder.commands] ==
                 [(r.label, r.argv, r.cwd) for r in schedule], 'exact complete diagnostic command schedule')
         for expected, record in zip(schedule, recorder.commands):
@@ -310,7 +328,7 @@ def capture(out, authority_path):
             require(record['stdin_sha256'] == (digest(inputs.encode()) if expected.corpus else None),
                     'exact corpus stdin role ' + expected.label)
         status.update(status='DIAGNOSTIC_EQUAL_UNADMITTED', cases=len(cases), checkpoints=len(inputs.splitlines()),
-                      commands=len(recorder.commands), mutant_definitions=len(MUTANTS), compiled_controls=len(controls))
+                      commands=len(recorder.commands), mutant_definitions=len(mutants(dynamics)), compiled_controls=len(controls))
         recorder.save(out / 'report.json', status)
     except Exception as error:
         status.update(error=str(error))
@@ -323,7 +341,7 @@ def capture(out, authority_path):
         recorder.manifest()
     authority = recorder.authority()
     expected = {'authority':authority,'expected_head':head,'canonical_sources':original_sources,'inputs':inputs,'cases':cases,
-                'expected_host':{(platform.system(),platform.machine().lower())}}
+                'expected_host':{(platform.system(),platform.machine().lower())}, 'dynamics': dynamics}
     status.update(status='CONTROLLED_PASS',pending=[])
     report_bytes = encode_json(status)
     candidate = candidate_capture(Capture.open(out, expected=authority),{'report.json':report_bytes})
@@ -344,7 +362,7 @@ def capture(out, authority_path):
         stream.write(f'authority_size={len(receipt)}\nauthority_sha256={digest(receipt)}\n')
 
 
-def replay(directory, out, authority):
+def replay(directory, out, authority, dynamics=False):
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'compiler and actual replay are hosted-only')
     require((platform.system(), platform.machine().lower()) in {
         ('Windows', 'amd64'), ('Windows', 'x86_64'), ('Darwin', 'arm64'),
@@ -353,10 +371,10 @@ def replay(directory, out, authority):
     require(ROOT != out and ROOT not in out.parents and out not in ROOT.parents, 'disjoint source and replay roots')
     out.mkdir(parents=True)
     recorder = Recorder(out, snapshot)
-    inputs, cases = corpus()
+    inputs, cases = dynamics_corpus() if dynamics else corpus()
     recorder.write(out / 'inputs.txt', inputs.encode())
     recorder.save(out / 'cases.json', cases)
-    status = {'schema': 1, 'status': 'REPLAY_UNADMITTED', 'pending': PENDING, 'base': BASE, 'base_tree': BASE_TREE,
+    status = {'schema': 1, 'status': 'REPLAY_UNADMITTED', 'pending': PENDING, 'base': DYNAMICS_BASE if dynamics else BASE, 'base_tree': DYNAMICS_BASE_TREE if dynamics else BASE_TREE,
               'host': {'system': platform.system(), 'machine': platform.machine()}}
     recorder.save(out / 'report.json', status)
     try:
@@ -369,7 +387,7 @@ def replay(directory, out, authority):
         producer = admit_capture(directory, authority=authority, expected_head=head,
                                  canonical_sources={name: recorder.read(out / 'source' / name) for name in recorder.sources},
                                  inputs=inputs, cases=cases,
-                                 expected_host={('Windows', 'amd64'), ('Windows', 'x86_64')})
+                                 expected_host={('Windows', 'amd64'), ('Windows', 'x86_64')}, dynamics=dynamics)
         require(producer.head == head and producer.inputs == inputs and producer.cases == tuple(cases), 'same-HEAD admitted Windows producer')
         status['head'] = head
         status['producer_report_sha256'] = producer.report_sha256
@@ -382,11 +400,13 @@ def replay(directory, out, authority):
                      ROOT / 'rust/crates/mds-crtmath/src/lib.rs', '--out-dir', out], cwd=ROOT / 'rust',
                      inputs=[ROOT / 'rust/crates/mds-crtmath/src/lib.rs'], outputs=[out / 'libmds_crtmath.rlib'])
         rargs = [*rust, '--extern', 'mds_crtmath=' + str(out / 'libmds_crtmath.rlib')]
+        if dynamics:
+            rargs += ['--cfg', 'mmd_dynamics']
         suffix = '.exe' if os.name == 'nt' else ''
         shadow = out / 'generated'
         copy_sources(shadow)
-        originals = {path: (shadow / path).read_bytes() for path in OBSERVATION_PATHS}
-        edits = instrument(shadow, HERE)
+        originals = {path: (shadow / path).read_bytes() for path in observation_paths(dynamics)}
+        edits = instrument(shadow, HERE, dynamics)
         inverse(shadow, edits, originals)
         recorder.save(out / 'observation-edits.json', edits)
         recorder.generated_roots = [shadow]
@@ -396,10 +416,10 @@ def replay(directory, out, authority):
         recorder.run('rust-observed-build', [*rargs, '--cfg', 'test', entry, '-o', executable], cwd=ROOT / 'rust',
                      inputs=[entry, out / 'libmds_crtmath.rlib'], outputs=[executable])
         raw = recorder.run('rust-observed-run', [executable], cwd=ROOT / 'rust', data=inputs.encode())
-        actual = frames(raw, inputs)
+        actual = frames(raw, inputs, dynamics=dynamics)
         validate_lifetimes(actual)
-        require(actual == frames(producer.observed_trace, inputs), 'every admitted Windows checkpoint and raw word replayed')
-        controls = compiled_controls(recorder, out, shadow, rargs, suffix, inputs, actual)
+        require(actual == frames(producer.observed_trace, inputs, dynamics=dynamics), 'every admitted Windows checkpoint and raw word replayed')
+        controls = compiled_controls(recorder, out, shadow, rargs, suffix, inputs, actual, dynamics)
         inverse(shadow, edits, originals)
         recorder.save(out / 'generated-end.json', recorder.generated_snapshot())
         status.update(cases=len(cases), checkpoints=len(inputs.splitlines()), commands=len(recorder.commands),
@@ -420,21 +440,22 @@ def replay(directory, out, authority):
     replay_authority = recorder.authority()
     candidate = Capture.open(out, expected=replay_authority)
     _admit_replay(candidate,producer,authority=replay_authority,expected_head=head,
-                  canonical_sources=current_sources,require_pass=False)
+                  canonical_sources=current_sources,require_pass=False,dynamics=dynamics)
     status.update(status='CONTROLLED_PASS',pending=[])
     candidate = candidate_capture(candidate, {'report.json':encode_json(status)})
-    admit_replay(candidate,producer,authority=candidate.authority,expected_head=head,canonical_sources=current_sources)
+    admit_replay(candidate,producer,authority=candidate.authority,expected_head=head,canonical_sources=current_sources,dynamics=dynamics)
     for name in ['report.json','artifact-manifest.json']:
         temporary = out / (name+'.pending')
         temporary.write_bytes(candidate[name])
         temporary.replace(out/name)
-    admit_replay(out,producer,authority=candidate.authority,expected_head=head,canonical_sources=current_sources)
+    admit_replay(out,producer,authority=candidate.authority,expected_head=head,canonical_sources=current_sources,dynamics=dynamics)
 
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--describe', action='store_true')
+    parser.add_argument('--dynamics', action='store_true')
     parser.add_argument('--out-dir', type=Path)
     parser.add_argument('--replay-dir', type=Path)
     parser.add_argument('--authority', type=Path)
@@ -443,18 +464,18 @@ def main():
     args = parser.parse_args()
     if args.describe:
         import json
-        inputs, cases = corpus()
+        inputs, cases = dynamics_corpus() if args.dynamics else corpus()
         print(json.dumps({'status': 'SOURCE_ONLY_UNRUN', 'cases': len(cases), 'checkpoints': len(inputs.splitlines()),
-                          'mutant_definitions': len(MUTANTS), 'pending': PENDING}, sort_keys=True))
+                          'mutant_definitions': len(mutants(args.dynamics)), 'pending': PENDING}, sort_keys=True))
         return
     require(args.out_dir is not None and args.authority is not None, '--out-dir and --authority required')
     if args.replay_dir is not None:
         require(args.authority_size is not None and args.authority_sha256 is not None, 'pinned remote authority size/SHA required')
         authority = read_authority(args.authority, size=args.authority_size, sha256=args.authority_sha256)
-        replay(args.replay_dir.resolve(), args.out_dir.resolve(), authority)
+        replay(args.replay_dir.resolve(), args.out_dir.resolve(), authority, args.dynamics)
     else:
         require(args.authority_size is None and args.authority_sha256 is None, 'producer emits its own authority')
-        capture(args.out_dir.resolve(), args.authority.resolve())
+        capture(args.out_dir.resolve(), args.authority.resolve(), args.dynamics)
 
 
 if __name__ == '__main__':

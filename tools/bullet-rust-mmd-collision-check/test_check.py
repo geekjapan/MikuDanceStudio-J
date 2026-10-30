@@ -6,9 +6,9 @@ import ast
 from pathlib import Path
 import re
 
-from cases import corpus, word
-from hooks import MUTANTS, OWNER, inverse, mutate, replace
-from trace import frames, validate_lifetimes, semantic_projection
+from cases import corpus, dynamics_corpus, word
+from hooks import MUTANTS, DYNAMICS_MUTANTS, OWNER, inverse, mutate, replace, instrument, observation_paths
+from trace import frames, validate_lifetimes, semantic_projection, common, visibility
 
 
 class Memory:
@@ -20,6 +20,8 @@ class Memory:
         return self.files[self.name]
     def write_bytes(self, raw):
         self.files[self.name] = raw
+    def read_text(self):
+        return self.read_bytes().decode().replace('\r\n', '\n')
 
 
 class CorpusTests(unittest.TestCase):
@@ -85,7 +87,7 @@ class CorpusTests(unittest.TestCase):
                     if not value:
                         raise ValueError(message)
                 exec(code, dict(source=source, ROOT=root, out=out, recorder=recorder,
-                                native_flags=lambda root: [], compiler='/inert/compiler',
+                                native_flags=lambda root, dynamics=False: [], compiler='/inert/compiler', dynamics=False,
                                 os=SimpleNamespace(name=system), policy=lambda raw: observed, require=require))
                 args, kwargs = recorder.run.call_args
                 self.assertEqual(args[0], label)
@@ -141,6 +143,66 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(cases[0]['start'], 0)
         self.assertEqual(cases[-1]['end'], len(commands) - 1)
         self.assertTrue(all(b['start'] == a['end'] + 1 for a, b in zip(cases, cases[1:])))
+
+    def test_dynamics_corpus_has_genuine_toggles_and_per_operation_classification(self):
+        inputs, cases = dynamics_corpus()
+        commands = inputs.splitlines()
+        self.assertEqual(len(cases), 30)
+        self.assertEqual(len(commands), 696)
+        self.assertEqual(len({case['name'] for case in cases}), 30)
+        self.assertEqual({family: sum(case['family'] == family for case in cases)
+                          for family in ('clock', 'gravity-force-clear', 'motion-floor-uid', 'warmstart', 'shared-endpoint')},
+                         {'clock': 1, 'gravity-force-clear': 1, 'motion-floor-uid': 3, 'warmstart': 1, 'shared-endpoint': 24})
+        for case in cases:
+            self.assertEqual([op['row'] for op in case['operations']], list(range(case['start'], case['end'] + 1)))
+            for op in case['operations']:
+                tag = commands[op['row']].split()[0]
+                self.assertEqual(op['scope'], 'fixture-injection' if tag in {'L', 'FRC', 'W'} else 'genuine-mmd-operations')
+            if case['family'] != 'shared-endpoint':
+                continue
+            operations = commands[case['start']:case['end'] + 1]
+            toggles = [i for i, op in enumerate(operations) if op.startswith('K ')]
+            self.assertEqual(len(toggles), 2)
+            self.assertTrue(operations[toggles[0]].endswith(' 1'))
+            self.assertTrue(operations[toggles[1]].endswith(' 0'))
+            self.assertTrue(any(op.startswith('M ') for op in operations[toggles[0]:toggles[1]]))
+            self.assertTrue(any(op.startswith('N ') for op in operations[toggles[0]:toggles[1]]))
+            self.assertTrue(operations[toggles[1] + 1].startswith('N '))
+            if '-joint-' in case['name']:
+                self.assertTrue(all(op.split()[5] == '0' for op in [op for op in operations if op.startswith('C ')][:3]))
+
+    def test_dynamics_hooks_and_mutants_have_exact_source_anchors_and_inverses(self):
+        root = Path(__file__).resolve().parents[2]
+        here = Path(__file__).resolve().parent
+        names = set(observation_paths(True)) | {value[0] for value in DYNAMICS_MUTANTS.values()}
+        names |= {f'tools/bullet-rust-mmd-collision-check/{name}' for name in ('fixture.rs', 'dynamics_fixture.rs')}
+        originals = {name: (root / name).read_bytes() for name in names}
+        memory = Memory(dict(originals))
+        edits = instrument(memory, Memory(originals, 'tools/bullet-rust-mmd-collision-check'), True)
+        inverse(memory, edits, {name: originals[name] for name in observation_paths(True)})
+        for name, (_, _, _, field) in DYNAMICS_MUTANTS.items():
+            generated = Memory(dict(memory.files))
+            mutation = mutate(generated, name, True)
+            self.assertEqual(len(mutation), 1)
+            inverse(generated, mutation, {mutation[0]['path']: memory.files[mutation[0]['path']]})
+            self.assertEqual(semantic_projection([], field), [])
+
+    def test_dynamics_visibility_keeps_shim_status_distinct_from_bullet_return(self):
+        commands = 'N 00000000 0 3c800000\nX\n'
+        original = b'STATUS 0 0\nO 0 N 0 0 0\nO 1 X 0 0 0\nZ 2\n'
+        observed = b'K 0 0 0 00000000 00000000\nR 0 0\n' + original
+        native = frames(original, commands, observed=False, dynamics=True)
+        rust = frames(observed, commands, dynamics=True)
+        self.assertEqual(common(native, dynamics=True), common(rust, dynamics=True))
+        for raw, seen in [(observed, False), (original, True),
+                          (observed.replace(b'R 0 0\n', b''), True),
+                          (observed.replace(b'STATUS 0 0', b'STATUS 0 1'), True)]:
+            with self.assertRaises(ValueError):
+                frames(raw, commands, observed=seen, dynamics=True)
+        with self.assertRaises(ValueError):
+            frames(original, commands)
+        self.assertNotIn('R', visibility(True, False))
+        self.assertIn('STATUS', visibility(True, False))
 
     def test_huge_boxes_keep_one_edge_unsaturated_and_use_reachable_flags(self):
         inputs, cases = corpus()

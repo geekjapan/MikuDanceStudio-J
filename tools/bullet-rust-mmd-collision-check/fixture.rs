@@ -1,4 +1,9 @@
 impl MmdCollisionWorld {
+    pub(crate) fn fixture_dynamics(&mut self, i: usize, op: &str, a: Vec3, b: Vec3) {
+        let bodies = self.objects.solver_parts().0;
+        if op == "L" { bodies[i].set_linear_velocity(a); bodies[i].set_angular_velocity(b); }
+        else { bodies[i].add_force(a); bodies[i].add_torque(b); }
+    }
     pub(crate) fn fixture_sweep(&self) -> &AxisSweep32 { &self.collision.sweep }
     pub(crate) fn fixture_proxy(&self, i: usize) -> ProxyKey { self.collision.proxy_by_body[i] }
     pub(crate) fn fixture_activation(&mut self, i: usize, state: ActivationState) {

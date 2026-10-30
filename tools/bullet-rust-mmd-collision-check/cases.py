@@ -1,5 +1,6 @@
 """Finite source-derived MMD collision corpus. Float payloads retain raw words."""
 import struct
+import itertools
 
 
 def word(value):
@@ -107,4 +108,103 @@ def corpus():
         pose('R', i, (i - 1) * .2)
     lines.extend(['D', 'D'])
     end()
+    return '\n'.join(lines) + '\n', cases
+
+
+def dynamics_corpus():
+    lines, cases = [], []
+
+    def emit(command, scope='genuine-mmd-operations'):
+        cases[-1]['operations'].append({'row': len(lines), 'scope': scope})
+        lines.append(command)
+
+    def start(name, family):
+        cases.append({'name': name, 'family': family, 'start': len(lines), 'operations': []})
+        emit(f'H {name} mixed-explicit-operations')
+
+    def end():
+        emit('X')
+        cases[-1]['end'] = len(lines) - 1
+
+    def body(kind=0, x=0, y=10, mode=1, mask=-1):
+        params = [[.75, 0, 0, 0], [.75, .5, .625, 0], [.4, 1, 0, 0]][kind]
+        emit(f'C {kind} {word(2)} {mode} 1 {mask} ' + floats(params + [x, y, 0, 0, 0, 0, 1]))
+
+    def pose(op, i, x, y=10):
+        emit(f'{op} {i} ' + floats([x, y, 0, 0, 0, 0, 1]))
+
+    def step(dt=.03125, maximum=0, fixed=.03125):
+        emit(f'N {word(dt)} {maximum} {word(fixed)}')
+
+    start('mmd-clock', 'clock')
+    step(0, 1, 1 / 60)
+    step(0, 1, 1 / 60)
+    step(0)
+    step(.125)
+    step(.25, 2)
+    end()
+    start('mmd-gravity-force-clear', 'gravity-force-clear')
+    body()
+    body(x=1.52)
+    body(x=3.04)
+    emit('G ' + floats([0, -8, 0]))
+    emit('L 1 ' + floats([2, 3, 4, .2, .3, .4]), 'fixture-injection')
+    emit('FRC 1 ' + floats([4, -3, 2, .5, .75, 1]), 'fixture-injection')
+    step(0)
+    step(.25, 4)
+    step(.125)
+    pose('M', 1, 5)
+    step(0, 1, 1)
+    step(0, 1, 1)
+    end()
+    for kind, uid in enumerate((-2147483648, 0, 2147483647)):
+        start(f'mmd-motion-floor-uid-{kind}', 'motion-floor-uid')
+        body(kind, y=1)
+        body(x=4, y=1)
+        emit(f'J 1 2 {uid} 1')
+        pose('M', 1, 1, 2)
+        step(0)
+        pose('R', 1, 0, .5)
+        emit('O 1 ' + floats([0, .5, 0]))
+        for on in (0, 1):
+            emit(f'F {on}')
+            step()
+        step(0, 1, 1)
+        end()
+    start('mmd-fixture-seeded-warmstart', 'warmstart')
+    body(y=.6)
+    emit('D')
+    emit('W', 'fixture-injection')
+    for _ in range(4):
+        step()
+    end()
+    for mode in (1, 2):
+        for edge in ('contact', 'joint'):
+            for order in itertools.permutations(range(3)):
+                start(f'mmd-shared-{mode}-{edge}-' + ''.join(map(str, order)), 'shared-endpoint')
+                emit('G ' + floats([0, 0, 0]))
+                slots = {}
+                for i, role in enumerate(order, 1):
+                    slots[role] = i
+                    body(x=(-1.25, 1.25, 0)[role], mode=mode,
+                         mask=0 if edge == 'joint' else -1)
+                endpoint = slots[2]
+                emit(f'K {endpoint} 1')
+                if edge == 'joint':
+                    for role in (0, 1):
+                        emit(f'J {slots[role]} {endpoint} {role} 0')
+                for x in (10, 10.9, 11.8, 20, 20.9):
+                    body(x=x)
+                pose('M', endpoint, 0, 10.02)
+                step()
+                step()
+                for i in (4, 5, 6):
+                    pose('R', i, 30 + i)
+                step()
+                for i, x in zip((4, 5, 6), (10, 10.9, 11.8)):
+                    pose('R', i, x)
+                step()
+                emit(f'K {endpoint} 0')
+                step()
+                end()
     return '\n'.join(lines) + '\n', cases

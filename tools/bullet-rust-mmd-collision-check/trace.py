@@ -7,7 +7,18 @@ def require(ok, message):
         raise ValueError(message)
 
 
-def _checkpoint(records, command, observed):
+def visibility(dynamics=False, observed=True):
+    tags = {'O', 'B', 'P', 'M', 'Q'}
+    if observed:
+        tags |= {'E', 'S', 'J'}
+    if dynamics:
+        tags |= {'W', 'STATUS'}
+        if observed:
+            tags |= {'R', 'K', 'Y', 'V'}
+    return tags
+
+
+def _checkpoint(records, command, observed, dynamics):
     headers = [r for r in records if r[0] == 'O']
     require(len(headers) == 1, 'one operation snapshot')
     header = headers[0]
@@ -23,10 +34,57 @@ def _checkpoint(records, command, observed):
         contacts = [r for r in records if r[0] == 'Q' and r[2] == manifold[2]]
         require(len(contacts) == int(manifold[-1]) and [r[3] for r in contacts] == list(map(str, range(len(contacts)))), 'ordered complete contacts')
     require(all(int(r[2]) < manifolds for r in records if r[0] == 'Q'), 'contact manifold owner')
+    if dynamics:
+        state = [r for r in records if r[0] == 'W']
+        require([r[2] for r in state] == list(map(str, range(bodies))), 'complete initialized dynamics body state')
+        for index, record in enumerate(records):
+            if record[0] == 'W':
+                require(index > 0 and records[index - 1][:3] == ['B', record[1], record[2]], 'dynamics state follows its own body')
+        step = command.split()[0] == 'N'
+        for tag, count in [('STATUS', int(step)), ('R', int(step and observed)), ('K', int(step and observed))]:
+            require(sum(r[0] == tag for r in records) == count, 'explicit dynamics visibility ' + tag)
+        require(step or not any(r[0] in {'Y', 'V'} for r in records), 'schedule only during actual step')
+        if step:
+            status_at = next(i for i, record in enumerate(records) if record[0] == 'STATUS')
+            require(status_at < records.index(header), 'genuine shim status precedes snapshot')
+        if step and observed:
+            clock = next(r for r in records if r[0] == 'K')
+            clock_at = records.index(clock)
+            return_at = next(i for i, record in enumerate(records) if record[0] == 'R')
+            require(clock_at < return_at and return_at + 1 == status_at, 'single actual Bullet return before genuine shim status')
+            require(all(clock_at < i < return_at for i, record in enumerate(records) if record[0] in {'Y', 'V'}), 'actual step observations between clock and return')
+            schedule = [r for r in records if r[0] in {'Y', 'V'}]
+            phase = None
+            prepared = solved = groups = workspaces = 0
+            for record in schedule:
+                if record[0] == 'V':
+                    require(phase == 'G', 'workspace follows its actual group')
+                    workspaces += 1
+                    phase = 'V'
+                elif record[2] == 'P':
+                    require(phase in {None, 'A'}, 'prepare begins substep')
+                    prepared += 1
+                    phase = 'P'
+                elif record[2] == 'G':
+                    require(phase in {'P', 'V'}, 'group within prepared solve')
+                    at = 4
+                    for limit in (bodies, manifolds, None):
+                        count = int(record[at]);at += 1
+                        require(count >= 0 and at + count <= len(record), 'complete ordered group indices')
+                        require(all(int(v) >= 0 and (limit is None or int(v) < limit) for v in record[at:at+count]), 'live group indices')
+                        at += count
+                    require(at == len(record), 'exact group width')
+                    groups += 1
+                    phase = 'G'
+                else:
+                    require(record[2] == 'A' and phase in {'P', 'V'}, 'allSolved closes prepared groups')
+                    solved += 1
+                    phase = 'A'
+            require(prepared == solved == int(clock[3]) and groups == workspaces and phase in {None, 'A'}, 'complete actual substep schedule')
     return records
 
 
-def frames(raw, inputs, *, observed=True):
+def frames(raw, inputs, *, observed=True, dynamics=False):
     require(type(raw) is bytes and 0 < len(raw) <= 64 * 1024 * 1024, 'bounded nonempty trace')
     require(b'\r' not in raw and raw.endswith(b'\n'), 'LF terminated raw trace')
     commands = inputs.splitlines()
@@ -37,14 +95,14 @@ def frames(raw, inputs, *, observed=True):
         require(all(words) and len(words) >= 2, 'trace token framing')
         if words[0] == 'Z':
             if current:
-                rows.append(_checkpoint(current, commands[len(rows)], observed))
+                rows.append(_checkpoint(current, commands[len(rows)], observed, dynamics))
                 current = []
             require(words == ['Z', str(len(commands))] and len(rows) == len(commands), 'complete trace end')
             require(position == len(lines) - 1, 'last trace end')
             return rows
-        require(words[0] in {'E', 'O', 'B', 'S', 'P', 'M', 'Q', 'J'}, 'known trace row')
+        require(words[0] in visibility(dynamics, observed), 'known explicitly visible trace row')
         if words[1] == str(len(rows) + 1) and current:
-            rows.append(_checkpoint(current, commands[len(rows)], observed))
+            rows.append(_checkpoint(current, commands[len(rows)], observed, dynamics))
             current = []
         require(len(rows) < len(commands) and words[1] == str(len(rows)), 'exact ordered checkpoint index')
         current.append(words)
@@ -66,15 +124,31 @@ def frames(raw, inputs, *, observed=True):
             require(all(re.fullmatch('[0-9a-f]{8}', w) for w in words[4:25] + words[27:]), 'raw contact float words')
         elif tag == 'J':
             require(len(words) == 24, 'complete joint spring words')
+        elif tag == 'W':
+            require(len(words) == 41 and all(re.fullmatch('[0-9a-f]{8}', w) for w in words[5:]), 'initialized dynamics words')
+            require(all(re.fullmatch(r'-?(0|[1-9][0-9]*)', w) for w in words[2:5]), 'dynamics state indices')
+        elif tag in {'STATUS', 'R'}:
+            require(len(words) == 3 and re.fullmatch(r'0|[1-9][0-9]*', words[2]), 'genuine status or actual return')
+            if tag == 'STATUS':
+                require(words[2] == '0', 'successful genuine shim status')
+        elif tag == 'K':
+            require(len(words) == 6 and all(re.fullmatch(r'0|[1-9][0-9]*', w) for w in words[2:4]) and
+                    0 <= int(words[3]) <= int(words[2]) and all(re.fullmatch('[0-9a-f]{8}', w) for w in words[4:]), 'actual clock record')
+        elif tag == 'V':
+            require(len(words) == 4 and words[2] == '0' and re.fullmatch(r'0|[1-9][0-9]*', words[3]), 'live prefix and capacity without backing-slot reads')
+        elif tag == 'Y':
+            require((len(words) == 3 and words[2] == 'A') or
+                    (len(words) == 5 and words[2] == 'P' and all(w.isdigit() for w in words[3:])) or
+                    (len(words) >= 7 and words[2] == 'G' and re.fullmatch(r'-?(0|[1-9][0-9]*)', words[3]) and all(w.isdigit() for w in words[4:])), 'actual solver schedule record')
     raise ValueError('missing complete trace end')
 
 
-def common(rows):
+def common(rows, *, dynamics=False):
     result = []
     for checkpoint in rows:
         projected = []
         for record in checkpoint:
-            if record[0] in {'E', 'S', 'J'}:
+            if record[0] in (visibility(dynamics, True) - visibility(dynamics, False)):
                 continue
             row = list(record)
             if row[0] == 'P':
@@ -87,9 +161,13 @@ def common(rows):
 
 
 def semantic_projection(checkpoint, field):
-    tags = {'sap': {'S'}, 'bodies': {'B'}, 'manifolds': {'P', 'M', 'Q'}, 'events': {'E'}}
+    tags = {'sap': {'S'}, 'bodies': {'B'}, 'manifolds': {'P', 'M', 'Q'}, 'events': {'E'},
+            'step-return': {'R'}, 'dynamics': {'W'}, 'schedule': {'Y'}, 'workspace': {'V'}}
     body_fields = {'activation': [4], 'filter': [6, 7], 'restitution': [47], 'mass-flags': [3, 45],
-                   'current-transform': list(range(9, 21)), 'interpolation-velocity': list(range(54, 60))}
+                   'current-transform': list(range(9, 21)), 'interpolation-velocity': list(range(54, 60)),
+                   'motion-state': list(range(33, 45))}
+    if field == 'forces':
+        return [record[2:3] + record[33:39] for record in checkpoint if record[0] == 'W']
     if field in body_fields:
         return [[record[2], *[record[index] for index in body_fields[field]]]
                 for record in checkpoint if record[0] == 'B']

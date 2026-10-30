@@ -434,14 +434,60 @@ def verify_archive(raw, listing, system, bindings, objects, sources):
     return archive
 
 
-def validate_native_lifetimes(raw, inputs, *, observed):
+def validate_native_lifetimes(raw, inputs, *, observed, role=None):
     require(type(raw) is bytes and len(raw) <= 64 * 1024**2, 'bounded native lifetime chronology')
     commands = inputs.splitlines()
     live_allocations, registered, joints = {}, {}, {}
     last_sequence, last_row = 0, 0
     current_world = None
     closed = set()
+    role_lines, ordinary_lines = [], []
     for line in raw.decode('ascii').splitlines():
+        (role_lines if line.startswith('ROLE ') else ordinary_lines).append(line)
+    if role is None:
+        require(not role_lines, 'no allocator-role records in collision mode')
+    else:
+        require(role in {'ordinary', 'ascending', 'descending', 'alternating'} and role_lines and
+                role_lines[0] == f'ROLE 0 START {role} mmd-aligned-request', 'genuine MMD allocator role domain')
+        live, sequence, ended, previous = {}, 0, [], 0
+        ascending, descending, allocations = None, None, 0
+        for line in role_lines[1:]:
+            words = line.split(' ')
+            require(len(words) in {4, 7} and words[1].isdigit(), 'MMD allocator role framing')
+            row = int(words[1])
+            require(previous <= row < len(commands), 'MMD allocator ordered checkpoints')
+            previous = row
+            if len(words) == 4:
+                require(words[2:] == ['END', '0'] and commands[row] == 'X' and not live,
+                        'observed callback-role closure at actual teardown')
+                ended.append(row)
+                ascending, descending, allocations = None, None, 0
+                continue
+            require(role != 'ordinary' and words[2].isdigit() and words[3] in {'A', 'F'} and
+                    all(v.isdigit() for v in words[4:]), 'ordinary raw-callback absence and custom aligned callback')
+            current, pointer, size, alignment = map(int, [words[2], *words[4:]])
+            require(current == sequence + 1, 'exact MMD role allocation chronology')
+            sequence = current
+            if words[3] == 'A':
+                require(pointer > 0 and pointer not in live and alignment > 0 and
+                        alignment & (alignment - 1) == 0 and pointer % alignment == 0, 'MMD aligned request ownership')
+                live[pointer] = (size, alignment)
+                high = role == 'descending' or (role == 'alternating' and allocations % 2 == 1)
+                if high:
+                    require(descending is None or pointer < descending, 'descending MMD allocation addresses')
+                    require(ascending is None or pointer > ascending, 'disjoint alternating MMD allocation fronts')
+                    descending = pointer
+                else:
+                    require(ascending is None or pointer > ascending, 'ascending MMD allocation addresses')
+                    require(descending is None or pointer < descending, 'disjoint alternating MMD allocation fronts')
+                    ascending = pointer
+                allocations += 1
+            else:
+                require(pointer in live and size == alignment == 0, 'MMD aligned callback free')
+                del live[pointer]
+        require(not live and ended == [i for i, command in enumerate(commands) if command == 'X'], 'complete MMD allocator role teardown coverage')
+        require(sequence == 0 if role == 'ordinary' else sequence > 0, 'allocator role callback domain')
+    for line in ordinary_lines:
         words = line.split(' ')
         require(all(words) and words[0] in {'ALLOC', 'BODY_REGISTER', 'JOINT_CREATE', 'PHYSICAL'}, 'known native lifetime event')
         require(len(words) >= 2 and words[1].isdigit(), 'native lifetime checkpoint')
@@ -496,7 +542,16 @@ def validate_native_lifetimes(raw, inputs, *, observed):
     if observed:
         require(not registered and not joints and not live_allocations, 'complete native ownership and allocation closure')
     require(last_sequence > 0 if observed else last_sequence == 0, 'native allocator observation domain')
-    return {'allocation_events': last_sequence, 'physical_closure': observed}
+    if observed and role not in {None, 'ordinary'}:
+        callbacks = [line.split(' ') for line in role_lines if len(line.split(' ')) == 7]
+        requests = [line.split(' ') for line in ordinary_lines if line.startswith('ALLOC ')]
+        require([[r[1], r[2], '1' if r[3] == 'A' else '0', *r[4:]] for r in callbacks] ==
+                [r[1:] for r in requests], 'genuine callback and Bullet aligned-request chronology agree exactly')
+    result = {'allocation_events': last_sequence, 'physical_closure': observed}
+    if role is not None:
+        result.update(role=role, domain='mmd-aligned-request', callback_events=sequence,
+                      raw_callback_absence=role == 'ordinary')
+    return result
 
 
 def policy(text):
@@ -803,9 +858,10 @@ class CommandSpec:
     generation: str = 'none'
 
 
-def command_schedule(context, sources, libraries):
+def command_schedule(context, sources, libraries, *, dynamics=False):
     """Exact current diagnostic command recipe. This is not capture admission."""
-    from hooks import MUTANTS, NATIVE_OBSERVATIONS
+    from hooks import mutants, native_observations
+    MUTANTS, NATIVE_OBSERVATIONS = mutants(dynamics), native_observations(dynamics)
     fields(context, ['schema', 'system', 'root', 'out', 'tools'], 'command recipe context')
     require(type(context['schema']) is int and context['schema'] == 1, 'command recipe schema')
     system = context['system']
@@ -838,10 +894,11 @@ def command_schedule(context, sources, libraries):
                                   tuple(map(str, inputs)), tuple(map(str, outputs)), compile, corpus, generation))
     def flags(base):
         src, shim = base / 'recipes/bullet275/bullet-src/src', base / 'rust/crates/mds-bullet-sys/shim'
-        return (['/nologo','/std:c++17','/O2','/MD','/EHsc','/fp:precise','/DBT_NO_PROFILE=1','/DWIN32','/showIncludes',
+        return ((['/DDW_DYNAMICS=1' if win else '-DDW_DYNAMICS=1'] if dynamics else []) +
+                (['/nologo','/std:c++17','/O2','/MD','/EHsc','/fp:precise','/DBT_NO_PROFILE=1','/DWIN32','/showIncludes',
                  '/I'+str(src),'/I'+str(shim),'/FI'+str(shim/'det_math.h')] if win else
                 ['-std=c++17','-O2','-ffp-contract=off','-fno-fast-math','-fdeclspec','-DBT_NO_PROFILE=1','-H',
-                 '-I',shim/'sse_emu','-I',src,'-I',shim,'-include',shim/'det_math.h'])
+                 '-I',shim/'sse_emu','-I',src,'-I',shim,'-include',shim/'det_math.h']))
     def compile_object(source, obj, label, base=root, extra=()):
         for name, output in [(label+'-discovery',obj.with_name('discovery-'+obj.name)),(label,obj)]:
             argv = ([tools['compiler'],*flags(base),*extra,'/c',source,'/Fo'+str(output)] if win else
@@ -859,11 +916,13 @@ def command_schedule(context, sources, libraries):
     crt = out / ('mds_crtmath.lib' if win else 'libmds_crtmath.a')
     add('crt-build',[*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',crt_source,'--out-dir',out],[crt_source],[rlib,crt])
     rargs = [*rust,'--extern','mds_crtmath='+str(rlib)]
-    dedicated = root / 'rust/crates/mds-bullet/tests/mmd_collision_world.rs'
+    if dynamics:
+        rargs += ['--cfg', 'mmd_dynamics']
+    dedicated = root / ('rust/crates/mds-bullet/tests/mmd_dynamics_world.rs' if dynamics else 'rust/crates/mds-bullet/tests/mmd_collision_world.rs')
     focused = out / ('dedicated'+suffix)
     add('dedicated-build',[*rargs,'--test','-D','warnings',dedicated,'-o',focused],[dedicated,rlib],[focused])
     add('dedicated-list',[focused,'--list','--format','terse'])
-    add('dedicated-run',[focused,'mmd_world_'])
+    add('dedicated-run',[focused,'mmd_dynamics_' if dynamics else 'mmd_world_', *(['--test-threads=1'] if dynamics else [])])
     pure_source, pure = root / 'rust/crates/mds-bullet/tests/pure_bullet.rs', out / ('pure'+suffix)
     add('pure-build',[*rargs,'--test','-D','warnings',pure_source,'-o',pure],[pure_source,rlib],[pure])
     add('pure-list',[pure,'--list','--format','terse'])
@@ -905,7 +964,9 @@ def command_schedule(context, sources, libraries):
         argv = ([tools['compiler'],'/nologo','/MD','/EHsc',obj,*prefix,archive,crt,'/Fe'+str(exe),'/link','/MAP:'+str(linkmap),'/VERBOSE:LIB',*libraries] if win else
                 [tools['compiler'],obj,*prefix,archive,crt,*libraries,'-fuse-ld='+tools['native_linker'],('-Wl,-map,' if system=='Darwin' else '-Wl,-Map,')+str(linkmap),'-o',exe])
         add(name+'-link',argv,[obj,*prefix,archive,crt],[exe,linkmap])
-        add(name+'-run',[exe],corpus=True)
+        for role in (['ordinary', 'ascending', 'descending', 'alternating'] if dynamics else [None]):
+            label = name+'-run'+('-'+role if role and role != 'ordinary' else '')
+            add(label,[exe,role] if role else [exe],corpus=True)
     for name in MUTANTS:
         target = out / 'mutants' / name
         entry = target / 'tools/bullet-rust-mmd-collision-check/runner.rs'
@@ -936,8 +997,9 @@ class _Memory:
 ACTUAL_PEERS = ['wrong-head','unclosed-command','boolean-pid','open-source','bad-executed-binary']
 
 
-def _admit_capture(directory, *, authority, expected_head, canonical_sources, inputs, cases, expected_host, require_actual_controls=True):
-    from hooks import (MUTANTS, OWNER, OBSERVATION_PATHS, NATIVE_OBSERVATIONS, instrument, inverse, mutate)
+def _admit_capture(directory, *, authority, expected_head, canonical_sources, inputs, cases, expected_host, require_actual_controls=True, dynamics=False):
+    from hooks import (OWNER, mutants, observation_paths, native_observations, instrument, inverse, mutate)
+    MUTANTS, OBSERVATION_PATHS, NATIVE_OBSERVATIONS = mutants(dynamics), observation_paths(dynamics), native_observations(dynamics)
     from trace import frames, common, validate_lifetimes, semantic_projection
     require(type(expected_head) is str and re.fullmatch('[0-9a-f]{40}', expected_head), 'external current HEAD')
     require(type(canonical_sources) is dict and canonical_sources and type(inputs) is str and type(cases) is list,
@@ -962,8 +1024,8 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
                     'head','cases','checkpoints','commands','mutant_definitions','compiled_controls'], 'native report')
     require(type(report['schema']) is int and report['schema'] == 1 and report['status'] in
             {'DIAGNOSTIC_EQUAL_UNADMITTED','CONTROLLED_PASS'}, 'completed native report schema')
-    require(report['base'] == 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70' and
-            report['base_tree'] == '005ae1183e9972df56689796cf87589117418e7d' and report['head'] == expected_head,
+    require(report['base'] == ('93e5ec6151e8bd3b4d86720b50cc0f2a321e4fcc' if dynamics else 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70') and
+            report['base_tree'] == ('7c8f9eaa46d5f05ca46bf180a0a139e547fe3489' if dynamics else '005ae1183e9972df56689796cf87589117418e7d') and report['head'] == expected_head,
             'fixed MMD base and current producer HEAD')
     host = fields(report['host'], ['system','machine'], 'actual native host')
     require(all(type(value) is str for value in host.values()) and
@@ -973,9 +1035,9 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
     require(type(report['pending']) is list and all(type(item) is str for item in report['pending']), 'typed pending gates')
     if require_actual_controls:
         require(report['status'] == 'CONTROLLED_PASS' and report['pending'] == [], 'final native admission state')
-    require(report['scope'] == 'private MMD collision ownership' and
+    require(report['scope'] == ('private MMD dynamics ownership' if dynamics else 'private MMD collision ownership') and
             report['native_accelerator'] == 'unchanged genuine constructor; Rust query and allocation parity excluded',
-            'fixed collision-only boundary')
+            'fixed explicit MMD comparison boundary')
     for key, value in [('cases',len(cases)),('checkpoints',len(inputs.splitlines())),
                        ('mutant_definitions',len(MUTANTS)),('compiled_controls',len(MUTANTS))]:
         require(type(report[key]) is int and report[key] == value, 'derived complete native count ' + key)
@@ -992,7 +1054,7 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
             require(content == canonical_sources[name], 'binary test checkout transport')
         original[name] = content
     memory = _Memory(dict(original))
-    edits = instrument(memory, _Memory(original, 'tools/bullet-rust-mmd-collision-check'))
+    edits = instrument(memory, _Memory(original, 'tools/bullet-rust-mmd-collision-check'), dynamics)
     inverse(memory, edits, {name: original[name] for name in OBSERVATION_PATHS})
     require(data('observation-edits.json') == edits, 'exact generated observation recipe and inverse')
     generated = memory.files
@@ -1023,7 +1085,7 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
     extension, suffix = ('.obj','.exe') if win else ('.o','')
     libraries = (raw('crt-build.stderr').decode().split('native-static-libs:')[-1].splitlines()[0].split() if win else
                  [] if host['system'] == 'Darwin' else ['-ldl','-lpthread','-lm'])
-    schedule = command_schedule(context, sources, libraries)
+    schedule = command_schedule(context, sources, libraries, dynamics=dynamics)
     commands = command_records(raw, authority)
     for command in commands:
         closed_command(command, authority.members)
@@ -1032,7 +1094,7 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
     expected_mutants = {}
     for name in MUTANTS:
         changed = _Memory(dict(generated))
-        mutation = mutate(changed, name)
+        mutation = mutate(changed, name, dynamics)
         require(data('mutation-' + name + '.json') == mutation, 'exact compiled semantic mutation ' + name)
         expected_mutants[name] = changed.files
         for source, value in changed.files.items():
@@ -1154,18 +1216,24 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
         require(selected and selected <= set(objects) and data(label+'-link-selection.json') == sorted(selected), 'actual linked native archive membership')
         if label == 'observed' and host['system'] == 'Darwin':
             selected_overrides(link,[str(out/('observed-'+path(name).stem+extension)) for name in NATIVE_OBSERVATIONS])
-        summary = validate_native_lifetimes(raw(label+'-run.stderr').replace(b'\r\n',b'\n'),inputs,observed=label=='observed')
-        require(data(label+'-lifetime-summary.json') == summary, 'complete native allocator/physical lifetime facts')
-    native = frames(raw('native-run.stdout'),inputs,observed=False)
-    observed = frames(raw('observed-run.stdout'),inputs)
-    rust = frames(raw('rust-observed-run.stdout'),inputs)
-    require(common(native) == common(observed) and observed == rust, 'genuine noninterference and ordered complete Rust/native equality')
+    rust = frames(raw('rust-observed-run.stdout'),inputs,dynamics=dynamics)
+    for role in (['ordinary', 'ascending', 'descending', 'alternating'] if dynamics else [None]):
+        suffix_role = '-'+role if role and role != 'ordinary' else ''
+        traces = {}
+        for label in ['native','observed']:
+            summary = validate_native_lifetimes(raw(label+'-run'+suffix_role+'.stderr').replace(b'\r\n',b'\n'),inputs,observed=label=='observed',role=role)
+            require(data(label+suffix_role+'-lifetime-summary.json') == summary, 'complete native allocator/physical lifetime facts')
+            traces[label] = frames(raw(label+'-run'+suffix_role+'.stdout'),inputs,observed=label=='observed',dynamics=dynamics)
+            if label == 'observed':
+                require(data(label+'-trace'+suffix_role+'-lifetimes.json') == validate_lifetimes(traces[label]), 'every allocator role lifetime trace')
+        require(common(traces['native'],dynamics=dynamics) == common(traces['observed'],dynamics=dynamics) and traces['observed'] == rust, 'genuine noninterference and exact complete Rust/native equality for every allocator role')
+    observed = traces['observed']
     require(data('rust-lifetimes.json') == validate_lifetimes(rust) and
             data('observed-trace-lifetimes.json') == validate_lifetimes(observed), 'independent algorithm/manifold lifetime closure')
     controls = fields(data('semantic-controls.json'), MUTANTS, 'complete compiled controls')
     for name, (_,_,_,field) in MUTANTS.items():
-        clean = frames(raw('baseline-run-'+name+'.stdout'),inputs)
-        mutated = frames(raw('mutant-run-'+name+'.stdout'),inputs)
+        clean = frames(raw('baseline-run-'+name+'.stdout'),inputs,dynamics=dynamics)
+        mutated = frames(raw('mutant-run-'+name+'.stdout'),inputs,dynamics=dynamics)
         validate_lifetimes(clean); validate_lifetimes(mutated)
         require(clean == rust, 'complete same-host clean baseline')
         different = [i for i,(a,b) in enumerate(zip(clean,mutated)) if a != b]
@@ -1176,15 +1244,22 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
                     'mutant_binary_sha256':digest(raw('mutant-'+name+suffix)),'normal_exit':True,'full_trace':True}
         require(controls[name] == expected and controls[name]['normal_exit'] is True and controls[name]['full_trace'] is True,
                 'actual compiled directed control receipt')
-    for label,prefix in [('dedicated','mmd_world_'),('pure','')]:
+    for label,prefix in [('dedicated','mmd_dynamics_' if dynamics else 'mmd_world_'),('pure','')]:
         listed = raw(label+'-list.stdout').decode().splitlines()
         count = sum(line.endswith(': test') and line.startswith(prefix) for line in listed)
+        if dynamics and label == 'dedicated':
+            require(count == 9, 'exact nine focused dynamics behavior tests')
         log = raw(label+'-run.stdout').decode()
         require(count > 0 and f'test result: ok. {count} passed; 0 failed; 0 ignored;' in log, 'complete listed real Rust behavior suite')
+        if dynamics and label == 'dedicated':
+            source_names = re.findall(r'^fn (mmd_dynamics_[a-z0-9_]+)\(', original['rust/crates/mds-bullet/tests/mmd_dynamics_world.rs'].decode(), re.M)
+            discovered = [line for line in listed if line.startswith(prefix) and line.endswith(': test')]
+            require(len(source_names) == 9 and sorted(discovered) == sorted(name + ': test' for name in source_names) and
+                    all(f'test {name} ... ok' in log.splitlines() for name in source_names), 'expected discovered and executed dynamics test names agree')
     if require_actual_controls or 'actual-capture-controls.json' in names:
         controls = fields(data('actual-capture-controls.json'), ['schema','domain','legal_actual_report_sha256','rejected'], 'actual malformed-peer controls')
         require(type(controls['schema']) is int and controls['schema'] == 1 and controls['domain'] == 'actual-capture-malformed-peers'
-                and controls['legal_actual_report_sha256'] == digest(raw('report.json')) and controls['rejected'] == ACTUAL_PEERS,
+                and controls['legal_actual_report_sha256'] == digest(raw('report.json')) and controls['rejected'] == ACTUAL_PEERS + (['wrong-mode'] if dynamics else []),
                 'legal actual capture precedes complete malformed-peer refusals')
     require(used == names, 'closed capture protocol membership: '+str(sorted(names-used)[:5]))
     return VerifiedCapture(expected_head,inputs,tuple(cases),raw('observed-run.stdout'),digest(raw('report.json')))
@@ -1263,12 +1338,21 @@ def actual_peer_controls(capture, **expected):
             rejected.append(name)
         else:
             raise ValueError('malformed actual peer admitted: '+name)
-    require(rejected == ACTUAL_PEERS, 'complete observed actual-peer rejection list')
+    if expected.get('dynamics', False):
+        try:
+            _admit_capture(capture, **{**expected, 'dynamics':False}, require_actual_controls=False)
+        except ValueError as error:
+            require(str(error).startswith('fixed MMD base'), 'dynamics authority has distinct fixed mode')
+            rejected.append('wrong-mode')
+        else:
+            raise ValueError('dynamics capture admitted as collision authority')
+    require(rejected == ACTUAL_PEERS + (['wrong-mode'] if expected.get('dynamics', False) else []), 'complete observed actual-peer rejection list')
     return {'schema':1,'domain':'actual-capture-malformed-peers','legal_actual_report_sha256':proof.report_sha256,'rejected':rejected}
 
 
-def _admit_replay(directory, producer, *, authority, expected_head, canonical_sources, require_pass=True):
-    from hooks import MUTANTS, OBSERVATION_PATHS, instrument, inverse, mutate
+def _admit_replay(directory, producer, *, authority, expected_head, canonical_sources, require_pass=True, dynamics=False):
+    from hooks import mutants, observation_paths, instrument, inverse, mutate
+    MUTANTS, OBSERVATION_PATHS = mutants(dynamics), observation_paths(dynamics)
     from trace import frames, validate_lifetimes, semantic_projection
     require(isinstance(producer, VerifiedCapture) and producer.head == expected_head, 'admitted same-HEAD Windows producer')
     capture = directory if isinstance(directory, Capture) else Capture.open(directory, expected=authority)
@@ -1284,8 +1368,8 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
     report = fields(data('report.json'),['schema','status','pending','base','base_tree','host','head','producer_report_sha256',
                     'cases','checkpoints','commands','compiled_controls'],'replay report')
     require(type(report['schema']) is int and report['schema'] == 1 and report['status'] in {'REPLAY_UNADMITTED','CONTROLLED_PASS'}
-            and report['base'] == 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70' and
-            report['base_tree'] == '005ae1183e9972df56689796cf87589117418e7d' and report['head'] == expected_head
+            and report['base'] == ('93e5ec6151e8bd3b4d86720b50cc0f2a321e4fcc' if dynamics else 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70') and
+            report['base_tree'] == ('7c8f9eaa46d5f05ca46bf180a0a139e547fe3489' if dynamics else '005ae1183e9972df56689796cf87589117418e7d') and report['head'] == expected_head
             and report['producer_report_sha256'] == producer.report_sha256, 'bound complete current replay')
     require(type(report['pending']) is list and all(type(item) is str for item in report['pending']), 'typed replay pending gates')
     if require_pass:
@@ -1306,7 +1390,7 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
                 canonical_sources[name].replace(b'\r\n',b'\n'),'current replay canonical source')
         if '/tests/' in name: require(content == canonical_sources[name],'binary replay test transport')
         original[name] = content
-    memory = _Memory(dict(original)); edits = instrument(memory,_Memory(original,'tools/bullet-rust-mmd-collision-check'))
+    memory = _Memory(dict(original)); edits = instrument(memory,_Memory(original,'tools/bullet-rust-mmd-collision-check'),dynamics)
     inverse(memory,edits,{name:original[name] for name in OBSERVATION_PATHS})
     require(data('observation-edits.json') == edits,'exact replay observation inverse')
     generated = memory.files
@@ -1331,6 +1415,8 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
     rust = [context['tools']['rustc'],'--edition=2021','-O','-C','linker='+context['tools']['rust_linker']]
     rlib,source = out/'libmds_crtmath.rlib',root/'rust/crates/mds-crtmath/src/lib.rs'
     rargs = [*rust,'--extern','mds_crtmath='+str(rlib)]
+    if dynamics:
+        rargs += ['--cfg', 'mmd_dynamics']
     recipe = []
     def add(label,argv,declared=(),outputs=(),generation='none',corpus=False,cwd=None):
         outputs = list(outputs)
@@ -1347,7 +1433,7 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
     add('rust-observed-run',[executable],generation='shadow',corpus=True)
     mutated_sources = {}
     for name in MUTANTS:
-        memory = _Memory(dict(generated)); mutation = mutate(memory,name); mutated_sources[name] = memory.files
+        memory = _Memory(dict(generated)); mutation = mutate(memory,name,dynamics); mutated_sources[name] = memory.files
         require(data('mutation-'+name+'.json') == mutation,'exact replay compiled mutation')
         for file,value in memory.files.items(): require(raw('mutants/'+name+'/'+file) == value,'actual replay mutant source')
         entry = out/'mutants'/name/'tools/bullet-rust-mmd-collision-check/runner.rs'
@@ -1391,11 +1477,11 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
         for value,identity_value in command['outputs'].items(): artifact(value,identity_value)
     require(raw('git-head.stdout').decode().strip() == expected_head and not raw('git-status.stdout').strip(),'actual clean replay HEAD')
     require(raw('rustc-path.stdout').decode().strip() == context['tools']['rustc'] and b'release: 1.95.0\n' in raw('rust-version.stdout').replace(b'\r\n',b'\n'),'actual pinned replay compiler')
-    actual = frames(raw('rust-observed-run.stdout'),inputs); validate_lifetimes(actual)
-    require(actual == frames(producer.observed_trace,inputs),'every actual Windows-source checkpoint and raw word replayed')
+    actual = frames(raw('rust-observed-run.stdout'),inputs,dynamics=dynamics); validate_lifetimes(actual)
+    require(actual == frames(producer.observed_trace,inputs,dynamics=dynamics),'every actual Windows-source checkpoint and raw word replayed')
     controls = fields(data('semantic-controls.json'),MUTANTS,'complete replay semantic controls')
     for name,(_,_,_,field) in MUTANTS.items():
-        clean,changed = frames(raw('baseline-run-'+name+'.stdout'),inputs),frames(raw('mutant-run-'+name+'.stdout'),inputs)
+        clean,changed = frames(raw('baseline-run-'+name+'.stdout'),inputs,dynamics=dynamics),frames(raw('mutant-run-'+name+'.stdout'),inputs,dynamics=dynamics)
         validate_lifetimes(clean); validate_lifetimes(changed)
         require(clean == actual,'complete same-host clean replay control')
         differences = [i for i,(a,b) in enumerate(zip(clean,changed)) if a != b]
@@ -1409,5 +1495,5 @@ def _admit_replay(directory, producer, *, authority, expected_head, canonical_so
     return {'head':expected_head,'producer_report_sha256':producer.report_sha256,'checkpoints':len(actual),'compiled_controls':len(controls)}
 
 
-def admit_replay(directory, producer, *, authority, expected_head, canonical_sources):
-    return _admit_replay(directory,producer,authority=authority,expected_head=expected_head,canonical_sources=canonical_sources)
+def admit_replay(directory, producer, *, authority, expected_head, canonical_sources, dynamics=False):
+    return _admit_replay(directory,producer,authority=authority,expected_head=expected_head,canonical_sources=canonical_sources,dynamics=dynamics)

@@ -4345,10 +4345,20 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
  }
 
  /// Information about a single macro invocation.
-@@ -238,6 +257,10 @@
+@@ -238,6 +257,20 @@
  }
 
  impl TypedAstContext {
++    pub(crate) fn retention_diagnostic_counts(&self) -> c2rust_ast_exporter::retention_diagnostics::Counts {
++        c2rust_ast_exporter::retention_diagnostics::Counts {
++            cursor_json_bytes: self.cursor_inputs.as_ref().map(String::len),
++            decls: Some(self.c_decls.len()),
++            exprs: Some(self.c_exprs.len()),
++            types: Some(self.c_types.len()),
++            ..Default::default()
++        }
++    }
++
 +    pub(crate) fn original_source_paths(&self) -> impl Iterator<Item = &Path> {
 +        self.files.iter().filter_map(|file| file.path.as_deref())
 +    }
@@ -4356,7 +4366,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
      // TODO: build the TypedAstContext during initialization, rather than
      // building an empty one and filling it later.
      pub fn new(input_path: &Path, clang_files: &[SrcFile]) -> TypedAstContext {
-@@ -1020,6 +1043,7 @@
+@@ -1020,6 +1053,7 @@
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -4364,7 +4374,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1051,7 @@
+@@ -1027,6 +1061,7 @@
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -4372,7 +4382,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1065,7 @@
+@@ -1040,6 +1075,7 @@
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -4380,7 +4390,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1121,8 @@
+@@ -1095,8 +1131,8 @@
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -4391,7 +4401,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1205,7 @@
+@@ -1179,7 +1215,7 @@
          };
 
          match self.index(pointed_id).kind {
@@ -4400,7 +4410,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              _ => false,
          }
      }
-@@ -2830,9 +2856,25 @@
+@@ -2830,9 +2866,25 @@
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -4429,7 +4439,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2936,7 @@
+@@ -2894,7 +2946,7 @@
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -4713,7 +4723,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
          conv.into_typed_context()
      };
 
-+    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::TypedImport, c2rust_ast_exporter::retention_diagnostics::Edge::End, c2rust_ast_exporter::retention_diagnostics::Counts { cursor_json_bytes: typed_context.cursor_inputs.as_ref().map(String::len), decls: Some(typed_context.c_decls.len()), exprs: Some(typed_context.c_exprs.len()), types: Some(typed_context.c_types.len()), ..Default::default() });
++    c2rust_ast_exporter::retention_diagnostics::mark(c2rust_ast_exporter::retention_diagnostics::Stage::TypedImport, c2rust_ast_exporter::retention_diagnostics::Edge::End, typed_context.retention_diagnostic_counts());
 +    if tcfg.diagnostic_common_plan { println!("COMMON_PLAN_TYPED_IMPORT {}", input_path.display()); }
 +    Ok((typed_context, preprocessed_source, instance))
 +}

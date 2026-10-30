@@ -602,7 +602,7 @@ class Controls(unittest.TestCase):
         manifest['operation_corpus']={'sha256':r.digest(r.operation_corpus()),'size':152,'words':r.corpus_words(r.operation_corpus())}
         result={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'head':'1'*40,'results':{opt:r.classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
         def encode(value):return json.dumps(value).encode()
-        def inventory(_):return {str(path.relative_to(out)):{'sha256':r.digest(raw),'size':len(raw)} for path,raw in files.items() if path!=out/'seal.json'}
+        def inventory(_):return {path.relative_to(out).as_posix():{'sha256':r.digest(raw),'size':len(raw)} for path,raw in files.items() if path!=out/'seal.json'}
         def seal():
             files[out/'manifest.json']=encode(manifest);files[out/'result.json']=encode(result)
             files[out/'seal.json']=encode({'schema':r.SCHEMA,'files':inventory(out)})
@@ -2653,7 +2653,7 @@ class BoundedDocumentControls(unittest.TestCase):
             r.write_bound_document(path,value)
         self.assertEqual(len(calls),1)
         self.assertEqual(files[path],serializer(value))
-        members={str(name.relative_to(path.parent)):raw for name,raw in files.items()}
+        members={name.relative_to(path.parent).as_posix():raw for name,raw in files.items()}
         inventory={name:{'size':len(raw),'sha256':r.digest(raw)} for name,raw in members.items()}
         self.assertEqual(r.admit_bound_document('closure-census.json.binding.json',inventory,members.__getitem__),value)
 

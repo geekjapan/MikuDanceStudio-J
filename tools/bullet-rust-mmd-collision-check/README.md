@@ -13,6 +13,14 @@ explicit body/joint physical deletion events. Every generated edit has an exact
 byte inverse. Ordinary C++ heap allocations and inner toolchain subprocesses are
 not attested. Rust ray/query and accelerator allocation parity are not claimed.
 
+Aligned-allocation events record requested payload bytes. A zero-byte request
+still owns its positive, unique, aligned pointer and requires a corresponding
+free before world and final closure. Bullet's default collision configuration
+constructs `btStackAlloc(0)`; `btStackAlloc::create` unconditionally requests
+`btAlignedAlloc(size,16)`. The default allocator reserves pointer metadata and
+alignment padding even for zero payload bytes. Allocation event sequences remain
+consecutive across worlds, including zero-byte requests and their frees.
+
 The Rust runner uses generated access to the owner's existing storage. `W` seeds
 nonzero warmstart values independently into already-created legal contacts on
 each side. Native contacts are never transferred to Rust.

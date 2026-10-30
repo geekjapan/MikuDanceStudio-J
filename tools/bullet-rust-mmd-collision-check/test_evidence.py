@@ -275,6 +275,32 @@ class NativeEvidenceFramingTests(unittest.TestCase):
 
 
 class NativeLifetimeFramingTests(unittest.TestCase):
+    def test_zero_payload_allocations_keep_ownership_and_alignment_guards(self):
+        from evidence import validate_native_lifetimes
+        inputs = 'H inert genuine\nX\nH inert genuine\nX\n'
+        allocation = b'ALLOC 0 1 1 4096 0 16\n'
+        release = b'ALLOC 1 2 0 4096 0 0\n'
+        raw = allocation + release
+        self.assertEqual(validate_native_lifetimes(raw, inputs, observed=True),
+                         {'allocation_events': 2, 'physical_closure': True})
+        reused = raw + b'ALLOC 2 3 1 4096 0 16\nALLOC 3 4 0 4096 0 0\n'
+        self.assertEqual(validate_native_lifetimes(reused, inputs, observed=True)['allocation_events'], 4)
+        for reason, changed in [
+                ('missing free', allocation),
+                ('duplicate live pointer', allocation + b'ALLOC 0 2 1 4096 0 16\n' + release),
+                ('unknown free', raw.replace(b'0 4096 0 0', b'0 8192 0 0')),
+                ('double free', raw + b'ALLOC 1 3 0 4096 0 0\n'),
+                ('null pointer', raw.replace(b'4096', b'0')),
+                ('zero alignment', raw.replace(b'0 16\n', b'0 0\n')),
+                ('non-power-of-two alignment', raw.replace(b'0 16\n', b'0 3\n')),
+                ('misaligned pointer', raw.replace(b'4096', b'4097')),
+                ('negative payload', raw.replace(b'0 16\n', b'-1 16\n')),
+                ('nonconsecutive sequence', raw.replace(b'ALLOC 1 2', b'ALLOC 1 3')),
+                ('unclosed world', allocation + b'ALLOC 2 2 0 4096 0 0\n'),
+                ('sequence reset', raw + b'ALLOC 2 1 1 4096 0 16\nALLOC 3 2 0 4096 0 0\n')]:
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                validate_native_lifetimes(changed, inputs, observed=True)
+
     def test_inert_allocation_and_reverse_physical_lifetime_framing(self):
         from evidence import validate_native_lifetimes
         inputs = 'H inert genuine\nC\nJ 0 1 -2147483648 1\nX\n'

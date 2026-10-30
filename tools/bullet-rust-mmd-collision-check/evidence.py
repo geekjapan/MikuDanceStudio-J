@@ -463,7 +463,7 @@ def validate_native_lifetimes(raw, inputs, *, observed):
             require(sequence == last_sequence + 1 and alloc in {0, 1}, 'exact allocation chronology')
             last_sequence = sequence
             if alloc:
-                require(pointer > 0 and pointer not in live_allocations and size > 0 and alignment > 0
+                require(pointer > 0 and pointer not in live_allocations and size >= 0 and alignment > 0
                         and alignment & (alignment - 1) == 0 and pointer % alignment == 0, 'live aligned native allocation')
                 live_allocations[pointer] = (sequence, size, alignment)
             else:

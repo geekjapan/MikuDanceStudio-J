@@ -86,7 +86,6 @@ def unproved_reason(value):
 def unknown_signature(value):
     if unproved_reason(value):
         return True
-    # shortcut: only canonical unproved types are mapped here; other producer shapes fail closed.
     return (type(value) is dict and set(value) == {'canonical', 'const', 'volatile', 'restrict'}
             and all(type(value[key]) is bool for key in ('const', 'volatile', 'restrict'))
             and unproved_reason(value['canonical']))

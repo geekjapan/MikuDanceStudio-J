@@ -52,6 +52,9 @@ def observed_bijection(native, rust):
             expected = (_mapped(maps['mid'], av[0], True), av[1], _mapped(maps['gid'], av[2]))
         elif tag == 'FV':
             expected = (_mapped(maps['mid'], av[0]), av[1], av[2], _mapped(maps['gid'], av[3]))
+        elif tag == 'FR':
+            expected = (_mapped(maps['mid'], av[0]), av[1],
+                        _mapped(maps['gid'], av[2], site != 'REFRESH_POINT'), *av[3:])
         else:
             require(tag in ('FB', 'FT', 'FW', 'FE'), 'complete known event correspondence')
             if tag == 'FB':

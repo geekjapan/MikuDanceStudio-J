@@ -11,7 +11,7 @@ GUARDS = frozenset('STARTUP COMMAND_BEGIN COMMAND_END CTOR_EXIT ADD_ENTER ADD_EX
                    'REPLACE_ENTER REPLACE_EXIT REMOVE_ENTER REMOVE_EXIT CLEAR_ENTER CLEAR_EXIT '
                    'RELEASE_ENTER RELEASE_EXIT USERCACHE_ENTER USERCACHE_EXIT ADDED_PRECALL '
                    'PROCESSED_PRECALL DESTROYED_PRECALL SOLVER_BEGIN SOLVER_END '
-                   'FIXTURE_BEGIN FIXTURE_END SNAPSHOT'.split())
+                   'FIXTURE_BEGIN FIXTURE_END RESULT_ENTER RESULT_EXIT REFRESH_ENTER REFRESH_EXIT SNAPSHOT'.split())
 SITES = {
     'FG': GUARDS,
     'FM': frozenset(('ALLOC', 'CLEAR_BEGIN', 'CLEAR_END', 'RELEASE')),
@@ -20,6 +20,7 @@ SITES = {
     'FI': frozenset(('ADD', 'REPLACE', 'EVICT_ADD')),
     'FX': frozenset(('TEMP_END', 'REMOVE', 'CLEAR_POINT', 'RELEASE_POINT')),
     'FV': frozenset(('REMOVE_MOVE',)),
+    'FR': frozenset(('REFRESH_BEGIN', 'REFRESH_POINT', 'REFRESH_END')),
     'FB': frozenset(('SOLVER_BEGIN',)),
     'FT': frozenset(('SOLVER_CHOICE',)),
     'FW': frozenset(('DIR1_RAW', 'VELOCITY_DIR1', 'VELOCITY_DIR2', 'PLANE_BOTH',
@@ -33,7 +34,7 @@ SITES = {
 # Fields after cp, seq and site. z permits zero; i is a nonzero identity.
 FIELDS = {
     'FG': 'bbbb', 'FM': 'iuu', 'FC': 'i', 'FPY': 'iim',
-    'FI': 'isziim', 'FX': 'zsi', 'FV': 'issi', 'FB': 'isiiub',
+    'FI': 'isziim', 'FX': 'zsi', 'FV': 'issi', 'FR': 'iszbb', 'FB': 'isiiub',
     'FT': 'isiibbb', 'FW': 'isizm', 'FE': 'isiimmb',
     'FS': 'uic', 'FL': 'us iimb'.replace(' ', ''),
     'FD': 'usdtc', 'FP': 'usdwww',
@@ -96,6 +97,14 @@ def diagnostic(row):
     extra = 3 if tag == 'FD' and len(row) >= 9 and row[7] == 'D' else 0
     require(len(row) == 4 + len(kinds) + extra, 'exact diagnostic width ' + tag)
     values = tuple(field(value, kind) for value, kind in zip(row[4:4 + len(kinds)], kinds))
+    if tag == 'FR':
+        require(not (values[3] and values[4]), 'one actual refresh removal branch')
+        if row[3] == 'REFRESH_POINT':
+            require(values[2] > 0, 'positive refresh point generation')
+        else:
+            require(values[1:] == (0, 0, False, False)
+                    and all(type(value) is int for value in values[1:3]),
+                    'exact refresh BEGIN/END sentinels')
     if tag == 'FD':
         require(values[-1] == (3 if values[-2] == 'D' else 0), 'exact direction value count')
         values += tuple(field(value, 'w') for value in row[4 + len(kinds):])

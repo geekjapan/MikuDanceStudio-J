@@ -43,6 +43,7 @@ class GrammarTests(unittest.TestCase):
             'FC 0 1 CTOR_GEOMETRIC 1', 'FPY 0 1 POINT_COPY 1 2 3',
             'FI 0 1 ADD 1 0 0 1 2 0', 'FX 0 1 TEMP_END 0 0 1',
             'FV 0 1 REMOVE_MOVE 1 3 1 2', 'FB 0 1 SOLVER_BEGIN 1 0 2 1 260 false',
+            'FR 0 1 REFRESH_BEGIN 1 0 0 false false',
             'FT 0 1 SOLVER_CHOICE 1 0 2 1 true false false',
             'FW 0 1 PLANE_BOTH 1 0 2 1 3', 'FE 0 1 PLANE_ONE 1 0 2 1 3 3 true',
             'FS 0 1 SNAPSHOT 0 1 1', 'FL 0 1 SNAPSHOT 0 0 1 2 3 false',
@@ -51,6 +52,19 @@ class GrammarTests(unittest.TestCase):
         for example in examples:
             with self.subTest(example=example):
                 self.assertEqual(diagnostic(example.split())[2], 1)
+
+    def test_refresh_exact_width_typed_sentinels_and_branches(self):
+        valid = 'FR 0 1 REFRESH_POINT 1 0 2 true false'.split()
+        self.assertEqual(diagnostic(valid)[-1], (1, 0, 2, True, False))
+        for row in (valid[:-1], valid + ['false'],
+                    'FR 0 1 REFRESH_POINT 1 0 0 false false'.split(),
+                    'FR 0 1 REFRESH_POINT 1 0 2 true true'.split(),
+                    'FR 0 1 REFRESH_POINT 1 0 2 1 false'.split(),
+                    'FR 0 1 REFRESH_BEGIN 1 1 0 false false'.split(),
+                    'FR 0 1 REFRESH_END 1 0 2 false false'.split(),
+                    'FR 0 1 REFRESH_END 1 0 0 false true'.split()):
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                diagnostic(row)
 
 
 class LedgerTests(unittest.TestCase):
@@ -202,6 +216,190 @@ class LedgerTests(unittest.TestCase):
             values[index] = False
             with self.subTest(index=index), self.assertRaisesRegex(ValueError, 'null Added/Processed/Destroyed/usercache'):
                 native.guard(0, 'STARTUP', tuple(values))
+
+
+class RefreshTests(unittest.TestCase):
+    def prepare(self, native=True, count=0):
+        self.ledger = Ledger(native)
+        if native:
+            self.guard('STARTUP')
+            self.guard('COMMAND_BEGIN')
+        self.emit('FM', 'ALLOC', 1, 0, 1)
+        for slot in range(count):
+            if native:
+                self.guard('RESULT_ENTER')
+                self.guard('CTOR_EXIT')
+            self.emit('FC', 'CTOR_GEOMETRIC' if native else 'RUST_CONTACT_CREATE', 2 * slot + 1)
+            if native:
+                self.guard('ADD_ENTER')
+            self.emit('FI', 'ADD', 1, slot, 0, 2 * slot + 1, 2 * slot + 2, 0)
+            if native:
+                self.guard('ADD_EXIT')
+                self.guard('ADDED_PRECALL')
+                self.guard('RESULT_EXIT')
+
+    def guard(self, site):
+        self.ledger.guard(0, site, (True,) * 4)
+
+    def emit(self, tag, site, *values):
+        self.ledger.event(0, tag, site, values)
+
+    def begin(self):
+        if self.ledger.native:
+            self.guard('REFRESH_ENTER')
+        self.emit('FR', 'REFRESH_BEGIN', 1, 0, 0, False, False)
+
+    def end(self):
+        self.emit('FR', 'REFRESH_END', 1, 0, 0, False, False)
+        if self.ledger.native:
+            self.guard('REFRESH_EXIT')
+
+    def visit(self, slot, gid, distance=False, lateral=False):
+        self.emit('FR', 'REFRESH_POINT', 1, slot, gid, distance, lateral)
+        if distance or lateral:
+            if self.ledger.native:
+                for site in ('REMOVE_ENTER', 'USERCACHE_ENTER', 'USERCACHE_EXIT'):
+                    self.guard(site)
+            self.emit('FX', 'REMOVE', 1, slot, gid)
+            if self.ledger.pending_move:
+                self.emit('FV', 'REMOVE_MOVE', *self.ledger.pending_move)
+            if self.ledger.native:
+                self.guard('REMOVE_EXIT')
+        elif self.ledger.native:
+            self.guard('PROCESSED_PRECALL')
+
+    def test_actual_zero_contact_call_and_result_depth_return(self):
+        self.prepare()
+        self.guard('RESULT_ENTER')
+        self.guard('RESULT_EXIT')
+        self.begin()
+        self.end()
+        self.assertIsNone(self.ledger.refresh)
+        self.assertEqual(self.ledger.scopes, [])
+
+    def test_mixed_reverse_visits_move_only_already_visited_last(self):
+        for native in (True, False):
+            with self.subTest(native=native):
+                self.prepare(native, 4)
+                self.begin()
+                self.visit(3, 8)
+                self.visit(2, 6, distance=True)
+                self.visit(1, 4)
+                self.visit(0, 2, lateral=True)
+                self.end()
+                self.assertEqual(self.ledger.manifolds[1][1], [8, 4])
+                self.assertEqual(self.ledger.points, {4: 0, 8: 0})
+
+    def test_remove_last_and_all_kept(self):
+        for native in (True, False):
+            self.prepare(native, 2)
+            self.begin()
+            self.visit(1, 4, distance=True)
+            self.visit(0, 2)
+            self.end()
+            self.begin()
+            self.visit(0, 2)
+            self.end()
+            self.assertEqual(self.ledger.manifolds[1][1], [2])
+
+    def test_orphan_duplicate_and_missing_processed(self):
+        self.prepare()
+        with self.assertRaisesRegex(ValueError, 'Processed precall binds'):
+            self.guard('PROCESSED_PRECALL')
+        self.prepare(count=1)
+        self.begin()
+        self.emit('FR', 'REFRESH_POINT', 1, 0, 2, False, False)
+        for tag, site, values in (('FR', 'REFRESH_END', (1, 0, 0, False, False)),
+                                  ('FX', 'REMOVE', (1, 0, 2)),
+                                  ('FC', 'CTOR_GEOMETRIC', (3,))):
+            with self.subTest(site=site), self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+                self.emit(tag, site, *values)
+        self.guard('PROCESSED_PRECALL')
+        with self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+            self.guard('PROCESSED_PRECALL')
+        self.end()
+
+    def test_missing_duplicate_reordered_refresh_and_wrong_binding(self):
+        for native in (True, False):
+            self.prepare(native, 2)
+            self.begin()
+            for values in ((1, 0, 2, False, False), (2, 1, 4, False, False),
+                           (1, 1, 2, False, False), (1, 1, 4, True, True),
+                           (1, 1, 4, 1, False)):
+                with self.subTest(native=native, values=values), self.assertRaises(ValueError):
+                    self.emit('FR', 'REFRESH_POINT', *values)
+            for site in ('REFRESH_BEGIN', 'REFRESH_END'):
+                with self.subTest(site=site), self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+                    self.emit('FR', site, 1, 0, 0, False, False)
+            self.visit(1, 4)
+            with self.assertRaisesRegex(ValueError, 'descending initial-count'):
+                self.emit('FR', 'REFRESH_POINT', 1, 1, 4, False, False)
+            self.visit(0, 2)
+            self.end()
+            with self.assertRaisesRegex(ValueError, 'same active refresh'):
+                self.emit('FR', 'REFRESH_END', 1, 0, 0, False, False)
+
+    def test_removal_schedule_wrong_tuple_and_branch(self):
+        self.prepare(count=2)
+        self.begin()
+        self.emit('FR', 'REFRESH_POINT', 1, 1, 4, True, False)
+        for site in ('PROCESSED_PRECALL', 'USERCACHE_ENTER', 'REMOVE_EXIT'):
+            with self.subTest(site=site), self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+                self.guard(site)
+        for site in ('REMOVE_ENTER', 'USERCACHE_ENTER', 'USERCACHE_EXIT'):
+            self.guard(site)
+        with self.assertRaisesRegex(ValueError, 'exact pending point'):
+            self.emit('FX', 'REMOVE', 1, 0, 2)
+        self.emit('FX', 'REMOVE', 1, 1, 4)
+        with self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+            self.emit('FR', 'REFRESH_POINT', 1, 0, 2, False, False)
+        self.guard('REMOVE_EXIT')
+        self.visit(0, 2)
+        self.end()
+
+    def test_native_entry_exit_and_zero_sentinels_are_mandatory(self):
+        self.prepare()
+        with self.assertRaisesRegex(ValueError, 'native refresh entry'):
+            self.emit('FR', 'REFRESH_BEGIN', 1, 0, 0, False, False)
+        self.guard('REFRESH_ENTER')
+        with self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+            self.guard('REFRESH_EXIT')
+        self.emit('FR', 'REFRESH_BEGIN', 1, 0, 0, False, False)
+        with self.assertRaisesRegex(ValueError, 'BEGIN/END sentinels'):
+            self.emit('FR', 'REFRESH_END', 1, 0, 1, False, False)
+        self.emit('FR', 'REFRESH_END', 1, 0, 0, False, False)
+        with self.assertRaisesRegex(ValueError, 'exact refresh source order'):
+            self.emit('FM', 'RELEASE', 1, 0, 1)
+        self.guard('REFRESH_EXIT')
+
+    def test_result_insertion_exit_callback_and_pending_order(self):
+        self.prepare()
+        self.guard('RESULT_ENTER')
+        self.guard('CTOR_EXIT')
+        self.emit('FC', 'CTOR_GEOMETRIC', 1)
+        self.guard('ADD_ENTER')
+        self.emit('FI', 'ADD', 1, 0, 0, 1, 2, 0)
+        for site in ('ADDED_PRECALL', 'RESULT_EXIT'):
+            with self.subTest(site=site), self.assertRaisesRegex(ValueError, 'exact insertion exit'):
+                self.guard(site)
+        self.guard('ADD_EXIT')
+        with self.assertRaisesRegex(ValueError, 'exact insertion exit'):
+            self.guard('RESULT_EXIT')
+        with self.assertRaisesRegex(ValueError, 'mandatory post-insertion'):
+            self.emit('FC', 'CTOR_GEOMETRIC', 3)
+        self.guard('ADDED_PRECALL')
+        with self.assertRaisesRegex(ValueError, 'Added precall binds'):
+            self.guard('ADDED_PRECALL')
+        self.guard('RESULT_EXIT')
+        self.assertEqual(self.ledger.manifolds[1][1], [2])
+
+    def test_insertion_without_result_call_is_rejected(self):
+        self.prepare()
+        self.guard('CTOR_EXIT')
+        self.emit('FC', 'CTOR_GEOMETRIC', 1)
+        self.guard('ADD_ENTER')
+        with self.assertRaisesRegex(ValueError, 'actual Result call'):
+            self.emit('FI', 'ADD', 1, 0, 0, 1, 2, 0)
 
 
 if __name__ == '__main__':

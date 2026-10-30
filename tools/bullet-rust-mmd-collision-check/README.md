@@ -24,13 +24,18 @@ This is an incomplete verification scaffold. `admit_capture` rejects every
 capture. A successful diagnostic comparison remains `DIAGNOSTIC_EQUAL_UNADMITTED`
 and exits unsuccessfully at the admission boundary. The workflow cannot report
 an accepted MMD migration from this checkpoint. No actual native or Rust binary
-has been run locally. No compiled mutant is accepted.
+has been run locally. No compiled mutant is accepted. Control definitions live in `MUTANTS`; their count is derived at runtime and
+is separate from the executed success count.
 
 The missing hosted acceptance work is explicit in `check.py`'s `PENDING` list.
-It includes closed capture schema, include occurrence binding, extracted archive
-membership, allocator chronology admission, full normally exiting directed
-compiled controls, legal actual-capture admission before malformed peers, and
-same-HEAD Windows producer admission with four destination replays. The current
+The hosted driver now records include occurrences before and after measured
+compilation and resolves them again at the end. It binds every archive payload
+to its compiled object and source, retains native link maps, and records native
+allocation and physical deletion chronology. The compiled-control loop checks
+a clean baseline, normal exit, full trace, and a directed field difference.
+These paths remain unrun. Strict closed capture admission, legal actual-capture
+admission before malformed peers, and Windows producer/replay admission remain
+unimplemented. The replay body is wired behind that admission boundary. The current
 common-output comparison excludes observer-only events, SAP arrays, spring
 accessors, and generation identities. It is a diagnostic noninterference check.
 It does not replace the missing provenance and actual-capture gates.
@@ -39,8 +44,10 @@ The initial workflow trigger is restricted to `w6-mmd-collision-owner` and uses
 read-only contents permission. Its native and destination matrices target
 Windows x64, Apple Silicon, Linux x64, and Linux ARM64. Until admission is
 implemented, the native jobs fail and dependent replay jobs cannot accept data.
-The existing General, discrete world, dynamics world, and GJK behavior gates
-still require same-HEAD hosted execution before publication or acceptance.
+A separate four-host regression matrix retains the discrete world, dynamics
+world, and GJK behavior gates. The unchanged General workflow still runs
+`tools/rust/check.sh` on branch push. All require same-HEAD hosted execution
+before publication or acceptance.
 
 ## Hosted commands
 

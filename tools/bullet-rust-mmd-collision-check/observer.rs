@@ -7,6 +7,7 @@ struct Ledger {
     next_manifold: usize,
     algorithms: BTreeMap<u32, usize>,
     manifolds: BTreeMap<u32, usize>,
+    deferred: Vec<u32>,
 }
 thread_local! { static LEDGER: RefCell<Ledger> = RefCell::new(Ledger::default()); }
 pub fn row(row: usize) { LEDGER.with(|s| s.borrow_mut().row = row); }
@@ -39,7 +40,9 @@ pub fn manifold_free(key: u32) {
 pub fn unregister(owner: usize) { LEDGER.with(|s| println!("E {} U {}", s.borrow().row, owner)); }
 pub fn algorithm(key: u32) -> usize { LEDGER.with(|s| s.borrow().algorithms[&key]) }
 pub fn manifold(key: u32) -> usize { LEDGER.with(|s| s.borrow().manifolds[&key]) }
-pub fn empty() { LEDGER.with(|s| { let s = s.borrow(); assert!(s.algorithms.is_empty()); assert!(s.manifolds.is_empty()); }); }
+pub fn empty() { LEDGER.with(|s| { let s = s.borrow(); assert!(s.algorithms.is_empty()); assert!(s.manifolds.is_empty()); assert!(s.deferred.is_empty()); }); }
 pub fn update(owner: usize, start: bool) {
     LEDGER.with(|s| println!("E {} {} {}", s.borrow().row, if start { "U+" } else { "U-" }, owner));
 }
+pub fn defer(key: u32) { LEDGER.with(|s| s.borrow_mut().deferred.push(key)); }
+pub fn drain() -> Vec<u32> { LEDGER.with(|s| std::mem::take(&mut s.borrow_mut().deferred)) }

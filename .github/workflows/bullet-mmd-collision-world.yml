@@ -107,3 +107,61 @@ jobs:
           path: ${{ runner.temp }}/mmd-collision-world-replay
           if-no-files-found: error
           include-hidden-files: true
+
+  regression:
+    name: Existing collision gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            policy: generic-reference
+          - os: ubuntu-24.04-arm
+            policy: generic-reference
+          - os: macos-15
+            policy: generic-reference
+          - os: windows-2022
+            policy: mmd-win64-sse
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Recheck discrete, dynamics and source-admitted GJK behavior
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+          POLICY: ${{ matrix.policy }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-discrete-world-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/discrete" --policy "$POLICY"
+          python3 -B tools/bullet-rust-dynamics-world-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/dynamics" --policy "$POLICY"
+          python3 -B tools/bullet-rust-gjk-pair-check/check.py --out-dir "$RUNNER_TEMP/mmd-regression/gjk"
+      - name: Recheck actual Windows SSE collision gates
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python -B tools\bullet-rust-discrete-world-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\discrete" --policy mmd-win64-sse
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-dynamics-world-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\dynamics" --policy mmd-win64-sse
+          if errorlevel 1 exit /b 1
+          python -B tools\bullet-rust-gjk-pair-check\check.py --out-dir "%RUNNER_TEMP%\mmd-regression\gjk"
+          exit /b %ERRORLEVEL%
+      - name: Save all affected gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-regression-${{ matrix.os }}
+          path: ${{ runner.temp }}/mmd-regression
+          if-no-files-found: error
+          include-hidden-files: true

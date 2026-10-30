@@ -30,7 +30,7 @@ extern "C" void dw_manifold_alloc(void* p,const void* a,const void* b) {manifold
 extern "C" void dw_manifold_free(void* p) {std::cout<<"E "<<row<<" M- "<<manifolds.at(p)<<'\n';manifolds.erase(p);}
 extern "C" void dw_unregister(const void* p) {std::cout<<"E "<<row<<" U "<<owner(p)<<'\n';}
 extern "C" void dw_update(const void* p,int start) {std::cout<<"E "<<row<<(start?" U+ ":" U- ")<<owner(p)<<'\n';}
-extern "C" void dw_physical(const char* kind,const void* p) {std::fprintf(stderr,"PHYSICAL %zu %s %llu\n",row,kind,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(p)));}
+extern "C" void dw_physical(const char* kind,const void* p) {std::fprintf(stderr,"PHYSICAL %zu %s %llu %d\n",row,kind,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(p)),std::strcmp(kind,"body")==0?owner(p):-1);}
 static unsigned bits(float f) {unsigned u;std::memcpy(&u,&f,4);return u;}
 static void scalar(float f) {char text[10];std::snprintf(text,sizeof(text),"%08x",bits(f));std::cout<<' '<<text;}
 static void vector(const btVector3& v) {for(int i=0;i<3;++i)scalar(v[i]);}
@@ -97,12 +97,13 @@ int main() {
     mds_mmd_world* w=nullptr;std::string line;
     while(std::getline(std::cin,line)) {
         std::istringstream in(line);std::string op;in>>op;
-        if(op=="H") {if(w)return 3;std::string name,scope;in>>name>>scope;w=mds_mmd_world_create();if(!w)return 3;w->bodies[0]->rb->setUserPointer(reinterpret_cast<void*>(intptr_t(1)));}
+        if(op=="H") {if(w)return 3;std::string name,scope;in>>name>>scope;w=mds_mmd_world_create();if(!w)return 3;w->bodies[0]->rb->setUserPointer(reinterpret_cast<void*>(intptr_t(1)));std::fprintf(stderr,"BODY_REGISTER %zu 0 %llu\n",row,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(w->bodies[0]->rb)));}
         else if(!w)return 3;
         else if(op=="C") {
             int kind,mode,group,mask;in>>kind;float mass=number(in);in>>mode>>group>>mask;float params[4],p[3],q[4];for(auto& f:params)f=number(in);pose(in,p,q);mds_mmd_body* b=nullptr;
             if(mds_mmd_body_create(w,kind,params[0],params[1],params[2],p,q,mode,mass,0,0,.25f,.5f,short(group),short(mask),&b))return 4;
             b->rb->setUserPointer(reinterpret_cast<void*>(intptr_t(w->bodies.size())));
+            std::fprintf(stderr,"BODY_REGISTER %zu %zu %llu\n",row,w->bodies.size()-1,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(b->rb)));
         } else if(op=="D")w->w.performDiscreteCollisionDetection();
         else if(op=="U")w->w.updateAabbs();
         else if(op=="F") {int on;in>>on;if(mds_mmd_world_set_floor(w,on))return 4;}
@@ -114,7 +115,7 @@ int main() {
         else if(op=="V") {size_t i;in>>i;float a[3],b[3];for(auto& f:a)f=number(in);for(auto& f:b)f=number(in);w->bodies.at(i)->rb->setInterpolationLinearVelocity(vec3(a));w->bodies.at(i)->rb->setInterpolationAngularVelocity(vec3(b));}
         else if(op=="W") {
             for(int i=0;i<w->disp.getNumManifolds();++i) {auto* m=w->disp.getManifoldByIndexInternal(i);for(int j=0;j<m->getNumContacts();++j) {auto& p=m->getContactPoint(j);p.m_appliedImpulse=1.25f;p.m_appliedImpulseLateral1=.5f;p.m_appliedImpulseLateral2=-.25f;p.m_lateralFrictionInitialized=true;p.m_lateralFrictionDir1=btVector3(1,0,0);p.m_lateralFrictionDir2=btVector3(0,0,1);}}
-        } else if(op=="J") {size_t a,b;int uid,spring;in>>a>>b>>uid>>spring;float zero[3]={},q[4]={0,0,0,1},springs[6];for(auto& f:springs)f=spring?2.0f:0.0f;if(mds_mmd_joint_create(w,w->bodies.at(a),w->bodies.at(b),zero,q,zero,q,zero,zero,zero,zero,springs,uid))return 4;}
+        } else if(op=="J") {size_t a,b;int uid,spring;in>>a>>b>>uid>>spring;float zero[3]={},q[4]={0,0,0,1},springs[6];for(auto& f:springs)f=spring?2.0f:0.0f;if(mds_mmd_joint_create(w,w->bodies.at(a),w->bodies.at(b),zero,q,zero,q,zero,zero,zero,zero,springs,uid))return 4;std::fprintf(stderr,"JOINT_CREATE %zu %zu %llu %d\n",row,w->joints.size()-1,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(w->joints.back())),uid);}
         else if(op=="X") {mds_mmd_world_destroy(w);w=nullptr;
 #ifdef DW_OBSERVED
             if(!algorithms.empty() || !manifolds.empty())return 5;

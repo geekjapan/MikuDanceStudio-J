@@ -1,5 +1,6 @@
 """Small inert helper tests. Hosted suites do not substitute for actual capture."""
 import unittest
+import struct
 
 from cases import corpus, word
 from hooks import MUTANTS, OWNER, inverse, mutate, replace
@@ -49,6 +50,36 @@ class CorpusTests(unittest.TestCase):
     def test_words_preserve_negative_zero(self):
         self.assertEqual(word(-0.0), '80000000')
         self.assertNotEqual(word(-0.0), word(0.0))
+
+    def test_stop_at_has_its_own_nonzero_interpolation_marker(self):
+        inputs, cases = corpus()
+        lines = inputs.splitlines()
+        for case in cases:
+            if case['family'] != 'motion':
+                continue
+            operations = lines[case['start']:case['end']]
+            stop = next(i for i, command in enumerate(operations) if command.startswith('O '))
+            self.assertTrue(operations[stop - 1].startswith('V 1 '))
+            self.assertNotIn('00000000', operations[stop - 1].split()[2:])
+
+    def test_translated_huge_boundary_uses_float32_operations(self):
+        f32 = lambda value: struct.unpack('<f', struct.pack('<f', value))[0]
+        inputs, cases = corpus()
+        lines = inputs.splitlines()
+        for case in cases:
+            if case['family'] != 'huge-aabb':
+                continue
+            words = lines[case['start'] + 1].split()
+            extent = struct.unpack('<f', bytes.fromhex(words[6])[::-1])[0]
+            half = f32(f32(extent - f32(.04)) + f32(.04))
+            lo = f32(f32(extent - half) - f32(.02))
+            hi = f32(f32(extent + half) + f32(.02))
+            width = f32(hi - lo)
+            side = f32(f32(1.0 + f32(.02)) - f32(-1.0 - f32(.02)))
+            diagonal = f32(f32(f32(width * width) + f32(side * side)) + f32(side * side))
+            expected = case['name'].split('-')[1]
+            self.assertEqual('below' if diagonal < f32(1e12) else 'above' if diagonal > f32(1e12) else 'equal', expected)
+            self.assertGreaterEqual(lo, -10000.0)
 
     def test_exact_hook_inverse_for_both_transports(self):
         for ending in (b'\n', b'\r\n'):

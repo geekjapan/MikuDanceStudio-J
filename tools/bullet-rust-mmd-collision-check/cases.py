@@ -75,6 +75,7 @@ def corpus():
         lines.append('D')
         pose('R', 1, 50)
         lines.append('D')
+        lines.append('V 1 ' + floats([-1, -2, -3, -4, -5, -6]))
         lines.append('O 1 ' + floats([0, 3, 0]))
         lines.append('D')
         end()
@@ -85,7 +86,7 @@ def corpus():
             body(1, x=.25)
             lines.extend([f'J 1 2 {uid} {spring}', 'D', 'D'])
             end()
-    for boundary, extent in [('below', 499999.9375), ('equal', 499999.96875), ('above', 500000.0)]:
+    for boundary, extent in [('below', 499999.96875), ('equal', 500000.0), ('above', 500000.03125)]:
         for flags in (0, 1, 2, 3):
             start(f'huge-{boundary}-{flags}', 'huge-aabb', True)
             body(1, x=extent, mode=0 if flags & 1 else 1, params=[extent, 1, 1, 0])

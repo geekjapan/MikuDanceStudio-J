@@ -34,7 +34,7 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
-MMD_COLLISION_WORLD_SHA256 = '2aa60b4f19d1b7cca97b16eb944086f17690a11c37ce9e1c0df140f4c1059443'
+MMD_COLLISION_WORLD_SHA256 = '59875b274c0099e5c49d51f76cef60a7af70646b9abdbe2bc3b7fadeb31c93e3'
 MMD_COLLISION_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                                 ['src/core/mmd_collision_world.rs', 'tests/mmd_collision_world.rs']}
 MMD_COLLISION_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
@@ -355,6 +355,12 @@ def approved_source_map(manifest, host):
         protected[path] = identity['new_sha256']
     schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
            'immutable dynamics world c23 test format admission')
+    protected = apply_mmd_collision_admission(manifest, host, protected)
+    return {**protected, **manifest['verification_sha256'][host]}
+
+
+def apply_mmd_collision_admission(manifest, host, protected):
+    schema('mmd_collision_world_source_admission' in manifest, 'required MMD collision world admission')
     admission = manifest['mmd_collision_world_source_admission']
     fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'MMD collision world admission')
     schema(admission['kind'] == 'private-mmd-collision-world-source-only'
@@ -377,7 +383,7 @@ def approved_source_map(manifest, host):
         protected[path] = identity['new_sha256']
     schema(source_map_digest(admission) == MMD_COLLISION_WORLD_SHA256,
            'immutable MMD collision world admission')
-    return {**protected, **delta['additions'], **manifest['verification_sha256'][host]}
+    return {**protected, **delta['additions']}
 
 
 def select_measurement(manifest, host, provenance):

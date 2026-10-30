@@ -166,8 +166,9 @@ impl MmdCollisionState {
             // Native cleanProxyFromPairs releases in cache order before swap-removal.
             self.sweep.for_each_algorithm(|keys, algorithm| {
                 if keys.contains(&key) {
-                    if let Some(live) = algorithm.take() {
+                    if let Some(live) = *algorithm {
                         dispatcher.release(live);
+                        *algorithm = None;
                     }
                 }
             });

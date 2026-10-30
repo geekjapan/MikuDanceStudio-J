@@ -79,6 +79,8 @@ def instrument(root, here):
          '    fn update_aabb_at(&mut self, objects: &mut WorldObjects, i: usize) {\n        crate::observer::update(i, true);')
     edit(OWNER, '\n    }\n\n    fn detect(&mut self, objects: &WorldObjects) {',
          '\n        crate::observer::update(i, false);\n    }\n\n    fn detect(&mut self, objects: &WorldObjects) {')
+    edit(OWNER, '    fn detect(&mut self, objects: &WorldObjects) {',
+         '    fn detect(&mut self, objects: &WorldObjects) {\n        for key in crate::observer::drain() { self.dispatcher.release(super::pair_cache::AlgorithmKey(key)); }')
     before = (root / OWNER).read_bytes().decode()
     edit(OWNER, before, before + '\n' + (here / 'fixture.rs').read_text())
     return changes
@@ -105,8 +107,23 @@ MUTANTS = {
     'reverse-owner-order': (OWNER, 'keys.map(|key| owners[&key.0])', '[owners[&keys[1].0], owners[&keys[0].0]]', 'manifolds'),
     'omit-preclean': (OWNER, 'if keys.contains(&key) {', 'if false && keys.contains(&key) {', 'events'),
     'ground-filter': (OWNER, 'let [group, mask] = objects.data()[i].filter;', 'let [group, mask] = if i == 0 { [1, -1] } else { objects.data()[i].filter };', 'bodies'),
+    'deferred-release': (OWNER, 'dispatcher.release(key);', 'crate::observer::defer(key.0);', 'events'),
     'ground-restitution': (OWNER, '        collision.register(&objects, 0);', '        let mut objects = objects;\n        objects.solver_parts().0[0].set_restitution(0.0);\n        collision.register(&objects, 0);', 'bodies'),
     'mode-zero-dynamic': (OWNER, 'self.objects.create_mmd_body(desc, mode)?', 'self.objects.create_mmd_body(desc, mode.max(1))?', 'bodies'),
+    'motion-moves-current': (OWNER, 'self.objects.set_motion_state(body, world)', '{ self.objects.set_motion_state(body, world)?; self.objects.reseat(body, world) }', 'bodies'),
+    'reseat-keeps-interpolation-velocity': (OWNER, 'self.objects.reseat(body, world)', '''{
+            let i = self.objects.index(body)?;
+            let before = self.objects.bodies()[i].snapshot();
+            self.objects.reseat(body, world)?;
+            self.objects.solver_parts().0[i].set_interpolation_velocities(before.interpolation_linear_velocity, before.interpolation_angular_velocity);
+            Ok(())
+        }''', 'bodies'),
+    'stop-clears-interpolation-velocity': (OWNER, 'self.objects.stop_at(body, origin)', '''{
+            self.objects.stop_at(body, origin)?;
+            let i = self.objects.index(body)?;
+            self.objects.solver_parts().0[i].set_interpolation_velocities(Vec3::ZERO, Vec3::ZERO);
+            Ok(())
+        }''', 'bodies'),
     'joint-collision-suppression': (OWNER, 'self.objects.create_joint(desc, Some(uid))', '{ let _ = uid; self.objects.create_joint(desc, None) }', 'manifolds'),
     'recreate-dispatcher': (OWNER, '        self.sweep.calculate_overlapping_pairs();', '        self.sweep.for_each_algorithm(|_, slot| { if let Some(key) = slot.take() { self.dispatcher.release(key); } });\n        self.dispatcher = CollisionDispatcher::new();\n        self.sweep.calculate_overlapping_pairs();', 'events'),
     'reverse-dispatch-order': (OWNER, '''        self.sweep.for_each_algorithm(|keys, algorithm| {

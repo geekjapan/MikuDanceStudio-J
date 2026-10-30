@@ -84,3 +84,9 @@ def common(rows):
             projected.append(row)
         result.append(projected)
     return result
+
+
+def semantic_projection(checkpoint, field):
+    tags = {'sap': {'S'}, 'bodies': {'B'}, 'manifolds': {'P', 'M', 'Q'}, 'events': {'E'}}
+    require(field in tags, 'known directed semantic field')
+    return [record for record in checkpoint if record[0] in tags[field]]

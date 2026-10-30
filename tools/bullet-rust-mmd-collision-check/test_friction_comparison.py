@@ -35,6 +35,32 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'complete common field'):
             common_fields(n, r, observed_maps=maps)
 
+    def test_refresh_maps_every_identity_sentinel_branch_and_visit(self):
+        n = Capture('native-observed', 'ordinary', 'a' * 64)
+        r = Capture('rust-observed', 'ordinary', 'a' * 64)
+        n.history = [(0, 'FM', 'ALLOC', (1, 0, 1)), (0, 'FC', 'CTOR_GEOMETRIC', (1,)),
+                     (0, 'FI', 'ADD', (1, 0, 0, 1, 2, 0)),
+                     (0, 'FR', 'REFRESH_BEGIN', (1, 0, 0, False, False)),
+                     (0, 'FR', 'REFRESH_POINT', (1, 0, 2, False, True)),
+                     (0, 'FX', 'REMOVE', (1, 0, 2)),
+                     (0, 'FR', 'REFRESH_END', (1, 0, 0, False, False))]
+        r.history = [(0, 'FM', 'ALLOC', (91, 0, 1)), (0, 'FC', 'RUST_CONTACT_CREATE', (72,)),
+                     (0, 'FI', 'ADD', (91, 0, 0, 72, 88, 0)),
+                     (0, 'FR', 'REFRESH_BEGIN', (91, 0, 0, False, False)),
+                     (0, 'FR', 'REFRESH_POINT', (91, 0, 88, False, True)),
+                     (0, 'FX', 'REMOVE', (91, 0, 88)),
+                     (0, 'FR', 'REFRESH_END', (91, 0, 0, False, False))]
+        observed_bijection(n, r)
+        original = list(r.history)
+        for index, values in ((3, (91, 0, 88, False, False)),
+                              (4, (1, 0, 88, False, True)), (4, (91, 1, 88, False, True)),
+                              (4, (91, 0, 72, False, True)), (4, (91, 0, 88, True, False)),
+                              (4, (91, 0, 88, False, False)), (6, (91, 0, 0, False, True))):
+            r.history = list(original)
+            r.history[index] = (*r.history[index][:3], values)
+            with self.subTest(index=index, values=values), self.assertRaisesRegex(ValueError, 'logical obligation correspondence'):
+                observed_bijection(n, r)
+
 
 if __name__ == '__main__':
     unittest.main()

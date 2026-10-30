@@ -28,6 +28,9 @@ class Ledger:
         self.last_guard = None
         self.pending_added = None
         self.pending_added_exit = None
+        self.result_inserted = False
+        self.refresh = None
+        self.refresh_expected = None
         self.cache_closures = 0
         self.history = []
 
@@ -59,8 +62,59 @@ class Ledger:
         if self.native:
             require(name in self.scopes, 'required native guard scope ' + name)
 
+    def order(self, tag, site=None):
+        require(self.refresh_expected is None or self.refresh_expected == (tag, site),
+                'exact refresh source order: expected ' + repr(self.refresh_expected))
+
+    def _refresh_next(self):
+        self.refresh['pending'] = None
+        self.refresh['cursor'] -= 1
+        self.refresh_expected = ('FR', 'REFRESH_POINT' if self.refresh['cursor'] >= 0 else 'REFRESH_END')
+
+    def _refresh_event(self, site, v):
+        mid, slot, gid, distance, lateral = v
+        require(type(mid) is int and mid > 0 and type(slot) is int and 0 <= slot <= 3
+                and type(gid) is int and type(distance) is bool and type(lateral) is bool
+                and not (distance and lateral), 'typed refresh binding and taken branch')
+        if site == 'REFRESH_BEGIN':
+            require(self.refresh is None and mid in self.manifolds
+                    and not self.transactions and not self.clearing and self.pending_move is None,
+                    'single refresh of live idle manifold')
+            if self.native:
+                require(self.scopes and self.scopes[-1] == 'REFRESH'
+                        and self.last_guard == 'REFRESH_ENTER', 'native refresh entry immediately before BEGIN')
+            require((slot, gid, distance, lateral) == (0, 0, False, False), 'exact refresh BEGIN/END sentinels')
+            initial = tuple(self.manifolds[mid][1])
+            self.refresh = dict(mid=mid, cursor=len(initial), initial=initial, visited=set(), pending=None)
+            self._refresh_next()
+        else:
+            require(self.refresh is not None and mid == self.refresh['mid'], 'same active refresh manifold')
+            if site == 'REFRESH_POINT':
+                cursor = self.refresh['cursor']
+                require(slot == cursor and cursor >= 0 and gid == self.refresh['initial'][cursor]
+                        and gid not in self.refresh['visited'], 'descending initial-count refresh visits')
+                self._binding(mid, slot, gid)
+                self.refresh['visited'].add(gid)
+                self.refresh['pending'] = (mid, slot, gid)
+                if distance or lateral:
+                    self.refresh_expected = ('FG', 'REMOVE_ENTER') if self.native else ('FX', 'REMOVE')
+                elif self.native:
+                    self.refresh_expected = ('FG', 'PROCESSED_PRECALL')
+                else:
+                    self._refresh_next()
+            else:
+                require(site == 'REFRESH_END' and (slot, gid, distance, lateral) == (0, 0, False, False),
+                        'exact refresh BEGIN/END sentinels')
+                require(self.refresh['cursor'] == -1 and self.refresh['pending'] is None
+                        and len(self.refresh['visited']) == len(self.refresh['initial']), 'complete refresh visits')
+                if self.native:
+                    self.refresh_expected = ('FG', 'REFRESH_EXIT')
+                else:
+                    self.refresh = self.refresh_expected = None
+
     def guard(self, cp, site, values):
         require(self.native, 'guards belong to native observed')
+        self.order('FG', site)
         require(self.pending_move is None, 'immediate mandatory remove/move-last event')
         require(all(type(value) is bool for value in values) and values == (True, True, True, True),
                 'null Added/Processed/Destroyed/usercache guard')
@@ -92,6 +146,13 @@ class Ledger:
                     self.snapshot_guard = True
                 elif site.endswith('_ENTER') or site in ('SOLVER_BEGIN', 'FIXTURE_BEGIN'):
                     scope = site.rsplit('_', 1)[0]
+                    if scope == 'RESULT':
+                        require('RESULT' not in self.scopes, 'single actual Result scope')
+                        self.result_inserted = False
+                    elif scope == 'REFRESH':
+                        require(self.refresh is None and self.refresh_expected is None
+                                and self.cache_closures == 0, 'single idle native refresh entry')
+                        self.refresh_expected = ('FR', 'REFRESH_BEGIN')
                     require(len(self.scopes) < 256, 'guard scope capacity')
                     self.scopes.append(scope)
                     self.maxima['scopes'] = max(self.maxima['scopes'], len(self.scopes))
@@ -101,6 +162,12 @@ class Ledger:
                     self.scopes.pop()
                     if scope == 'USERCACHE':
                         self.cache_closures += 1
+                    elif scope == 'RESULT':
+                        require(self.pending_added is None, 'Result exit consumes insertion callback')
+                    elif scope == 'REFRESH':
+                        require(self.refresh is not None and self.refresh_expected == ('FG', 'REFRESH_EXIT'),
+                                'refresh exit after complete END')
+                        self.refresh = self.refresh_expected = None
                 elif site == 'CTOR_EXIT':
                     pass
                 else:
@@ -110,14 +177,30 @@ class Ledger:
                         self.pending_added = None
                     elif site == 'DESTROYED_PRECALL':
                         require('USERCACHE' in self.scopes, 'Destroyed precall usercache scope')
+                    elif site == 'PROCESSED_PRECALL':
+                        require(self.refresh is not None and self.refresh_expected == ('FG', site)
+                                and self.refresh['pending'] is not None, 'Processed precall binds kept refresh point')
+                        self._binding(*self.refresh['pending'])
+                        self._refresh_next()
+        if self.refresh is not None:
+            following = {'REMOVE_ENTER': ('FG', 'USERCACHE_ENTER'),
+                         'USERCACHE_ENTER': ('FG', 'USERCACHE_EXIT'),
+                         'USERCACHE_EXIT': ('FX', 'REMOVE')}
+            if site in following:
+                self.refresh_expected = following[site]
+            elif site == 'REMOVE_EXIT':
+                self._refresh_next()
 
     def event(self, cp, tag, site, v):
+        self.order(tag, site)
         if self.native:
             require(self.started and self.command == cp, 'native event within guarded command')
             require(self.pending_added is None, 'mandatory post-insertion Added precall guard')
         if self.pending_move is not None:
             require(tag == 'FV', 'immediate mandatory remove/move-last event')
-        if tag == 'FM':
+        if tag == 'FR':
+            self._refresh_event(site, v)
+        elif tag == 'FM':
             mid, a, b = v
             if site == 'ALLOC':
                 require(a != b and len(self.manifolds) < 4096, 'bounded manifold with distinct body pair')
@@ -157,6 +240,11 @@ class Ledger:
         elif tag == 'FI':
             mid, slot, old, incoming, new, mask = v
             self._scope('REPLACE' if site == 'REPLACE' else 'ADD')
+            if self.native:
+                require(len(self.scopes) >= 2 and self.scopes[-2:] ==
+                        ['RESULT', 'REPLACE' if site == 'REPLACE' else 'ADD']
+                        and not self.result_inserted, 'one insertion directly nested in actual Result call')
+                self.result_inserted = True
             require(mid in self.manifolds and mid not in self.clearing, 'insert in live manifold')
             require(incoming in self.temporary and self.temporary[incoming] == mask, 'independent incoming validity')
             require(len({old, incoming, new}) == 3 and new not in self.used_gid, 'distinct fresh insertion generations')
@@ -186,6 +274,9 @@ class Ledger:
                 self._close(gid, True)
             else:
                 self._binding(mid, slot, gid)
+                if self.refresh is not None:
+                    require(site == 'REMOVE' and (mid, slot, gid) == self.refresh['pending'],
+                            'refresh removal binds exact pending point')
                 if self.native:
                     require(self.cache_closures == 1, 'guarded usercache closure before point closure')
                     self.cache_closures = 0
@@ -208,10 +299,22 @@ class Ledger:
                             'release point in actual forward order')
                     self.releasing[mid] = slot + 1
                 self._close(gid)
+                if self.refresh is not None:
+                    if self.pending_move is not None:
+                        self.refresh_expected = ('FV', 'REMOVE_MOVE')
+                    elif self.native:
+                        self.refresh_expected = ('FG', 'REMOVE_EXIT')
+                    else:
+                        self._refresh_next()
         elif tag == 'FV':
             require(self.pending_move == v, 'exact remove/move-last transfer')
             self._binding(v[0], v[2], v[3])
             self.pending_move = None
+            if self.refresh is not None:
+                if self.native:
+                    self.refresh_expected = ('FG', 'REMOVE_EXIT')
+                else:
+                    self._refresh_next()
         elif tag == 'FB':
             mid, slot, gid, transaction, mode, flag = v
             self._scope('SOLVER')
@@ -284,6 +387,7 @@ class Ledger:
         self.history.append((cp, tag, site, v))
 
     def snapshot(self, mid, slots, body_pair):
+        self.order('FS', 'SNAPSHOT')
         require(self.pending_move is None and not self.transactions and not self.clearing,
                 'snapshot after complete mutations')
         require(self.pending_added is None and self.cache_closures == 0, 'snapshot after exact insertion/cache guard closure')
@@ -296,6 +400,7 @@ class Ledger:
         require(not self.manifolds and not self.points and not self.temporary and not self.transactions
                 and not self.clearing and not self.releasing and self.pending_move is None and not self.scopes,
                 'closed manifold/generation/temporary/transaction lifetimes')
+        require(self.refresh is None and self.refresh_expected is None, 'closed refresh lifetime')
         if self.native:
             require(self.started and self.command is None and self.command_ended == commands - 1,
                     'complete guarded command schedule')

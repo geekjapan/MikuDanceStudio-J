@@ -165,6 +165,8 @@ def parse(raw, inputs, *, variant, role, corpus_sha):
     for row in rows:
         require(not ended, 'no trailing data after footer')
         tag = row[0]
+        if observed:
+            ledger.order(tag, row[3] if tag.startswith('F') and len(row) >= 4 else None)
         if observed and not rust and ledger.pending_added is not None:
             require(tag == 'FG', 'no base/sidecar events between insertion exit and Added precall')
         require(next_tag is None or tag == next_tag, 'immediate combined snapshot order ' + str(next_tag))

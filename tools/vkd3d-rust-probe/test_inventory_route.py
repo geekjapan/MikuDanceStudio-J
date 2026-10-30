@@ -279,5 +279,43 @@ class InventoryRouteTests(unittest.TestCase):
         self.assertIn('native_callback', abi)
 
 
+class PreparedLocationSourceTests(unittest.TestCase):
+    def test_location_collection_is_report_only_without_changing_capture(self):
+        source = patched_lines('c2rust-ast-exporter/src/AstExporter.cpp')
+        capture = source.split('class CursorInputs {', 1)[1].split('class CursorInputCallbacks', 1)[0]
+        guard = ('        if (PreparedDatabase.getValue().empty())\n'
+                 '            result["format_locations"] = FormatLocations(CI.getASTContext()).collect();')
+        self.assertEqual(capture.count(guard), 1)
+        self.assertEqual(capture.count('FormatLocations('), 1)
+        self.assertNotIn('{"format_locations",', capture)
+        self.assertIn('result["schema"] = 3;', capture)
+        self.assertIn('result["prepared_invocation"] = std::move(*invocation);', capture)
+        self.assertIn('{"schema", 2}', capture)
+        self.assertIn('if (CaptureCursorInputs)', source)
+
+    def test_prepared_instance_uses_same_export_buffer_and_resets_report_flags(self):
+        source = patched_lines('c2rust-ast-exporter/src/lib.rs')
+        self.assertIn('if let Some(instance) = instance { *instance = sha256(&buffer); }', source)
+        self.assertIn('std::fs::write(path, &buffer)?;', source)
+        self.assertIn('strict, instance.is_some())?', source)
+        self.assertIn('format!("--c2rust-cursor-inputs={}", cursor_inputs)', source)
+        self.assertIn('if prepared { cc_db.to_str().unwrap() } else { "" }', source)
+        conversion = patched_lines('c2rust-transpile/src/c_ast/conversion.rs')
+        self.assertIn('if let Some(locations) = raw.as_object_mut().unwrap().remove("format_locations")', conversion)
+
+    def test_hosted_native_properties_cover_report_cycle_and_stale_instances(self):
+        source = patched_lines('c2rust-transpile/src/program.rs')
+        cycle = source.split('fn closed_variadic_plan_prepared_omits_locations_between_native_reports()', 1)[1].split('    #[test]', 1)[0]
+        for check in ('let before=report();', 'assert_eq!(before,report());', 'buffer_sha256',
+                      'metadata.get("format_locations").is_none()', 'ast.format_locations.is_none()',
+                      'crate::native_intake::capture(raw,&ast,&source,&effective,&[])'):
+            self.assertIn(check, cycle)
+        binding = source.split('fn closed_variadic_plan_prepared_changed_cbor_binds_only_current_instance()', 1)[1].split('    #[test]', 1)[0]
+        for check in ('assert_ne!(previous.ast_instance,current.ast_instance)',
+                      'plan.bind(&previous,&ast).is_err()', 'ast.plan_instance=Some(previous.ast_instance)',
+                      'plan.bind(&current,&ast).is_err()', 'plan.bind(&current,&ast).is_ok()'):
+            self.assertIn(check, binding)
+
+
 if __name__ == '__main__':
     unittest.main()

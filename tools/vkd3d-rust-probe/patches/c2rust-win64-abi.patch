@@ -271,7 +271,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
                       });
 
          return true;
-@@ -3002,17 +3145,284 @@
+@@ -3002,17 +3145,285 @@
    VisitQualType(t);
  }
 
@@ -499,7 +499,6 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +                return a == "-resource-dir" || StringRef(a).starts_with("-resource-dir=");
 +            })) errors.push_back("missing_explicit_resource_directory");
 +        llvm::json::Object result{
-+            {"format_locations", FormatLocations(CI.getASTContext()).collect()},
 +            {"schema", 2}, {"main_input", sm.getFileEntryForID(sm.getMainFileID()) ? sm.getFileEntryForID(sm.getMainFileID())->tryGetRealPathName().str() : ""},
 +            {"cwd", cwd ? *cwd : ""}, {"adjusted_driver_argv", std::move(args)},
 +            {"regenerated_cc1_argv", std::move(cc1)}, {"target", CI.getTarget().getTriple().str()},
@@ -508,6 +507,8 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            {"vfs", "clangtool_empty_overlay_on_real_filesystem"},
 +            {"unsupported", std::move(errors)}, {"buffers", std::move(entries)},
 +            {"lexer_events", std::move(lexerEvents)}};
++        if (PreparedDatabase.getValue().empty())
++            result["format_locations"] = FormatLocations(CI.getASTContext()).collect();
 +        if (!PreparedDatabase.getValue().empty()) {
 +            auto invocation = llvm::json::parse(PreparedInvocation);
 +            if (!invocation) llvm::report_fatal_error("missing prepared native invocation");
@@ -559,7 +560,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          CborEncoder encoder;
 
          // There are some type nodes (see `TypedefType` and `RecordType`) which
-@@ -3026,7 +3436,7 @@
+@@ -3026,7 +3437,7 @@
              cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
@@ -568,7 +569,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
              CborEncoder array;
 
-@@ -3136,6 +3546,16 @@
+@@ -3136,6 +3547,16 @@
              auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 
@@ -585,7 +586,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
              cbor_encoder_close_container(&encoder, &outer);
          };
 
-@@ -3158,9 +3578,15 @@
+@@ -3158,9 +3579,15 @@
 
  class TranslateAction : public clang::ASTFrontendAction {
      Outputs *outputs;
@@ -602,7 +603,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
      virtual std::unique_ptr<clang::ASTConsumer>
      CreateASTConsumer(clang::CompilerInstance &Compiler,
-@@ -3175,8 +3601,15 @@
+@@ -3175,8 +3602,15 @@
              return nullptr;
          }
 
@@ -620,7 +621,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      }
  };
 
-@@ -3270,17 +3703,18 @@
+@@ -3270,17 +3704,18 @@
 
  class MyFrontendActionFactory : public FrontendActionFactory {
      Outputs *outputs;
@@ -642,7 +643,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      }
  #endif // CLANG_VERSION_MAJOR
  };
-@@ -3372,8 +3806,50 @@
+@@ -3372,8 +3807,50 @@
      std::vector<std::string> sourcePathList(1, sourcePath);
      ClangTool Tool(OptionsParser.getCompilations(), sourcePathList);
 
@@ -694,7 +695,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
      *result = Tool.run(&myFrontendActionFactory);
      assert(outputs.size() == 1 && "Expected exactly one output.");
-@@ -3409,7 +3885,25 @@
+@@ -3409,7 +3886,25 @@
      return make_export_result(outputs, preprocessed);
  }
 
@@ -4860,7 +4861,7 @@ diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,486 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
@@ -5195,6 +5196,76 @@ new file mode 100644
 +        let error=PreparedProgram::run(config(destination.clone()),&database,&[]).unwrap_err();
 +        assert!(error.to_string().contains("native preparation failed"));
 +        assert!(!destination.exists());
++    }
++
++    #[test]
++    fn closed_variadic_plan_prepared_omits_locations_between_native_reports() {
++        let directory=tempfile::tempdir().unwrap();
++        let text="int f(int n,...){return n;} int g(void){return f(1,2);}";
++        let (source,database,effective)=native_fixture(directory.path(),text);
++        let report=|| {
++            let retained=directory.path().join("report.cbor");
++            let (untyped,_)=c2rust_ast_exporter::get_untyped_ast(&source,&database,&[],false,false,Some(&retained)).unwrap();
++            assert!(!fs::read(&retained).unwrap().is_empty());
++            let raw: serde_json::Value=serde_json::from_str(untyped.cursor_inputs.as_ref().unwrap()).unwrap();
++            assert_eq!(raw["schema"],2);
++            assert!(raw.get("prepared_invocation").is_none());
++            let mut locations=raw["format_locations"].as_object().unwrap().values().map(|v|v.to_string()).collect::<Vec<_>>();
++            locations.sort();
++            assert!(!locations.is_empty());
++            let body="int f(int n,...){return n;}".as_bytes().iter().map(|b|format!("{b:02x}")).collect::<String>();
++            assert!(raw["format_locations"].as_object().unwrap().values().any(|v|
++                v["spelling"]["bytes_hex"]==body && v["spelling"]["buffer_sha256"]==c2rust_ast_exporter::sha256(text.as_bytes())));
++            let typed=ConversionContext::new(&source,&untyped).into_typed_context();
++            assert!(typed.format_locations.as_ref().is_some_and(|s|!serde_json::from_str::<serde_json::Value>(s).unwrap().as_object().unwrap().is_empty()));
++            locations
++        };
++        let before=report();
++        let (untyped,_,instance)=c2rust_ast_exporter::get_prepared_untyped_ast(&source,&database,&[],false,false).unwrap();
++        let metadata: serde_json::Value=serde_json::from_str(untyped.cursor_inputs.as_ref().unwrap()).unwrap();
++        assert_eq!(metadata["schema"],3);
++        assert!(metadata.get("format_locations").is_none());
++        let ast=ConversionContext::new(&source,&untyped).into_typed_context();
++        assert!(ast.format_locations.is_none());
++        assert_eq!(metadata["prepared_invocation"]["schema"],1);
++        assert_eq!(instance.len(),64);
++        let raw=ast.cursor_inputs.as_ref().unwrap();
++        assert!(crate::native_intake::capture(raw,&ast,&source,&effective,&[]).is_ok());
++        assert_eq!(before,report());
++    }
++
++    #[test]
++    fn closed_variadic_plan_prepared_changed_cbor_binds_only_current_instance() {
++        let directory=tempfile::tempdir().unwrap();
++        let (source,database,row)=native_fixture(directory.path(),"int f(int n,...){return n;}");
++        let c=config(directory.path().join("unused"));
++        let (key,command,_,effective)=command_identity(&row,&[],"same-session").unwrap();
++        let capture=|| {
++            let (mut ast,_,instance)=prepare_single(&c,&source,&database,&[],None).unwrap();
++            let instance=instance.unwrap();
++            assert!(ast.format_locations.is_none());
++            let raw: serde_json::Value=serde_json::from_str(ast.cursor_inputs.as_ref().unwrap()).unwrap();
++            assert_eq!(raw["schema"],3);
++            assert!(raw.get("format_locations").is_none());
++            ast.plan_instance=Some(instance.clone());
++            let snapshots=native_sources(&mut ast,&source,&effective,&[]).unwrap();
++            let identity=UnitIdentity { key:key.clone(),command:command.clone(),source:source.clone(),domain:"same-session".into(),
++                ast_instance:instance,target:ast.target.clone(),widths:ast.target_c_widths };
++            let plan=ClosedVariadicPlan::capture(std::iter::once((&identity,&ast,snapshots))).unwrap();
++            assert!(plan.bind(&identity,&ast).is_ok());
++            (ast,identity,plan)
++        };
++        let (_,previous,_)=capture();
++        fs::write(&source,"int f(int n,...){return n+1;}").unwrap();
++        let (mut ast,current,plan)=capture();
++        assert_eq!(previous.key,current.key);
++        assert_eq!(previous.command,current.command);
++        assert_ne!(previous.ast_instance,current.ast_instance);
++        assert!(plan.bind(&previous,&ast).is_err());
++        ast.plan_instance=Some(previous.ast_instance);
++        assert!(plan.bind(&current,&ast).is_err());
++        ast.plan_instance=Some(current.ast_instance.clone());
++        assert!(plan.bind(&current,&ast).is_ok());
 +    }
 +
 +    #[test]

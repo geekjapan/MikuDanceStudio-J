@@ -1,0 +1,42 @@
+name: MMD friction definedness diagnostic
+
+on:
+  push:
+    branches: [w6-mmd-friction-definedness]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    name: Friction visibility diagnostic (Linux x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Record all four variants and allocator roles
+        id: diagnostic
+        shell: bash
+        env:
+          CXX: clang++
+        run: python3 -B tools/bullet-rust-mmd-collision-check/friction_check.py --out-dir "$RUNNER_TEMP/mmd-friction-definedness" --authority "$RUNNER_TEMP/mmd-friction-authority.json"
+      - name: Save complete diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-friction-definedness-linux-x64
+          path: ${{ runner.temp }}/mmd-friction-definedness
+          if-no-files-found: error
+          include-hidden-files: true
+      - name: Save detached byte authority
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mmd-friction-definedness-authority
+          path: ${{ runner.temp }}/mmd-friction-authority.json
+          if-no-files-found: error

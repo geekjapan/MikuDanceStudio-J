@@ -2470,7 +2470,7 @@ class CustodyControls(unittest.TestCase):
         self.assertLess(gate.index('if ($LASTEXITCODE)'),gate.index('"upload=true"'))
         self.assertIn("-eq 'no_acquisition_started'",gate)
         self.assertIn("throw 'Acquisition custody is unknown",gate)
-        self.assertIn("branches: [w4-renderer-closure-census]",workflow)
+        self.assertIn("branches: [w4-renderer-c4200-workflow-fix]",workflow)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -1,7 +1,7 @@
 name: Renderer required closure census
 on:
   push:
-    branches: [w4-renderer-c4200-progress-fix]
+    branches: [w4-renderer-c4200-workflow-fix]
   workflow_dispatch:
 permissions:
   contents: read

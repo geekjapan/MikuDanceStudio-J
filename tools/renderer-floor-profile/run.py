@@ -1811,7 +1811,7 @@ def source_commit(raw,revision,entries=None,parents=None):
 def source_history_bound(chain,head,admitted):
     require(type(chain) is list and all(type(revision) is str for revision in chain),'typed generation ancestry')
     fixed=chain.count(ACCEPTED_MAIN['merge']) if admitted else 0
-    require(0<len(chain)<=16+fixed and fixed==int(admitted) and len(set(chain))==len(chain) and chain[-1]==head,'bounded ordinary generation ancestry')
+    require(0<len(chain)<=(32 if admitted else 16)+fixed and fixed==int(admitted) and len(set(chain))==len(chain) and chain[-1]==head,'bounded ordinary generation ancestry')
 
 
 def source_ancestry(m,commits):

@@ -1096,14 +1096,14 @@ class Controls(unittest.TestCase):
             for context in patches:stack.enter_context(context)
             entries=r.verify_source_data(*args)
             m,frames=args[:2]
-            for ordinal in range(14):
+            for ordinal in range(30):
                 head,raw=commit(entries,[m['head']],'ordinary '+str(ordinal))
                 m['generation_ancestry'].append(head);m['head']=head
                 frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
                 frames['head.commit']=raw;frames['head.tree']=tree(entries)
-            self.assertEqual(len(m['generation_ancestry']),17)
+            self.assertEqual(len(m['generation_ancestry']),33)
             self.assertEqual(r.verify_source_data(*args),entries)
-            head,raw=commit(entries,[m['head']],'ordinary seventeen')
+            head,raw=commit(entries,[m['head']],'ordinary thirty-three')
             bad=copy.deepcopy(args);bad[0]['generation_ancestry'].append(head);bad[0]['head']=head
             bad[1]['ancestry/'+head+'.commit']=raw;bad[1]['tail/'+head+'.tree']=tree(entries)
             bad[1]['head.commit']=raw;bad[1]['head.tree']=tree(entries)
@@ -1163,7 +1163,8 @@ class Controls(unittest.TestCase):
         block=compile(ast.fix_missing_locations(ReturnAsExpression().visit(ast.Module(body=producer[start:]+tail,type_ignores=[]))),str(r.__file__),'exec')
         directory=Path('/evidence/observed-Od');out=directory.parent;prior={'id':'control-Od','retained':'prior receipt'}
         state=dict(r.__dict__,census_mode=False,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=directory,commands={n:[n] for n in ('native','rust','mesh_dump','x_files')},patches={'known':'patch'},expected={'known':'source'},actual=['compiler argv'],native_target=Path('/native'),executable='/rust.exe',parsed={'observed-O2':({}, {})},out=out,m={'builds':[copy.deepcopy(prior)]},r={},e={},head='synthetic-head')
-        files={};retained=[];calls=[];parses=[];acquisitions=[]
+        state['env']={}
+        files={};retained=[];calls=[];parses=[];acquisitions=[];finalizations=[]
         def read(path):return files.get(path,b'compiled image')
         def write(path,raw):files[path]=raw;return len(raw)
         def save(path,value):files[path]=copy.deepcopy(value);retained.append((path,copy.deepcopy(value)))
@@ -1197,11 +1198,22 @@ class Controls(unittest.TestCase):
                 try:r.complete_closure([{'witness':view,'raw':raw}])
                 finally:save(directory/'rust-code-progress.json',{'schema':r.SCHEMA,'images':[{'witness':view}]})
             return {'native':{},'rust':{}}
-        state.update(record=record,parse=parse,write_json=save,compiled_evidence=acquire,fixture_result=lambda *args:None,classify=lambda *args:{},replay=lambda *args:{})
+        def finish(out,manifest,env):
+            self.assertIs(out,state['out']);self.assertIs(manifest,state['m']);self.assertIs(env,state['env'])
+            self.assertEqual(manifest['builds'][0],prior)
+            row=manifest['builds'][1]
+            self.assertEqual(row['after'],state['expected'])
+            self.assertEqual(set(row['objects']),{'core/accessory.obj','console/native.obj'})
+            self.assertEqual(row['compiled_capture'],{'native':{},'rust':{}})
+            self.assertEqual(state['parsed'],{'observed-O2':({}, {}),'observed-Od':({'dll':{'path':'/dll'}},{})})
+            self.assertNotIn(out/'result.json',files);self.assertNotIn(out/'seal.json',files)
+            finalizations.append(True)
+        state.update(record=record,parse=parse,write_json=save,compiled_evidence=acquire,finish_source_admission=finish,fixture_result=lambda *args:None,classify=lambda *args:{},replay=lambda *args:{})
         with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'mkdir'),patch.object(Path,'rglob',return_value=[Path('/native/core/accessory.obj'),Path('/native/console/native.obj')]),patch.object(r.shutil,'copyfile',lambda source,target:write(target,read(source))),patch.object(r.c,'source_inventory',return_value=state['expected']),patch.object(r.previous.time,'time_ns',side_effect=[123]),patch.object(r.previous,'evidence_inventory',return_value={}):
             if failure:
                 with self.assertRaises((OSError,ValueError)):exec(block,state)
             else:exec(block,state)
+        self.assertEqual(finalizations,[] if failure else [True])
         manifests=[value for path,value in retained if path==out/'manifest.json']
         self.assertEqual(files[directory/'operations.bin'],r.operation_corpus())
         self.assertEqual(len(manifests[0]['builds']),2);self.assertEqual(manifests[0]['builds'][0],prior)

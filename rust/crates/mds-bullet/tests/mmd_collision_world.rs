@@ -3,7 +3,7 @@
 mod core;
 
 use core::activation::ActivationState;
-use core::math::{Quat, Transform, Vec3};
+use core::math::{Basis, Quat, Transform, Vec3};
 use core::mmd_collision_world::MmdCollisionWorld;
 use core::world_objects::{BodyDesc, JointDesc, Pose};
 use core::InvalidArgument;
@@ -32,6 +32,53 @@ fn body(kind: i32, x: f32) -> BodyDesc {
 
 fn at(x: f32) -> Transform {
     body(0, x).pose.transform()
+}
+
+#[test]
+fn body_readback_uses_rigid_transform_and_preserves_matrix_bits() {
+    for mode in 0..=2 {
+        let mut w = MmdCollisionWorld::new();
+        let h = w.create_body(body(0, 0.0), mode).unwrap();
+        let initial = w.body_transform(h).unwrap();
+        w.set_motion_state(h, at(9.0)).unwrap();
+        assert_eq!(w.body_transform(h).unwrap(), initial);
+        assert_eq!(w.objects().public_transform(h).unwrap(), at(9.0));
+
+        let target = Transform {
+            basis: Basis([[-0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+            origin: Vec3([2.0, 3.0, 4.0]),
+        };
+        w.reseat(h, target).unwrap();
+        let expected: [f32; 16] = [
+            -0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0, 3.0, 4.0, 1.0,
+        ];
+        assert_eq!(
+            w.body_matrix(h).unwrap().map(f32::to_bits),
+            expected.map(f32::to_bits)
+        );
+        assert_eq!(w.objects().public_transform(h).unwrap(), at(9.0));
+        let (origin, rotation) = w.body_pose(h).unwrap();
+        assert_eq!(origin, target.origin);
+        let half = 0.5_f32.sqrt();
+        assert_eq!(
+            rotation.0.map(f32::to_bits),
+            [0.0_f32, 0.0, half, half].map(f32::to_bits)
+        );
+
+        w.stop_at(h, Vec3([6.0, 7.0, 8.0])).unwrap();
+        let mut stopped = expected;
+        stopped[12..15].copy_from_slice(&[6.0, 7.0, 8.0]);
+        assert_eq!(
+            w.body_matrix(h).unwrap().map(f32::to_bits),
+            stopped.map(f32::to_bits)
+        );
+
+        let mut other = MmdCollisionWorld::new();
+        let foreign = other.create_body(body(0, 0.0), mode).unwrap();
+        assert_eq!(w.body_transform(foreign), Err(InvalidArgument));
+        assert_eq!(w.body_matrix(foreign), Err(InvalidArgument));
+        assert_eq!(w.body_pose(foreign), Err(InvalidArgument));
+    }
 }
 
 #[test]

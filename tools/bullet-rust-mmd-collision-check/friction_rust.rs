@@ -192,7 +192,7 @@ pub fn point(mi: usize, slot: usize, key: u32, flag: bool) -> u8 { state(|s| {
     if !s.observed { return if s.fixture_snapshot { 3 } else { u8::from(flag) }; }
     let m = s.live[s.index(key)]; let p = s.binding(m.mid, slot);
     s.event("FL", format_args!("SNAPSHOT {mi} {slot} {} {} {} {flag}", m.mid, p.gid, p.mask)); p.mask
-}); }
+}) }
 pub fn directions(mi: usize, slot: usize, mask: u8, words: [[u32; 3]; 2]) { state(|s| {
     assert!(mask <= 3);
     for (index, triple) in words.iter().enumerate() {

@@ -1,10 +1,31 @@
 import hashlib
 import json
+import os
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+VERIFICATION_BASE = 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70'
+VERIFICATION_BASE_SHA256 = '4092dd2ca3f1c3018ba144136d5c8c68da2c5d7628ff1b58a1258d23dea159e7'
+VERIFICATION_BASE_BLOBS = {
+    '.github/workflows/bullet-outer-gjk-host-capture.yml': 'c9b0e3155dd819ad49b0b085c735879e3fa0cf90',
+    'rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv': 'a033f5920e953595291bd0bd5b0224ef80faa616',
+    'rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs': '35fafde6cd1aa3e3a2eae1817fffb644ced576d3',
+    **{'tools/bullet-rust-gjk-pair-check/' + path: blob for path, blob in {
+        'README.md': 'c353451a3b782cbe191f1d9aa4ec2d91ac666844',
+        'check.py': '72925f3bc3801214830d7d2d950c9c589ee9ce7e',
+        'measured_profiles.py': '8506a6d9a6d629131c8c76b089fba9623df80c9f',
+        'mutations.py': '76cb81ca475a77f62957a86d178fb9462d7d72ff',
+        'native-x64-provenance.json': '9fbf529808e40dc9a1599154f1c73c6dcbcf49fc',
+        'test_capture.py': 'ce6f861bf82408cad1f10bc425e2ca136adc7ca9',
+        'test_measured_profiles.py': 'a4cef940a72d0e0fa8f936adfacbbd9d0c8376ca',
+    }.items()},
+}
+VERIFICATION_LAYER_PATHS = {'tools/bullet-rust-gjk-pair-check/' + path for path in
+                            ['README.md', 'check.py', 'measured_profiles.py', 'test_measured_profiles.py']}
 
 
 def sha(data):
@@ -20,6 +41,10 @@ def canonical_command(command, root, output):
 
 MANIFEST_PATH = 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'
 SUPPLEMENTAL_SHA256 = '9ef6deafdf627e0e8df714ae0038af947127768ca9f5eb2e46d24a27d022c12c'
+MACOS_SUPPLEMENTAL_SHA256 = '2e189e3049060b4409f692d3cc94bb4f99cd24651b17fa941cecc7c5caff72a0'
+MACOS_CAPTURE_HEAD = '10bfc00bf80178818ca42cf316ed366a4fe435cf'
+MACOS_CAPTURE_PROTECTED_SHA256 = '1e930187f12f91991098407bc79a1555735230a20c14272b3f62286fe87f8368'
+MACOS_CAPTURE_VERIFICATION_SHA256 = 'e5194fbae277658529c65e7a5bb8f91aa6306f6ca105fc263a06c62952e39819'
 BRIDGE_SHA256 = 'f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63'
 REGISTRATION_FORMAT = {
     'kind': 'fixed-registration-leading-lf-removal',
@@ -34,6 +59,25 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+MMD_COLLISION_WORLD_SHA256 = '59875b274c0099e5c49d51f76cef60a7af70646b9abdbe2bc3b7fadeb31c93e3'
+MMD_COLLISION_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
+                                ['src/core/mmd_collision_world.rs', 'tests/mmd_collision_world.rs']}
+MMD_COLLISION_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+MMD_COLLISION_WORLD_FORMAT = {
+    'kind': 'fixed-mmd-collision-world-rustfmt-source-only',
+    'base_head': '461351137b525475e43add330fd258885956067f',
+    'format_head': '6e16debd2b5c8d3b309d60b47bd0badce1e2175c',
+    'format_tree': 'e7354fdb6b89e5b56e78a189a032f2d275b42e2e',
+    'execution': 'UNRUN',
+    'path': 'rust/crates/mds-bullet/tests/mmd_collision_world.rs',
+    'mode': '100644',
+    'old_blob': 'cd4af6aa929a93c8313ba330acd7a0ab590c3c7d',
+    'new_blob': '7b8185f26fcfa4dfdd9817f93c0f5a475aee873a',
+    'hosts': {host: {
+        'old_sha256': 'e07de6bdf38382ad5b6e417c9134264f95ecff56365aba0ae365af22864f23fd',
+        'new_sha256': '8a31d5dbc0e14024762199975064b702268bc8bb4dac7997d4e33b574792ba52',
+    } for host in ['macos-arm64', 'linux-arm64', 'linux-x64', 'windows-x64']},
+}
 DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256 = '795b2906a053fabc3e9728c575bd3372c564abfa52700223da18f8158e03ae5c'
 DYNAMICS_WORLD_C23_TEST_FORMAT_REPLACEMENTS = {'rust/crates/mds-bullet/tests/discrete_dynamics_world.rs'}
 DYNAMICS_WORLD_C23_REPAIR_SHA256 = '803c1e31e1bfbcfc805f0559c00bbd2f76a0101a76c603d29922150cb39e03ee'
@@ -81,6 +125,39 @@ def source_map_digest(value):
     return sha(json.dumps(value, sort_keys=True).encode('utf-8'))
 
 
+@lru_cache(maxsize=8)
+def git_verification_maps(head, host):
+    schema(digest(head, 40) and host in HOSTS, 'current verification context')
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(ROOT), *args])
+    entries = git('ls-tree', '-r', '-z', head, '--', *sorted(VERIFICATION_BASE_BLOBS)).split(b'\0')
+    blobs = {}
+    for entry in filter(None, entries):
+        metadata, path = entry.decode('ascii').split('\t')
+        mode, kind, blob = metadata.split()
+        schema(mode == '100644' and kind == 'blob', 'verification regular mode')
+        blobs[path] = blob
+    schema(set(blobs) == set(VERIFICATION_BASE_BLOBS), 'verification fixed paths')
+    schema({p for p in blobs if blobs[p] != VERIFICATION_BASE_BLOBS[p]} <= VERIFICATION_LAYER_PATHS,
+           'verification layer scope')
+    physical = {}
+    for path, blob in blobs.items():
+        body = git('cat-file', 'blob', blob)
+        if host == 'windows-x64' and '/tests/' not in path:
+            body = body.replace(b'\n', b'\r\n')
+        physical[path] = sha(body)
+    return physical
+
+
+def current_verification_map(manifest, host):
+    schema(source_map_digest(manifest['verification_sha256']) == VERIFICATION_BASE_SHA256,
+           'immutable baseline verification')
+    head = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode('ascii').strip()
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        schema(head == os.environ.get('GITHUB_SHA'), 'trusted checkout head')
+    return git_verification_maps(head, host)
+
+
 def hash_map(value, count, label):
     schema(isinstance(value, dict) and len(value) == count, label + ' count')
     schema(all(isinstance(path, str) and path and not path.startswith('/')
@@ -108,8 +185,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 11, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission', 'mmd_collision_world_source_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -200,18 +277,43 @@ def load_manifest(path):
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
-    schema(isinstance(supplemental, list) and len(supplemental) == 1, 'one supplemental measurement')
-    for measurement in supplemental:
+    schema(isinstance(supplemental, list) and len(supplemental) == 2, 'two supplemental measurements')
+    for host, measurement in zip(['linux-arm64', 'macos-arm64'], supplemental):
         fields(measurement, MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'}, 'supplemental measurement')
-        schema(measurement['host'] == 'linux-arm64', 'supplemental host')
+        schema(measurement['host'] == host, 'ordered supplemental host')
         captured = measurement['captured_verification_sha256']
         hash_map(captured, 10, 'captured verification')
         schema(set(captured) == verification_paths, 'captured verification paths')
-        protected = bridge_protected_source_map(manifest, measurement['host'])
+        if host == 'macos-arm64':
+            schema(measurement['evidence_head'] == MACOS_CAPTURE_HEAD, 'macOS captured source generation')
+            schema(source_map_digest(captured) == MACOS_CAPTURE_VERIFICATION_SHA256,
+                   'immutable macOS captured verification')
+            protected = macos_capture_protected_source_map(manifest)
+        else:
+            protected = bridge_protected_source_map(manifest, host)
         validate_measurement(measurement, source_map_digest({**protected, **captured}),
                              MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'})
-    schema(source_map_digest(supplemental) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
+    schema(source_map_digest(supplemental[:1]) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
+    schema(source_map_digest(supplemental[1]) == MACOS_SUPPLEMENTAL_SHA256, 'immutable macOS supplemental projection')
     return manifest
+
+
+def macos_capture_protected_source_map(manifest):
+    # Reconstruct the fixed 10bf generation without current verification or later admissions.
+    protected = bridge_protected_source_map(manifest, 'macos-arm64')
+    protected[REGISTRATION_FORMAT['path']] = REGISTRATION_FORMAT['new_sha256']
+    for name in ['broadphase_source_admission', 'discrete_world_source_admission',
+                 'dynamics_world_source_admission', 'dynamics_world_format_admission',
+                 'dynamics_world_c23_repair_admission', 'dynamics_world_c23_test_format_admission',
+                 'mmd_collision_world_source_admission']:
+        delta = manifest[name]['hosts']['macos-arm64']
+        protected.update({path: identity['new_sha256'] for path, identity in delta['replacements'].items()})
+        protected.update(delta.get('additions', {}))
+    protected = apply_mmd_collision_format_admission(protected, 'macos-arm64')
+    hash_map(protected, 472, 'macOS captured protected source')
+    schema(source_map_digest(protected) == MACOS_CAPTURE_PROTECTED_SHA256,
+           'immutable macOS captured protected source')
+    return protected
 
 
 def bridge_protected_source_map(manifest, host):
@@ -234,7 +336,7 @@ def bridge_protected_source_map(manifest, host):
 
 
 def approved_source_map(manifest, host):
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 11, 'schema_version')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 13, 'schema_version')
     protected = bridge_protected_source_map(manifest, host)
     admission = manifest['registration_format_admission']
     schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')
@@ -351,7 +453,44 @@ def approved_source_map(manifest, host):
         protected[path] = identity['new_sha256']
     schema(source_map_digest(admission) == DYNAMICS_WORLD_C23_TEST_FORMAT_SHA256,
            'immutable dynamics world c23 test format admission')
-    return {**protected, **manifest['verification_sha256'][host]}
+    protected = apply_mmd_collision_admission(manifest, host, protected)
+    protected = apply_mmd_collision_format_admission(protected, host)
+    return {**protected, **current_verification_map(manifest, host)}
+
+
+def apply_mmd_collision_admission(manifest, host, protected):
+    schema('mmd_collision_world_source_admission' in manifest, 'required MMD collision world admission')
+    admission = manifest['mmd_collision_world_source_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'MMD collision world admission')
+    schema(admission['kind'] == 'private-mmd-collision-world-source-only'
+           and admission['base_head'] == 'f6ab4feef335e76d590c3f8a9c5f532dec73ba70'
+           and admission['base_tree'] == '005ae1183e9972df56689796cf87589117418e7d'
+           and admission['execution'] == 'UNRUN', 'fixed MMD collision world base and execution')
+    fields(admission['hosts'], HOSTS, 'MMD collision world hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements', 'additions'}, 'MMD collision world delta')
+    fields(delta['replacements'], MMD_COLLISION_WORLD_REPLACEMENTS, 'MMD collision world replacements')
+    hash_map(delta['additions'], len(MMD_COLLISION_WORLD_ADDITIONS), 'MMD collision world additions')
+    schema(set(delta['additions']) == MMD_COLLISION_WORLD_ADDITIONS, 'MMD collision world addition paths')
+    schema(not MMD_COLLISION_WORLD_ADDITIONS & (set(protected) | set(manifest['verification_sha256'][host])),
+           'MMD collision world additions must be absent')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'MMD collision world replacement')
+        schema(protected[path] == identity['old_sha256'], 'MMD collision world old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'MMD collision world new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == MMD_COLLISION_WORLD_SHA256,
+           'immutable MMD collision world admission')
+    return {**protected, **delta['additions']}
+
+
+def apply_mmd_collision_format_admission(protected, host):
+    admission = MMD_COLLISION_WORLD_FORMAT
+    identity = admission['hosts'][host]
+    path = admission['path']
+    schema(protected.get(path) == identity['old_sha256'], 'MMD collision world format old identity')
+    return {**protected, path: identity['new_sha256']}
 
 
 def select_measurement(manifest, host, provenance):
@@ -438,6 +577,12 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['dynamics_world_c23_repair_admission'].items() if name != 'hosts'},
                 'dynamics_world_c23_test_format_admission': {name: value for name, value in
                     manifest['dynamics_world_c23_test_format_admission'].items() if name != 'hosts'},
+                'mmd_collision_world_source_admission': {name: value for name, value in
+                    manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
+                'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
+                'historical_verification_baseline': {
+                    'head': VERIFICATION_BASE, 'four_host_map_sha256': VERIFICATION_BASE_SHA256,
+                    'physical_sha256': manifest['verification_sha256'][host_name]},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

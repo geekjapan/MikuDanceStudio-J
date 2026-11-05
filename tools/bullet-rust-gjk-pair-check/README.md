@@ -43,6 +43,23 @@ Each measurement records its actual evidence head, run, job, artifact, ZIP hash,
 
 `verification_sha256` describes current expected physical source bytes derived from fixed reviewed Git blobs and each path's measured LF or CRLF checkout transport. Its status is `reviewed-current-source-expectation-execution-pending`. This expectation does not claim the historical captures executed the current validator. Receipts return the selected measurement reference and separately identify the current source map and manifest. Runtime schema checks do not authenticate arbitrary artifact IDs. Admission review must resolve the recorded identities to immutable actual GitHub artifacts and members.
 
+For the MMD source layer, `verification_sha256` retains the immutable f6 baseline.
+Current verification identities come from the checkout's Git HEAD blobs for the
+same ten paths. Hosted execution requires HEAD to equal `GITHUB_SHA`. The fixed
+f6 blob map constrains the allowed current changes. A pinned SHA256 of the
+whole four-host `verification_sha256` map authenticates the historical f6
+physical baseline before use. Its canonical encoding is UTF-8
+`json.dumps(map, sort_keys=True)` with Python default separators. Runtime Git
+reads use only HEAD and its ten blobs, so shallow checkouts need no history or
+network access. Only this tool's `README.md`, `check.py`,
+`measured_profiles.py`, and `test_measured_profiles.py` may differ in that map.
+All ten Git entries and every collected physical source must retain regular,
+nonexecutable file modes. Missing paths, extra paths, unexpected verification
+changes, and physical content drift are rejected. Windows transport remains
+CRLF except for the retained LF test paths. Current receipts contain the layered
+map separately from the unchanged historical measurements. This source admission
+does not establish new native, replay, or MMD execution.
+
 Fresh final-head four-host capture and independent review must prove current source-before and source-after identities, the current validator, all commands and twelve streams, full same-host baselines, and 52 compiled mutants with 16 mutation-suite baselines. Historical 39-mutant and 12-baseline runs cannot fill that requirement. Pure replay of both Linux records does not establish fresh native execution in both environments. Compiler executable, linker and runtime-library byte identities remain unknown. Seven legacy whole outer-suite optimized-Python failures remain tracked separately in issue 212. Hosted preparation runs the dedicated model tests under normal Python and `-O` without treating that legacy optimized suite as passing.
 
 
@@ -161,3 +178,46 @@ independent acceptance.
 Schema 10 adds one immutable `dynamics_world_c23_repair_admission` after the complete schema 9 format layer and before current verification. Its base is `c23bdf22be1de8a25db62c0be758b8aa93f0cc7e`, tree `5aa95cc9f23054b68b4a7055d2995a044c74923e`. It replaces exactly the collision owner's borrowed tuple signature and the dedicated dynamics test. Core source uses Windows CRLF; test source retains binary LF. All four maps retain 480 members. The layer is source-only with execution `UNRUN`. Historical admissions, all measured numerics and compiler identities remain unchanged. Dynamics helper source and protocol changes have their separate source proof; this GJK layer grants no producer or execution waiver.
 
 Schema 11 adds the immutable `dynamics_world_c23_test_format_admission` after c23 repair and before current verification. Base `487959db4546d5f71bfafa552f85ccada42073ee`, tree `5b36d3c3ce0b673ba3d7f78de6b0da320255d4ea`, admits only the hosted formatter assertion split in `tests/discrete_dynamics_world.rs`. All four hosts retain binary LF and 480 members. The replacements-only layer is source-only with execution `UNRUN`; it appears only in the current-source receipt. Historical objects, measurements, compiler identities and frozen bridge hashes remain unchanged. The corrected contact-only mutation recipe has a separate source proof and still requires compiled execution.
+
+The schema 12 `mmd_collision_world_source_admission` appends the private MMD
+collision owner and its dedicated test to the fixed `f6ab4fee` base. It replaces
+only `core/mod.rs` in the previous source map. The layer remains `UNRUN` and does
+not add a measurement or change any historical receipt. Windows production
+sources use CRLF and the dedicated test retains its binary checkout bytes.
+
+A separate fixed code contract, `MMD_COLLISION_WORLD_FORMAT`, then admits only
+`tests/mmd_collision_world.rs` from format commit
+`6e16debd2b5c8d3b309d60b47bd0badce1e2175c`, based on `46135113`, tree
+`e7354fdb6b89e5b56e78a189a032f2d275b42e2e`. It binds the old and new Git blobs,
+regular file mode, and exact physical SHA256 for each host. The test has Git
+`-text` transport, so all four identities use LF. The old identity must match
+before its single replacement; the complete current closure must still match.
+The original schema 12 admission digest and historical measurements remain
+unchanged. `current_source.mmd_collision_world_format_admission` records this
+additional source-only contract with execution `UNRUN`.
+
+Schema 13 adds exactly one macOS ARM64 supplemental observation after the existing
+Linux ARM64 record. It retains source head
+`10bfc00bf80178818ca42cf316ed366a4fe435cf`, run `41028942175` attempt 1,
+job `123978074629` (`Existing collision gates (macos-15)`), and artifact
+`12966314066` (`mmd-regression-macos-15`). The ZIP SHA256 is
+`f59824334710948e05363504fae79d220c808be90096814cf69ef608796f8d62`.
+The sole provenance change is `macOS-15.7.9` to `macOS-15.8.2`. The remaining
+12 lines, all three canonical commands, and all twelve stream identities match
+the original macOS profile. The full Rust baseline passed, native and observer
+outputs match, the independent fallback matches, and source integrity is unchanged.
+
+The validator reconstructs this observation from the explicitly fixed admission
+layers through the MMD format replacement. Its 472 protected paths have canonical
+SHA256 `1e930187f12f91991098407bc79a1555735230a20c14272b3f62286fe87f8368`.
+The ten captured verification hashes have their own fixed digest. Together they
+produce `e5f99b38cdba3a16e5c396172971ce76c3f15db9045c4ab9bd2b98310cd07476`.
+Current verification and future admissions cannot rewrite these capture maps.
+The old supplemental projection, historical profiles, fixtures, and admissions
+retain their previous identities. Complete normalized provenance still selects
+exactly one record, with only CRLF transport normalization.
+
+This discovery run failed at the unknown provenance guard. Its mutation gate was
+`not-run`. The observation supplies no successful measured-profile receipt or
+final-head native acceptance. Fresh exact-head hosted capture, compiled mutations,
+suite baselines, final integrity, and independent acceptance remain `UNRUN`.

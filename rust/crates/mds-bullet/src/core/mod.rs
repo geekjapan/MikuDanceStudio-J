@@ -44,6 +44,8 @@ pub mod islands;
 pub mod joint_coordinates;
 pub mod joint_rows;
 pub mod math;
+#[allow(dead_code)]
+pub(crate) mod mmd_collision_world;
 pub mod pair_cache;
 pub mod shape;
 pub mod simplex;

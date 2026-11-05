@@ -529,6 +529,10 @@ impl WorldObjects {
         Ok(self.data[self.index(handle)?].motion.get_world_transform())
     }
 
+    pub fn body_transform(&self, handle: BodyHandle) -> Result<Transform, InvalidArgument> {
+        Ok(self.bodies[self.index(handle)?].snapshot().world)
+    }
+
     pub fn set_public_transform(
         &mut self,
         handle: BodyHandle,

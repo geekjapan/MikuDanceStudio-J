@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use super::activation::ActivationState;
 use super::axis_sweep::AxisSweep32;
 use super::dispatcher::{CollisionDispatcher, DispatcherManifold};
-use super::math::{Transform, Vec3};
+use super::math::{Quat, Transform, Vec3};
 use super::pair_cache::ProxyKey;
 use super::world_objects::{BodyDesc, BodyHandle, JointDesc, WorldObjects};
 use super::InvalidArgument;
@@ -63,6 +63,26 @@ impl MmdCollisionWorld {
 
     pub(crate) fn set_floor(&mut self, on: bool) -> Result<(), InvalidArgument> {
         self.objects.set_floor(on)
+    }
+
+    pub(crate) fn body_transform(&self, body: BodyHandle) -> Result<Transform, InvalidArgument> {
+        self.objects.body_transform(body)
+    }
+
+    pub(crate) fn body_matrix(&self, body: BodyHandle) -> Result<[f32; 16], InvalidArgument> {
+        let world = self.body_transform(body)?;
+        let b = world.basis.0;
+        let [x, y, z] = world.origin.0;
+        // The MMD shim copies the basis directly, without a quaternion round trip.
+        Ok([
+            b[0][0], b[1][0], b[2][0], 0.0, b[0][1], b[1][1], b[2][1], 0.0, b[0][2], b[1][2],
+            b[2][2], 0.0, x, y, z, 1.0,
+        ])
+    }
+
+    pub(crate) fn body_pose(&self, body: BodyHandle) -> Result<(Vec3, Quat), InvalidArgument> {
+        let world = self.body_transform(body)?;
+        Ok((world.origin, world.basis.rotation()))
     }
 
     pub(crate) fn set_kinematic(

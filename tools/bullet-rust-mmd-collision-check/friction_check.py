@@ -210,6 +210,7 @@ def capture(out, authority_path):
     import evidence as ev
     import hooks
     import friction_native as native
+    import friction_dependencies as deps
     import friction_rust as rust
     from cases import dynamics_corpus
     from friction_trace import parse
@@ -332,22 +333,48 @@ def capture(out, authority_path):
             return bindings
         def compile_object(source, obj, label, root, extra):
             flags = legacy.native_flags(root, dynamics=True)
+            all_flags = [*flags, *extra]
+            required = [str(source.resolve(strict=True))]
+            required.extend(str((cwd / Path(all_flags[i + 1])).resolve(strict=True))
+                            for i, flag in enumerate(all_flags) if flag == '-include')
+            def dependency_bindings(path, traced):
+                names = deps.parse(recorder.read(path))
+                bindings = acquire([{'stream': 'depfile', 'ordinal': i, 'raw': name}
+                                    for i, name in enumerate(names)])
+                identity = deps.validate(bindings, required=required,
+                                         traced=[entry['target'] for entry in traced])
+                return bindings, identity
             discovery = obj.with_name('discovery-' + obj.name)
-            raw = schedule.run(label + '-discovery', [compiler, *flags, *extra, '-c', source, '-o', discovery],
-                               cwd=cwd, inputs=[source], outputs=[discovery])
+            discovery_dep = discovery.with_suffix('.d')
+            final_dep = obj.with_suffix('.d')
+            raw = schedule.run(label + '-discovery',
+                               [compiler, *all_flags, '-MD', '-MF', discovery_dep, '-MT', deps.TARGET,
+                                '-c', source, '-o', discovery],
+                               cwd=cwd, inputs=[source], outputs=[discovery, discovery_dep])
             occurrences = ev.include_occurrences(raw, recorder.read(out / (label + '-discovery.stderr')), 'Linux')
             pre = acquire(occurrences)
             pre_manifest, pre_aliases = ev.include_projection(pre, occurrences, 'Linux')
-            dependencies = sorted({Path(binding['target']) for binding in pre})
-            raw = schedule.run(label, [compiler, *flags, *extra, '-c', source, '-o', obj], cwd=cwd,
-                               inputs=[source, *dependencies], outputs=[obj])
+            pre_deps, pre_identity = dependency_bindings(discovery_dep, pre)
+            dependencies = sorted({Path(binding['target']) for binding in pre_deps} - {source.resolve()})
+            raw = schedule.run(label, [compiler, *all_flags, '-MD', '-MF', final_dep, '-MT', deps.TARGET,
+                                       '-c', source, '-o', obj], cwd=cwd,
+                               inputs=[source, *dependencies], outputs=[obj, final_dep])
             occurrences = ev.include_occurrences(raw, recorder.read(out / (label + '.stderr')), 'Linux')
             post = acquire(occurrences)
+            post_deps, post_identity = dependency_bindings(final_dep, post)
+            require(pre_identity == post_identity, 'measured dependency discovery/use equality')
             manifest, post_aliases = ev.include_projection(post, occurrences, 'Linux')
             require((pre_manifest, pre_aliases) == (manifest, post_aliases), 'measured include discovery/use equality')
             recorder.save(out / (label + '-include-bindings.json'),
                           {'schema': 1, 'label': label, 'cwd': str(cwd), 'pre': pre, 'post': post})
             recorder.save(out / (label + '-includes.json'), manifest)
+            recorder.save(out / (label + '-dependency-bindings.json'),
+                          {'schema': 1, 'label': label, 'cwd': str(cwd), 'pre': pre_deps, 'post': post_deps})
+            for binding in post_deps:
+                spelling, identity = binding['raw'], (binding['target'], binding['sha256'])
+                require(spelling not in post_aliases or post_aliases[spelling] == identity,
+                        'consistent trace and dependency aliases')
+                post_aliases[spelling] = identity
             for spelling, binding in post_aliases.items():
                 require(spelling not in aliases or aliases[spelling] == binding, 'fixed include alias across builds')
                 aliases[spelling] = binding
@@ -426,7 +453,7 @@ def capture(out, authority_path):
                            runtime_controls(observed_streams[role], captures[role], inputs, role))
         # Hosted suites use initialized metadata; no write is removed behind a hook.
         suites = ('test_friction_parser.py', 'test_friction_stream.py', 'test_friction_comparison.py',
-                  'test_friction_native.py', 'test_friction_check.py')
+                  'test_friction_native.py', 'test_friction_check.py', 'test_friction_dependencies.py')
         python = recorder.bind_tool(sys.executable)['path']
         for suite in suites:
             schedule.run('controls-' + suite.removeprefix('test_').removesuffix('.py').replace('_', '-'),

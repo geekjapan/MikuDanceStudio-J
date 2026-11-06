@@ -58,7 +58,7 @@ jobs:
           { git rev-parse HEAD; rustup run 1.95.0 rustc -Vv; } > "$RUNNER_TEMP/physics-provenance.txt"
           cargo +1.95.0 clippy --locked -p mds-physics --all-targets -- -D warnings
           cargo +1.95.0 test --locked -p mds-bullet --test mmd_dynamics_world --test mmd_collision_world 2>&1 | tee "$RUNNER_TEMP/physics-owner-tests.log"
-          cargo +1.95.0 test --locked -p mds-physics -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/physics-tests.log"
+          cargo +1.95.0 test --locked --no-fail-fast -p mds-physics -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/physics-tests.log"
       - name: Preserve physics evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

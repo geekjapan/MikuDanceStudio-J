@@ -7,11 +7,11 @@ pub struct Vec3(pub [f32; 3]);
 impl Vec3 {
     pub const ZERO: Self = Self([0.0; 3]);
 
-    pub fn add(self, rhs: Self) -> Self {
+    pub(crate) fn add(self, rhs: Self) -> Self {
         Self(std::array::from_fn(|i| self.0[i] + rhs.0[i]))
     }
 
-    pub fn sub(self, rhs: Self) -> Self {
+    pub(crate) fn sub(self, rhs: Self) -> Self {
         Self(std::array::from_fn(|i| self.0[i] - rhs.0[i]))
     }
 

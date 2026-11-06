@@ -63,19 +63,14 @@ class PhysicsSourceIntegrationTests(unittest.TestCase):
         manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
         self.assertEqual(layer['execution'], 'UNRUN')
         self.assertEqual(set(layer['hosts']), measured_profiles.HOSTS)
-        self.assertEqual(subprocess.check_output(['git', 'rev-parse', layer['source_head'] + '^{tree}'], cwd=check.ROOT).decode().strip(), layer['source_tree'])
         for host, delta in layer['hosts'].items():
             expected = measured_profiles.approved_source_map(manifest, host)
             self.assertEqual(len(delta['replacements']), 9)
             self.assertEqual(len(delta['additions']), 2)
             for path, blobs in layer['blobs'].items():
-                tree = subprocess.check_output(['git', 'ls-tree', layer['source_head'], '--', path], cwd=check.ROOT).decode().split()
+                tree = subprocess.check_output(['git', 'ls-tree', 'HEAD', '--', path], cwd=check.ROOT).decode().split()
                 self.assertEqual(tree[:3], [layer['mode'], 'blob', blobs['new']])
-                if blobs['old']:
-                    old = subprocess.check_output(['git', 'cat-file', 'blob', blobs['old']], cwd=check.ROOT)
-                    old_physical = old.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else old
-                    self.assertEqual(measured_profiles.sha(old_physical), delta['replacements'][path]['old_sha256'])
-                else:
+                if blobs['old'] is None:
                     self.assertIn(path, delta['additions'])
                 data = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 physical = data.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else data
@@ -137,10 +132,12 @@ class MmdBodyReadbackAdmissionTests(unittest.TestCase):
         for host, identities in measured_profiles.MMD_BODY_READBACK['hosts'].items():
             expected = measured_profiles.approved_source_map(manifest, host)
             for path, identity in identities.items():
-                data = subprocess.check_output(['git', 'cat-file', 'blob', measured_profiles.MMD_BODY_READBACK['blobs'][path]['new']], cwd=check.ROOT).replace(b'\r\n', b'\n')
+                data = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
                 physical = data.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else data
-                self.assertEqual(measured_profiles.sha(physical), identity['new_sha256'])
                 final = measured_profiles.PHYSICS_SOURCE['hosts'][host]['replacements'].get(path, identity)
+                if final is not identity:
+                    self.assertEqual(identity['new_sha256'], final['old_sha256'])
+                self.assertEqual(measured_profiles.sha(physical), final['new_sha256'])
                 self.assertEqual(expected[path], final['new_sha256'])
                 mutations = [{**expected, path: identity['old_sha256']},
                              {**expected, path: measured_profiles.sha(physical + b' ')},

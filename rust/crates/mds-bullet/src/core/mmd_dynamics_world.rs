@@ -101,7 +101,7 @@ impl MmdDynamicsWorld {
     ) -> Result<i32, StepError> {
         let step = self
             .clock
-            .advance(dt, max_substeps, fixed)
+            .advance_mmd(dt, max_substeps, fixed)
             .map_err(|_| StepError::InvalidArgument)?;
         observe(DynamicsEvent::Clock(step));
         if step.requested != 0 {

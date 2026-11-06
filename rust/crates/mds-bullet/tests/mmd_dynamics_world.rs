@@ -253,7 +253,7 @@ fn mmd_dynamics_rejects_invalid_steps_and_foreign_handles_without_clock_change()
     for (dt, max, fixed) in [
         (f32::NAN, 1, 0.125),
         (f32::INFINITY, 1, 0.125),
-        (-1.0, 1, 0.125),
+        (-1.0, 0, 0.125),
         (0.0, -1, 0.125),
         (0.0, 1, 0.0),
         (0.0, 1, f32::NAN),
@@ -270,6 +270,34 @@ fn mmd_dynamics_rejects_invalid_steps_and_foreign_handles_without_clock_change()
         w.solver_workspace().slot(0).unwrap_err(),
         UninitializedSolverSlot(0)
     );
+}
+
+#[test]
+fn mmd_dynamics_negative_pump_budget_is_retained_until_repaid() {
+    let mut w = MmdDynamicsWorld::new();
+    w.step_simulation(0.0, 1, 1.0 / 60.0, |_| {}).unwrap();
+    let body = w.create_body(sphere(0.0, 10.0), 1).unwrap();
+    w.set_gravity(Vec3([0.0, -8.0, 0.0])).unwrap();
+    let before = w.body_matrix(body).unwrap();
+    for (dt, remainder) in [(-0.25, -0.25), (0.125, -0.125)] {
+        let mut clock = None;
+        assert_eq!(
+            w.step_simulation(dt, 4, 0.125, |event| {
+                if let DynamicsEvent::Clock(step) = event {
+                    clock = Some(step);
+                }
+            }),
+            Ok(0)
+        );
+        let clock = clock.unwrap();
+        assert_eq!(clock.executed, 0);
+        assert_eq!(clock.remainder, remainder);
+        assert_eq!(w.body_matrix(body).unwrap(), before);
+    }
+    assert_eq!(w.step_simulation(0.25, 4, 0.125, |_| {}), Ok(1));
+    let state = w.collision().objects().bodies()[1].snapshot();
+    assert_eq!(state.linear_velocity, Vec3([0.0, -1.0, 0.0]));
+    assert_eq!(state.world.origin, Vec3([0.0, 9.875, 0.0]));
 }
 
 #[test]

@@ -30,11 +30,32 @@ impl StepClock {
         max_substeps: i32,
         fixed: f32,
     ) -> Result<Step, InvalidArgument> {
-        if !dt.is_finite() || dt < 0.0 || max_substeps < 0 || !fixed.is_finite() || fixed <= 0.0 {
+        if dt < 0.0 {
+            return Err(InvalidArgument);
+        }
+        self.advance_mmd(dt, max_substeps, fixed)
+    }
+
+    pub(crate) fn advance_mmd(
+        &mut self,
+        dt: f32,
+        max_substeps: i32,
+        fixed: f32,
+    ) -> Result<Step, InvalidArgument> {
+        // MMD catch-up can spend more than the pump budget; Bullet retains that debt.
+        if !dt.is_finite()
+            || (dt < 0.0 && max_substeps == 0)
+            || max_substeps < 0
+            || !fixed.is_finite()
+            || fixed <= 0.0
+        {
             return Err(InvalidArgument);
         }
         let (requested, executed, step, remainder) = if max_substeps != 0 {
             let accumulated = self.local_time + dt;
+            if !accumulated.is_finite() {
+                return Err(InvalidArgument);
+            }
             let count = if accumulated >= fixed {
                 accumulated / fixed
             } else {

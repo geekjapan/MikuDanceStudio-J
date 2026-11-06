@@ -14,6 +14,80 @@ import measured_profiles
 from test_capture import mutations
 
 
+class PhysicsSourceAdmissionTests(unittest.TestCase):
+    def test_fixed_contract_mutations_fail(self):
+        layer = measured_profiles.PHYSICS_SOURCE
+        path = next(iter(layer['blobs']))
+        changes = [lambda x: x.update(execution='PASS'),
+                   lambda x: x.update(source_head='0' * 40),
+                   lambda x: x.update(source_tree='0' * 40),
+                   lambda x: x.update(base_head='0' * 40),
+                   lambda x: x.update(mode='100755'),
+                   lambda x: x['blobs'][path].update(new='0' * 40),
+                   lambda x: x['hosts'].pop('windows-x64'),
+                   lambda x: x['hosts']['linux-x64']['additions'].update(extra='0' * 64)]
+        for change in changes:
+            value = copy.deepcopy(layer)
+            change(value)
+            with patch.object(measured_profiles, 'PHYSICS_SOURCE', value), self.assertRaisesRegex(ValueError, 'immutable Rust physics'):
+                measured_profiles.apply_physics_source_admission({}, 'linux-x64', {})
+
+    def test_old_identity_addition_absence_and_no_input_mutation(self):
+        for host, delta in measured_profiles.PHYSICS_SOURCE['hosts'].items():
+            old = {p: v['old_sha256'] for p, v in delta['replacements'].items()}
+            old['unchanged'] = '1' * 64
+            original = dict(old)
+            result = measured_profiles.apply_physics_source_admission(old, host, {})
+            expected = {**old, **{p: v['new_sha256'] for p, v in delta['replacements'].items()}, **delta['additions']}
+            self.assertEqual(result, expected)
+            self.assertEqual(old, original)
+            for path in delta['replacements']:
+                for bad in ({**old, path: '0' * 64}, {p: v for p, v in old.items() if p != path}):
+                    with self.assertRaisesRegex(ValueError, 'old identity'):
+                        measured_profiles.apply_physics_source_admission(bad, host, {})
+            for path in delta['additions']:
+                with self.assertRaisesRegex(ValueError, 'additions must be absent'):
+                    measured_profiles.apply_physics_source_admission({**old, path: delta['additions'][path]}, host, {})
+            for path in {*delta['additions'], *delta['replacements']}:
+                with self.assertRaises(ValueError):
+                    measured_profiles.apply_physics_source_admission(old, host, {path: '0' * 64})
+            with self.assertRaisesRegex(ValueError, 'additions must be absent'):
+                measured_profiles.apply_physics_source_admission(result, host, {})
+        with self.assertRaisesRegex(ValueError, 'source host'):
+            measured_profiles.apply_physics_source_admission({}, 'unknown', {})
+
+
+class PhysicsSourceIntegrationTests(unittest.TestCase):
+    def test_fixed_git_identities_current_bytes_and_complete_closure(self):
+        layer = measured_profiles.PHYSICS_SOURCE
+        manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
+        self.assertEqual(layer['execution'], 'UNRUN')
+        self.assertEqual(set(layer['hosts']), measured_profiles.HOSTS)
+        self.assertEqual(subprocess.check_output(['git', 'rev-parse', layer['source_head'] + '^{tree}'], cwd=check.ROOT).decode().strip(), layer['source_tree'])
+        for host, delta in layer['hosts'].items():
+            expected = measured_profiles.approved_source_map(manifest, host)
+            self.assertEqual(len(delta['replacements']), 9)
+            self.assertEqual(len(delta['additions']), 2)
+            for path, blobs in layer['blobs'].items():
+                tree = subprocess.check_output(['git', 'ls-tree', layer['source_head'], '--', path], cwd=check.ROOT).decode().split()
+                self.assertEqual(tree[:3], [layer['mode'], 'blob', blobs['new']])
+                if blobs['old']:
+                    old = subprocess.check_output(['git', 'cat-file', 'blob', blobs['old']], cwd=check.ROOT)
+                    old_physical = old.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else old
+                    self.assertEqual(measured_profiles.sha(old_physical), delta['replacements'][path]['old_sha256'])
+                else:
+                    self.assertIn(path, delta['additions'])
+                data = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+                physical = data.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else data
+                self.assertEqual(expected[path], measured_profiles.sha(physical))
+                for changed in ({**expected, path: '0' * 64},
+                                {p: v for p, v in expected.items() if p != path},
+                                {**expected, 'unexpected.rs': '0' * 64}):
+                    with self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=None,
+                            source_hashes=lambda: changed, stream=None, transport=None)
+
+
 class MmdBodyReadbackAdmissionTests(unittest.TestCase):
     def test_fixed_readback_metadata_and_digest_reject_edits(self):
         layer = measured_profiles.MMD_BODY_READBACK
@@ -58,15 +132,16 @@ class MmdBodyReadbackAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'readback host'):
                 measured_profiles.apply_mmd_body_readback_admission(old, 'unknown')
 
-    def test_current_readback_bytes_and_complete_closure_refusals(self):
+    def test_readback_intermediate_bytes_and_complete_closure_refusals(self):
         manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
         for host, identities in measured_profiles.MMD_BODY_READBACK['hosts'].items():
             expected = measured_profiles.approved_source_map(manifest, host)
             for path, identity in identities.items():
-                data = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+                data = subprocess.check_output(['git', 'cat-file', 'blob', measured_profiles.MMD_BODY_READBACK['blobs'][path]['new']], cwd=check.ROOT).replace(b'\r\n', b'\n')
                 physical = data.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else data
                 self.assertEqual(measured_profiles.sha(physical), identity['new_sha256'])
-                self.assertEqual(expected[path], identity['new_sha256'])
+                final = measured_profiles.PHYSICS_SOURCE['hosts'][host]['replacements'].get(path, identity)
+                self.assertEqual(expected[path], final['new_sha256'])
                 mutations = [{**expected, path: identity['old_sha256']},
                              {**expected, path: measured_profiles.sha(physical + b' ')},
                              {p: h for p, h in expected.items() if p != path},
@@ -211,7 +286,7 @@ class DynamicsFormatAdmissionTests(unittest.TestCase):
         self.assertEqual(measured_profiles.source_map_digest(layer), measured_profiles.DYNAMICS_WORLD_FORMAT_SHA256)
         for host, profile in self.manifest['profiles'].items():
             source = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(source), 482)
+            self.assertEqual(len(source), 484)
             for path, identity in layer['hosts'][host]['replacements'].items():
                 self.assertEqual(identity['old_sha256'], self.manifest['dynamics_world_source_admission']['hosts'][host]['additions'][path])
                 raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
@@ -332,7 +407,7 @@ class DynamicsC23RepairAdmissionTests(unittest.TestCase):
         self.assertEqual(layer['execution'], 'UNRUN')
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(source), 482)
+            self.assertEqual(len(source), 484)
             replacements = layer['hosts'][host]['replacements']
             self.assertEqual(set(replacements), measured_profiles.DYNAMICS_WORLD_C23_REPAIR_REPLACEMENTS)
             for path, identity in replacements.items():
@@ -425,7 +500,7 @@ class DynamicsC23TestFormatAdmissionTests(unittest.TestCase):
         self.assertEqual(layer['execution'], 'UNRUN')
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(source), 482)
+            self.assertEqual(len(source), 484)
             replacements = layer['hosts'][host]['replacements']
             self.assertEqual(set(replacements), measured_profiles.DYNAMICS_WORLD_C23_TEST_FORMAT_REPLACEMENTS)
             for path, identity in replacements.items():
@@ -741,6 +816,7 @@ class MacosSupplementalMeasurementTests(unittest.TestCase):
         changed['future_source_admission'] = {'anything': '0' * 64}
         with patch.object(measured_profiles, 'approved_source_map', side_effect=AssertionError('current source used')), \
                 patch.object(measured_profiles, 'apply_mmd_body_readback_admission', side_effect=AssertionError('readback layer used for history')), \
+                patch.object(measured_profiles, 'apply_physics_source_admission', side_effect=AssertionError('physics layer used for history')), \
                 patch.object(measured_profiles, 'current_verification_map', side_effect=AssertionError('current verification used')):
             self.assertEqual(measured_profiles.macos_capture_protected_source_map(changed), protected)
         path = next(iter(changed['mmd_collision_world_source_admission']['hosts']['macos-arm64']['additions']))
@@ -896,6 +972,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                              | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS
                              | measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DYNAMICS_WORLD_ADDITIONS
                              | measured_profiles.MMD_COLLISION_WORLD_ADDITIONS
+                             | set(measured_profiles.PHYSICS_SOURCE['hosts'][host]['additions'])
                              | set(self.manifest['verification_sha256'][host]))
 
     def test_discrete_world_current_only_admission_refuses_identity_and_scope_drift(self):
@@ -1044,6 +1121,7 @@ class FiniteMeasurementTests(unittest.TestCase):
             expected=replacements & historical
             self.assertEqual(expected,measured_profiles.REPLACEMENTS | {
                 'rust/crates/mds-bullet/src/core/world_objects.rs'})
+            expected |= set(measured_profiles.PHYSICS_SOURCE['hosts'][host]['replacements']) & set(old)
             self.assertEqual({path for path in old if old[path] != current[path]},expected)
         captured = {**measured_profiles.bridge_protected_source_map(self.manifest, 'linux-arm64'),
                     **measurement['captured_verification_sha256']}
@@ -1227,6 +1305,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))
                 self.assertEqual(receipt['current_source']['registration_format_admission'], measured_profiles.REGISTRATION_FORMAT)
                 self.assertEqual(receipt['current_source']['mmd_body_readback_admission'], measured_profiles.MMD_BODY_READBACK)
+                self.assertEqual(receipt['current_source']['rust_physics_source_admission'], measured_profiles.PHYSICS_SOURCE)
                 self.assertEqual(receipt['current_source']['broadphase_source_admission'],
                     {k: v for k, v in self.manifest['broadphase_source_admission'].items() if k != 'hosts'})
                 self.assertEqual(receipt['current_source']['status'], 'reviewed-current-source-expectation-execution-pending')

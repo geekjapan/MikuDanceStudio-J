@@ -240,3 +240,19 @@ measurement. The layer is recorded as source-only `UNRUN` in
 profiles, the macOS captured map, native fixtures, compiler selection, command
 checks, or numerical comparisons. Fresh hosted capture and mutation evidence
 remain required for acceptance.
+
+The next current-only layer admits Rust physics source at
+`fe0199af83bdb39e6b725729eb6d72fa343d659d`, tree
+`fd5d1b9805d93131f87914042aec835e35413364`, against the readback-admitted
+source at `13c3083067b65db95f89b072ed82dbd627b9fa99`. Its nine replacements
+and two additions are fixed by path, mode, Git blob, physical host hashes,
+and contract digest in `PHYSICS_SOURCE`. It applies after readback admission;
+the protected/current verification map has 484 entries. The old 472-entry
+macOS capture and all historical measurements remain unchanged. Additions
+must be absent from both source and verification maps; replacements require
+their exact prior hashes. Reapplying the layer fails.
+
+`current_source.rust_physics_source_admission` records source-only `UNRUN`.
+This collector covers Bullet, not `mds-physics`, Cargo.lock, or application
+workflow behavior. The dedicated application physics CI and fresh native
+capture remain required; admitting these bytes does not establish parity.

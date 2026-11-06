@@ -142,6 +142,75 @@ MMD_BODY_READBACK = {
         },
     } for host in HOSTS},
 }
+PHYSICS_SOURCE_SHA256 = 'ea2cf1928954e7d42e69c743d37ccc324468b5c8f0eebe2db0270677e1a6b20d'
+PHYSICS_SOURCE = {'kind': 'fixed-rust-physics-source-only',
+ 'base_head': '13c3083067b65db95f89b072ed82dbd627b9fa99',
+ 'source_head': 'fe0199af83bdb39e6b725729eb6d72fa343d659d',
+ 'source_tree': 'fd5d1b9805d93131f87914042aec835e35413364',
+ 'execution': 'UNRUN',
+ 'mode': '100644',
+ 'blobs': {'rust/crates/mds-bullet/Cargo.toml': {'old': '6e5d5dd46325bb4a68f89b82d23b0634bc49c730',
+                                                 'new': '16e82114327025f48f734ad61a0ee92683915954'},
+           'rust/crates/mds-bullet/examples/free_sphere_oracle.rs': {'old': '4f6aea093ef8d4f6a3d895afcfa6b7c09c8bdd0d',
+                                                                     'new': 'f0ae608a8df1131de4cca9639283ce36465e0fd0'},
+           'rust/crates/mds-bullet/src/core/math.rs': {'old': 'e201294775bbfc9b8b3e0142a88a11a872e3d8e4',
+                                                       'new': '5df661a8d20a39ae1a3e53c0cf09a42ecab62457'},
+           'rust/crates/mds-bullet/src/core/mmd_collision_world.rs': {'old': '474d494d56d28e3ab5f7cf1b1a0903fd8da2e7b1',
+                                                                      'new': '1b3e1cad44e9f92f4a23c1384e71a617aa6c6588'},
+           'rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs': {'old': None,
+                                                                     'new': '1ee5affe2150358f5c4d6452436a415ce5291381'},
+           'rust/crates/mds-bullet/src/core/mod.rs': {'old': 'ea5e99031b2dfdefc3b64394afed6b2d3c543312',
+                                                      'new': 'bcdbfd1aac5896bd0158ad5804ccd8b113d048b0'},
+           'rust/crates/mds-bullet/src/lib.rs': {'old': '98638cafa4de876cee7490adfc2fe23ea3142e98',
+                                                 'new': '54b53c1d04cf6d4887bb6858e8e506e172a7effa'},
+           'rust/crates/mds-bullet/tests/data/README.md': {'old': '15bd0f3019ccc91e98e53735a2dac0633eea8168',
+                                                           'new': '4dc470d5ac1cf3823e6bd8a74b4f6f102e3d38a7'},
+           'rust/crates/mds-bullet/tests/free_sphere_native.rs': {'old': 'fe2b60e326ca1354fe7df35543a7cc1de95ec467',
+                                                                  'new': '7bce153c84eae5cd7f2c35c70a29020596bf7e8d'},
+           'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': {'old': None,
+                                                                  'new': '4c4ebdd19f7f5a6d22e0577db122b4dd08581ec0'},
+           'rust/crates/mds-bullet/tests/world.rs': {'old': '76101107eb6a34816e9ac391789ef7593b716046',
+                                                     'new': '4113bfe4f72a2470c73ef204cb47d2cc95f80a2b'}},
+ 'hosts': {host: ({'replacements': {'rust/crates/mds-bullet/Cargo.toml': {'old_sha256': '197af14c1241b6e1942fcb450346f21dbdec08bcf140bce1d7e4332e7ca8bfba',
+                                                        'new_sha256': 'ad3bb6747cab5f0e2d9493764cb8c2662f90123c9b63cd847fefeab5dabdec7d'},
+                  'rust/crates/mds-bullet/examples/free_sphere_oracle.rs': {'old_sha256': 'f176d6c2b660bcb19a9b68a27a0812c90fde4bffbdfd6d1a495117cbee64d0d2',
+                                                                            'new_sha256': 'ca792c38cc8aa32fcf35c2cc3a347001f12d713db5d8c4a59415c00000e8ca5a'},
+                  'rust/crates/mds-bullet/src/core/math.rs': {'old_sha256': 'b468eace2cfb7cf961a4448a1a3b0c38ac32a18e434cc4984f1395bfd18f15f5',
+                                                              'new_sha256': '63a4c9c0bc7d5077962cb0ce28aeb778592a0ad5557b7bcff9e3b953a85bbef6'},
+                  'rust/crates/mds-bullet/src/core/mmd_collision_world.rs': {'old_sha256': 'a2d6f0f8fd4b02ced744ce69b31142453bfb79d65693732cc573a38f515866a0',
+                                                                             'new_sha256': '0844301830cab8f403b832fb2d7c4f01d1ebca8beedf69d3bc9a3d09644e5690'},
+                  'rust/crates/mds-bullet/src/core/mod.rs': {'old_sha256': '42ecdfc0ab768b3ed403d89617e056fd61e01ef9118426c7cdd1f81beecfc9c0',
+                                                             'new_sha256': '272f578bdd560e0e231f411ab422326cdb0e52a955ec4367338888f7309890cb'},
+                  'rust/crates/mds-bullet/src/lib.rs': {'old_sha256': '0bbc3187be8c6a8f97f49039e8e193a348120af5ec976ae4aee251ae83739fd7',
+                                                        'new_sha256': '6e995f763ca1405411b1b5aef884325d1c9bd0fd93a4f8034dc4d2d3b01a4d98'},
+                  'rust/crates/mds-bullet/tests/data/README.md': {'old_sha256': '34efaf6ce72b03d005a2aecc6e06bf5d4a1a41a96d751851332c3689d365ec7c',
+                                                                  'new_sha256': '4958dcd6610c3754e48c69474ec1da1f93459dfe2613857e51e3d55eee91d87e'},
+                  'rust/crates/mds-bullet/tests/free_sphere_native.rs': {'old_sha256': 'bd287e44a20280d80b0c8a7c09b43a3b7b54e4cd67815da57e81e4dd8cf7bd27',
+                                                                         'new_sha256': 'd5a296b1ddf6e69d24399cd369dbaf63efdf42581ddce847e0aef6fdcf9ee778'},
+                  'rust/crates/mds-bullet/tests/world.rs': {'old_sha256': '6e684bee3869c4fc5fcc4960fdee8876108134aa28ba9b6bb4b95e6e2b64b03a',
+                                                            'new_sha256': '4c631fbeae74042491e86758dd031f8633f46aa65af587d8cfea00b5ed2df8b1'}},
+ 'additions': {'rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs': 'ea47f602a426d59c5c7ece8b9105fbd56a09cbe7e79a9f3c33b12d007f767277',
+               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24'}}
+ if host == 'windows-x64' else {'replacements': {'rust/crates/mds-bullet/Cargo.toml': {'old_sha256': 'd7f5097c2a952290c3d5383db34449ed2897585c82f22ba87ecff6a5ae2efa30',
+                                                        'new_sha256': 'c9a0703ef18c8aaa133aa26b9b27b8fdc920b9b0a99174d8b6dc175c682ceb05'},
+                  'rust/crates/mds-bullet/examples/free_sphere_oracle.rs': {'old_sha256': '70b3f7714d21b4d0f258ab19e29f5f533d6e714e7cdaf919636e410d926c04a7',
+                                                                            'new_sha256': '5c0f81a25640e62b76ee049f16d3556fde259c3327d58144bd778eeb0a0ac4b3'},
+                  'rust/crates/mds-bullet/src/core/math.rs': {'old_sha256': '04bb3c1660b9ddc501cb66250d57cf1e757972e16f327896c189756f86283e97',
+                                                              'new_sha256': '3715d74154555fea75a011df88cf18465c228ef1d2cdba36b0abcc03530ed61c'},
+                  'rust/crates/mds-bullet/src/core/mmd_collision_world.rs': {'old_sha256': 'f4d003e50c47d40673523fbc7fa0f2dae9445a1059fcbc7120397a87d43dede4',
+                                                                             'new_sha256': '23fcc48c1b0e69679fbda09e4c0fd2b3d7fa4590ed72313d9e07961b6355bae2'},
+                  'rust/crates/mds-bullet/src/core/mod.rs': {'old_sha256': '0eed3be19462611221283dba7fa5b514bc07a751c6aa252d06fde32efe05b084',
+                                                             'new_sha256': '550a900b05f58b32c025d9d34576aa08cc19d8169ac3a1c71aee7b0cf95c35be'},
+                  'rust/crates/mds-bullet/src/lib.rs': {'old_sha256': 'd898767584df0e4d45a16231b9d35183edd267cb7ca1a51c767a2012ffb385e1',
+                                                        'new_sha256': '21765723bc894d5a6fc8364730184d481744886d58f4df5181b6694c32810092'},
+                  'rust/crates/mds-bullet/tests/data/README.md': {'old_sha256': '34efaf6ce72b03d005a2aecc6e06bf5d4a1a41a96d751851332c3689d365ec7c',
+                                                                  'new_sha256': '4958dcd6610c3754e48c69474ec1da1f93459dfe2613857e51e3d55eee91d87e'},
+                  'rust/crates/mds-bullet/tests/free_sphere_native.rs': {'old_sha256': 'bd287e44a20280d80b0c8a7c09b43a3b7b54e4cd67815da57e81e4dd8cf7bd27',
+                                                                         'new_sha256': 'd5a296b1ddf6e69d24399cd369dbaf63efdf42581ddce847e0aef6fdcf9ee778'},
+                  'rust/crates/mds-bullet/tests/world.rs': {'old_sha256': '6e684bee3869c4fc5fcc4960fdee8876108134aa28ba9b6bb4b95e6e2b64b03a',
+                                                            'new_sha256': '4c631fbeae74042491e86758dd031f8633f46aa65af587d8cfea00b5ed2df8b1'}},
+ 'additions': {'rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs': 'bef581de4be1d274954e61adf5f2565f3166abf9b47563222cc4a6a95dbfeec2',
+               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24'}}) for host in HOSTS}}
 COMMANDS = {'native-command.json', 'effective-native-command.json', 'observed-command.json'}
 STREAMS = {'capture/' + prefix + name + '.tsv'
            for prefix in ['', 'compact-', 'fallback-'] for name in ['inputs', 'native', 'observed', 'rust']}
@@ -498,7 +567,9 @@ def approved_source_map(manifest, host):
     protected = apply_mmd_collision_admission(manifest, host, protected)
     protected = apply_mmd_collision_format_admission(protected, host)
     protected = apply_mmd_body_readback_admission(protected, host)
-    return {**protected, **current_verification_map(manifest, host)}
+    verification = current_verification_map(manifest, host)
+    protected = apply_physics_source_admission(protected, host, verification)
+    return {**protected, **verification}
 
 
 def apply_mmd_collision_admission(manifest, host, protected):
@@ -545,6 +616,21 @@ def apply_mmd_body_readback_admission(protected, host):
         schema(protected.get(path) == identity['old_sha256'], 'MMD body readback old identity')
         result[path] = identity['new_sha256']
     return result
+
+
+def apply_physics_source_admission(protected, host, verification):
+    schema(source_map_digest(PHYSICS_SOURCE) == PHYSICS_SOURCE_SHA256,
+           'immutable Rust physics source admission')
+    schema(host in HOSTS, 'Rust physics source host')
+    delta = PHYSICS_SOURCE['hosts'][host]
+    schema(not set(delta['additions']) & (set(protected) | set(verification)),
+           'Rust physics additions must be absent')
+    schema(not set(delta['replacements']) & set(verification), 'Rust physics verification overlap')
+    result = dict(protected)
+    for path, identity in delta['replacements'].items():
+        schema(protected.get(path) == identity['old_sha256'], 'Rust physics old identity')
+        result[path] = identity['new_sha256']
+    return {**result, **delta['additions']}
 
 
 def select_measurement(manifest, host, provenance):
@@ -635,6 +721,7 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
                 'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
                 'mmd_body_readback_admission': MMD_BODY_READBACK,
+                'rust_physics_source_admission': PHYSICS_SOURCE,
                 'historical_verification_baseline': {
                     'head': VERIFICATION_BASE, 'four_host_map_sha256': VERIFICATION_BASE_SHA256,
                     'physical_sha256': manifest['verification_sha256'][host_name]},

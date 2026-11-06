@@ -1,4 +1,4 @@
-//! Safe wrapper over the vendored Bullet 2.75.
+//! Rust implementation of the vendored Bullet 2.75 public world.
 //!
 //! A [`World`] owns every body and joint made through it and frees them when
 //! dropped. [`BodyId`] and [`JointId`] are plain indices tagged with their
@@ -6,9 +6,16 @@
 //! Quaternions are `[x, y, z, w]`.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-use mds_bullet_sys as sys;
+#[allow(dead_code)]
+mod core;
+
+use core::dbvt::DbvtPolicy;
+use core::discrete_dynamics_world::{DiscreteDynamicsWorld, StepError};
+use core::math::{Quat, Vec3};
+use core::world_objects::{BodyHandle, Pose};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -17,7 +24,7 @@ pub enum Error {
     /// A value is non-finite, out of range, or unsupported for this call.
     InvalidArgument,
     OutOfMemory,
-    /// Bullet threw an exception.
+    /// The physics solver could not complete the step.
     Internal,
 }
 
@@ -35,16 +42,6 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-fn check(rc: i32) -> Result<()> {
-    match rc {
-        sys::MDS_BT_OK => Ok(()),
-        sys::MDS_BT_ERR_NULL => Err(Error::InvalidHandle),
-        sys::MDS_BT_ERR_INVALID => Err(Error::InvalidArgument),
-        sys::MDS_BT_ERR_ALLOC => Err(Error::OutOfMemory),
-        _ => Err(Error::Internal),
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Shape {
@@ -69,15 +66,13 @@ pub enum Shape {
 impl Shape {
     fn raw(&self) -> (i32, [f32; 4]) {
         match *self {
-            Shape::Sphere { radius } => (sys::MDS_BT_SHAPE_SPHERE, [radius, 0.0, 0.0, 0.0]),
-            Shape::Box { half_extents: h } => (sys::MDS_BT_SHAPE_BOX, [h[0], h[1], h[2], 0.0]),
-            Shape::Capsule { radius, height } => {
-                (sys::MDS_BT_SHAPE_CAPSULE, [radius, height, 0.0, 0.0])
-            }
+            Shape::Sphere { radius } => (0, [radius, 0.0, 0.0, 0.0]),
+            Shape::Box { half_extents: h } => (1, [h[0], h[1], h[2], 0.0]),
+            Shape::Capsule { radius, height } => (2, [radius, height, 0.0, 0.0]),
             Shape::StaticPlane {
                 normal: n,
                 constant,
-            } => (sys::MDS_BT_SHAPE_STATIC_PLANE, [n[0], n[1], n[2], constant]),
+            } => (3, [n[0], n[1], n[2], constant]),
         }
     }
 }
@@ -180,6 +175,9 @@ impl JointDesc {
 }
 
 static NEXT_WORLD_ID: AtomicU64 = AtomicU64::new(1);
+static LIVE_WORLDS: AtomicI64 = AtomicI64::new(0);
+static LIVE_BODIES: AtomicI64 = AtomicI64::new(0);
+static LIVE_JOINTS: AtomicI64 = AtomicI64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BodyId {
@@ -205,60 +203,78 @@ impl JointId {
     }
 }
 
+/// Owns the simulation and remains confined to its creating thread.
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<mds_bullet::World>();
+/// ```
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<mds_bullet::World>();
+/// ```
 pub struct World {
-    raw: *mut sys::mds_bt_world,
+    inner: DiscreteDynamicsWorld,
     id: u64,
-    bodies: Vec<*mut sys::mds_bt_body>,
-    joints: usize,
+    bodies: Vec<BodyHandle>,
+    // Preserve the public wrapper's thread confinement.
+    _thread: PhantomData<*mut ()>,
 }
 
-// World is neither Send nor Sync: Bullet keeps process-wide mutable statics
-// (btRigidBody's id counter, the aligned-allocator counters) that are not atomic.
+fn pose(t: &Transform) -> Pose {
+    Pose {
+        position: Vec3(t.position),
+        rotation: Quat(t.rotation),
+    }
+}
 
 impl World {
     /// A world with gravity (0, -9.8, 0).
     pub fn new() -> Result<World> {
-        let raw = unsafe { sys::mds_bt_world_create() };
-        if raw.is_null() {
-            return Err(Error::OutOfMemory);
-        }
-        Ok(World {
-            raw,
+        let policy = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            DbvtPolicy::MmdWin64Sse
+        } else {
+            DbvtPolicy::GenericReference
+        };
+        let world = World {
+            inner: DiscreteDynamicsWorld::public(policy),
             id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             bodies: Vec::new(),
-            joints: 0,
-        })
+            _thread: PhantomData,
+        };
+        LIVE_WORLDS.fetch_add(1, Ordering::Relaxed);
+        Ok(world)
     }
 
-    /// Set gravity before adding bodies: Bullet gives each body the gravity
-    /// of the moment it is added and only refreshes active bodies afterwards.
+    /// Set gravity before adding bodies: each body keeps its creation gravity
+    /// until a later gravity change refreshes active bodies.
     pub fn set_gravity(&mut self, gravity: [f32; 3]) -> Result<()> {
-        check(unsafe {
-            sys::mds_bt_world_set_gravity(self.raw, gravity[0], gravity[1], gravity[2])
-        })
+        self.inner
+            .set_gravity(Vec3(gravity))
+            .map_err(|_| Error::InvalidArgument)
     }
 
     pub fn add_body(&mut self, desc: &BodyDesc) -> Result<BodyId> {
         let (shape_kind, shape_params) = desc.shape.raw();
-        let filter = desc.filter.unwrap_or(Filter { group: 0, mask: 0 });
-        let raw_desc = sys::mds_bt_body_desc {
-            shape_kind,
-            shape_params,
-            mass: desc.mass,
-            linear_damping: desc.linear_damping,
-            angular_damping: desc.angular_damping,
-            restitution: desc.restitution,
-            friction: desc.friction,
-            has_filter: desc.filter.is_some() as i32,
-            collision_group: filter.group,
-            collision_mask: filter.mask,
-            kinematic: desc.kinematic as i32,
-            position: desc.transform.position,
-            rotation: desc.transform.rotation,
-        };
-        let mut body = std::ptr::null_mut();
-        check(unsafe { sys::mds_bt_body_create(self.raw, &raw_desc, &mut body) })?;
+        self.bodies.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+        let body = self
+            .inner
+            .create_body(core::world_objects::BodyDesc {
+                shape_kind,
+                shape_params,
+                mass: desc.mass,
+                pose: pose(&desc.transform),
+                kinematic: desc.kinematic,
+                linear_damping: desc.linear_damping,
+                angular_damping: desc.angular_damping,
+                restitution: desc.restitution,
+                friction: desc.friction,
+                filter: desc.filter.map(|f| [f.group as i16, f.mask as i16]),
+            })
+            .map_err(|_| Error::InvalidArgument)?;
         self.bodies.push(body);
+        LIVE_BODIES.fetch_add(1, Ordering::Relaxed);
         Ok(BodyId {
             world: self.id,
             index: self.bodies.len() - 1,
@@ -266,28 +282,26 @@ impl World {
     }
 
     pub fn add_joint(&mut self, desc: &JointDesc) -> Result<JointId> {
-        let raw_desc = sys::mds_bt_joint_desc {
-            body_a: self.body(desc.body_a)?,
-            body_b: self.body(desc.body_b)?,
-            frame_a_position: desc.frame_a.position,
-            frame_a_rotation: desc.frame_a.rotation,
-            frame_b_position: desc.frame_b.position,
-            frame_b_rotation: desc.frame_b.rotation,
-            use_linear_reference_frame_a: desc.use_linear_reference_frame_a as i32,
-            disable_collision_between_bodies: desc.disable_collision_between_bodies as i32,
-            linear_lower: desc.linear_lower,
-            linear_upper: desc.linear_upper,
-            angular_lower: desc.angular_lower,
-            angular_upper: desc.angular_upper,
-            spring_enabled: desc.spring_enabled.map(|b| b as i32),
-            spring_stiffness: desc.spring_stiffness,
-        };
-        let mut joint = std::ptr::null_mut();
-        check(unsafe { sys::mds_bt_joint_create(self.raw, &raw_desc, &mut joint) })?;
-        self.joints += 1;
+        let bodies = [self.body(desc.body_a)?, self.body(desc.body_b)?];
+        let index = self
+            .inner
+            .create_joint(core::world_objects::JointDesc {
+                bodies,
+                frames: [pose(&desc.frame_a), pose(&desc.frame_b)],
+                linear_lower: Vec3(desc.linear_lower),
+                linear_upper: Vec3(desc.linear_upper),
+                angular_lower: Vec3(desc.angular_lower),
+                angular_upper: Vec3(desc.angular_upper),
+                spring_enabled: desc.spring_enabled,
+                spring_stiffness: desc.spring_stiffness,
+                use_linear_reference_frame_a: desc.use_linear_reference_frame_a,
+                disable_collisions: desc.disable_collision_between_bodies,
+            })
+            .map_err(|_| Error::InvalidArgument)?;
+        LIVE_JOINTS.fetch_add(1, Ordering::Relaxed);
         Ok(JointId {
             world: self.id,
-            index: self.joints - 1,
+            index,
         })
     }
 
@@ -296,52 +310,49 @@ impl World {
     }
 
     pub fn joint_count(&self) -> usize {
-        self.joints
+        self.inner.collision().objects().joints().len()
     }
 
     pub fn transform(&self, id: BodyId) -> Result<Transform> {
         let body = self.body(id)?;
-        let mut t = Transform::IDENTITY;
-        check(unsafe {
-            sys::mds_bt_body_get_transform(
-                self.raw,
-                body,
-                t.position.as_mut_ptr(),
-                t.rotation.as_mut_ptr(),
-            )
-        })?;
-        Ok(t)
+        let t = self
+            .inner
+            .public_transform(body)
+            .map_err(|_| Error::InvalidArgument)?;
+        Ok(Transform {
+            position: t.origin.0,
+            rotation: t.basis.rotation().0,
+        })
     }
 
     /// Moves a kinematic or dynamic body. Static bodies cannot be moved.
     pub fn set_transform(&mut self, id: BodyId, t: &Transform) -> Result<()> {
         let body = self.body(id)?;
-        check(unsafe {
-            sys::mds_bt_body_set_transform(self.raw, body, t.position.as_ptr(), t.rotation.as_ptr())
-        })
+        self.inner
+            .set_public_transform(body, pose(t))
+            .map_err(|_| Error::InvalidArgument)
     }
 
     /// Advances the simulation like `btDiscreteDynamicsWorld::stepSimulation`
-    /// and returns the number of fixed substeps taken.
+    /// and returns its requested number of substeps before the execution clamp.
     pub fn step(&mut self, dt: f32, max_sub_steps: i32, fixed_step: f32) -> Result<i32> {
-        let mut substeps = 0;
-        check(unsafe {
-            sys::mds_bt_world_step(self.raw, dt, max_sub_steps, fixed_step, &mut substeps)
-        })?;
-        Ok(substeps)
+        self.inner
+            .step_simulation(dt, max_sub_steps, fixed_step, |_| {})
+            .map_err(|error| match error {
+                StepError::InvalidArgument => Error::InvalidArgument,
+                StepError::UninitializedSolverSlot(_) => Error::Internal,
+            })
     }
 
     /// FNV-1a over the transform, linear velocity x and angular velocity y of
     /// every non-static body in creation order.
     pub fn state_hash(&self) -> Result<u64> {
-        let mut h = 0;
-        check(unsafe { sys::mds_bt_world_state_hash(self.raw, &mut h) })?;
-        Ok(h)
+        Ok(self.inner.state_hash())
     }
 
-    fn body(&self, id: BodyId) -> Result<*mut sys::mds_bt_body> {
+    fn body(&self, id: BodyId) -> Result<BodyHandle> {
         match self.bodies.get(id.index) {
-            Some(&b) if id.world == self.id => Ok(b),
+            Some(&body) if id.world == self.id => Ok(body),
             _ => Err(Error::InvalidHandle),
         }
     }
@@ -349,7 +360,9 @@ impl World {
 
 impl Drop for World {
     fn drop(&mut self) {
-        unsafe { sys::mds_bt_world_destroy(self.raw) }
+        LIVE_JOINTS.fetch_sub(self.joint_count() as i64, Ordering::Relaxed);
+        LIVE_BODIES.fetch_sub(self.body_count() as i64, Ordering::Relaxed);
+        LIVE_WORLDS.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -363,12 +376,9 @@ pub struct LiveCounts {
 
 /// For leak checks: how many worlds, bodies and joints exist right now.
 pub fn live_counts() -> LiveCounts {
-    let mut c = [0i64; 3];
-    let rc = unsafe { sys::mds_bt_live_counts(c.as_mut_ptr()) };
-    debug_assert_eq!(rc, sys::MDS_BT_OK);
     LiveCounts {
-        worlds: c[0],
-        bodies: c[1],
-        joints: c[2],
+        worlds: LIVE_WORLDS.load(Ordering::Relaxed),
+        bodies: LIVE_BODIES.load(Ordering::Relaxed),
+        joints: LIVE_JOINTS.load(Ordering::Relaxed),
     }
 }

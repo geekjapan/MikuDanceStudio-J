@@ -1,0 +1,64 @@
+name: Bullet public Rust API
+
+on:
+  push:
+    branches: [w6-public-world-rust]
+  pull_request:
+    paths:
+      - 'rust/crates/mds-bullet/**'
+      - 'rust/crates/mds-crtmath/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - '.github/workflows/bullet-public-rust.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public:
+    name: Public Rust world (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust
+    env:
+      CC: mds-native-compiler-disabled
+      CXX: mds-native-compiler-disabled
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy
+      - name: Reject native Bullet in the default dependency closure
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 tree --locked -p mds-bullet --edges normal,build > "$RUNNER_TEMP/public-dependencies.txt"
+          cat "$RUNNER_TEMP/public-dependencies.txt"
+          if grep -q 'mds-bullet-sys' "$RUNNER_TEMP/public-dependencies.txt"; then
+            echo '::error::Default public API still depends on native Bullet'
+            exit 1
+          fi
+      - name: Check the public library and run public behavior regressions
+        run: |
+          set -euo pipefail
+          { git rev-parse HEAD; rustup run 1.95.0 rustc -Vv; } > "$RUNNER_TEMP/public-provenance.txt"
+          cargo +1.95.0 clippy --locked -p mds-bullet --lib -- -D warnings
+          cargo +1.95.0 test --locked -p mds-bullet --test world --test free_sphere_native -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/public-tests.log"
+          cargo +1.95.0 test --locked -p mds-bullet --doc 2>&1 | tee "$RUNNER_TEMP/public-doc-tests.log"
+      - name: Preserve public API evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bullet-public-rust-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/public-*.txt
+            ${{ runner.temp }}/public-*.log
+          if-no-files-found: error

@@ -13,6 +13,61 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 #[test]
+fn public_clock_rejects_invalid_input_without_advancing_and_returns_requested_steps() {
+    let _g = serial();
+    let mut actual = World::new().unwrap();
+    let mut control = World::new().unwrap();
+    let desc = BodyDesc {
+        mass: 1.0,
+        transform: Transform::at([0.0, 20.0, 0.0]),
+        ..BodyDesc::new(Shape::Sphere { radius: 0.5 })
+    };
+    actual.add_body(&desc).unwrap();
+    control.add_body(&desc).unwrap();
+    assert_eq!(actual.step(0.25, 1, 0.0), Err(Error::InvalidArgument));
+    assert_eq!(actual.state_hash(), control.state_hash());
+    // Binary fractions avoid rounding the requested substep count at its boundary.
+    assert_eq!(actual.step(0.375, 1, 0.125), Ok(3));
+    assert_eq!(control.step(0.375, 1, 0.125), Ok(3));
+    assert_eq!(actual.state_hash(), control.state_hash());
+    assert_eq!(actual.step(0.0, 1, 0.125), Ok(0));
+    assert_eq!(control.step(0.0, 1, 0.125), Ok(0));
+    assert_eq!(actual.state_hash(), control.state_hash());
+}
+
+#[test]
+fn public_kinematic_pose_accepts_nonunit_quaternions_and_survives_a_step() {
+    let _g = serial();
+    let mut world = World::new().unwrap();
+    let body = world
+        .add_body(&BodyDesc {
+            mass: 3.0,
+            kinematic: true,
+            ..BodyDesc::new(Shape::Box {
+                half_extents: [0.5; 3],
+            })
+        })
+        .unwrap();
+    world
+        .set_transform(
+            body,
+            &Transform {
+                position: [2.0, 3.0, 4.0],
+                rotation: [0.0, 0.0, 2.0, 2.0],
+            },
+        )
+        .unwrap();
+    let moved = world.transform(body).unwrap();
+    assert_eq!(moved.position, [2.0, 3.0, 4.0]);
+    assert_eq!(moved.rotation[0], 0.0);
+    assert_eq!(moved.rotation[1], 0.0);
+    assert!((moved.rotation[2] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+    assert!((moved.rotation[3] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+    assert_eq!(world.step(0.125, 1, 0.125), Ok(1));
+    assert_eq!(world.transform(body).unwrap(), moved);
+}
+
+#[test]
 fn chain8_hash_matches_the_p1_reference() {
     let _g = serial();
     let mut scene = chain8::build();

@@ -52,6 +52,22 @@ impl Vec3 {
     }
 }
 
+impl std::ops::Add for Vec3 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        Vec3::add(self, rhs)
+    }
+}
+
+impl std::ops::Sub for Vec3 {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self {
+        Vec3::sub(self, rhs)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quat(pub [f32; 4]);
 

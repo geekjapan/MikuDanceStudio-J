@@ -242,9 +242,9 @@ checks, or numerical comparisons. Fresh hosted capture and mutation evidence
 remain required for acceptance.
 
 The next current-only layer admits Rust physics source at
-`9da4f0371cb630d526a31cf29711aaad3b7f4767`, tree
-`b9d9885a993a2dc600384d17359f8a76cc5d46ec`, against the readback-admitted
-source at `13c3083067b65db95f89b072ed82dbd627b9fa99`. Its nine replacements
+`1d00ffd2bc9b41becc4ff250ddffd50154d30ae5`, tree
+`4fee800953dda88356a57ef1b384794e0203ed48`, against the readback-admitted
+source at `13c3083067b65db95f89b072ed82dbd627b9fa99`. Its ten replacements
 and two additions are fixed by path, mode, Git blob, physical host hashes,
 and contract digest in `PHYSICS_SOURCE`. It applies after readback admission;
 the protected/current verification map has 484 entries. The old 472-entry

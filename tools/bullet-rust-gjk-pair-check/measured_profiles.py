@@ -100,6 +100,48 @@ ADDITIONS = {'rust/crates/mds-bullet/tests/' + path for path in
               ['archive-intersect.tsv', 'archive-merge.tsv', 'inline-aabb.tsv',
                'inputs.tsv', 'provenance.json', 'select.tsv']]]}
 HOSTS = {'macos-arm64', 'linux-arm64', 'linux-x64', 'windows-x64'}
+MMD_BODY_READBACK_SHA256 = '2d7c74ab2aca33a3308722b842f8b0f9a3153d678305ff01a565f7603c3bcf2e'
+MMD_BODY_READBACK = {
+    'kind': 'fixed-mmd-body-readback-source-only',
+    'base_head': 'f132ae6e155e8586ecaca6b34bc6041f7867e372',
+    'source_head': '58da13d0ced68d8c459d51cf2fefdc634246a940',
+    'source_tree': '3091c3e3bf7569da71b4aa323bdb850ea1138e86',
+    'execution': 'UNRUN',
+    'mode': '100644',
+    'blobs': {
+        'rust/crates/mds-bullet/src/core/world_objects.rs': {
+            'old': 'cec3008cfedc2c8a16dc673468ae468222124e6c',
+            'new': '5a6e5a244efaa3385d794dff4d219f509cbb2c73'},
+        'rust/crates/mds-bullet/src/core/mmd_collision_world.rs': {
+            'old': '0794bbe519aaaf9b3fa568ff09f00ffacfa02244',
+            'new': '474d494d56d28e3ab5f7cf1b1a0903fd8da2e7b1'},
+        'rust/crates/mds-bullet/tests/mmd_collision_world.rs': {
+            'old': '7b8185f26fcfa4dfdd9817f93c0f5a475aee873a',
+            'new': '46c82c88de89c04fa472ce683b5e3ed983440a3e'},
+    },
+    'hosts': {host: {
+        'rust/crates/mds-bullet/src/core/world_objects.rs': {
+            'old_sha256': ('25bff6ba807cab4fe9580fb94ff39deb80a939f2279b27dc54ec0b907486665f'
+                           if host == 'windows-x64' else
+                           '96a1efc09077a46945745de745af4591f53862d688ac70bb8c8d764a7cebb1d6'),
+            'new_sha256': ('12281bb320712728b048f7951c1ffacb966ccd82128888e90f2bb420f07a940e'
+                           if host == 'windows-x64' else
+                           '642ceb80e03e4e9a58f605b0f3cf2565618dd9cd175107c48885ea118484f11d'),
+        },
+        'rust/crates/mds-bullet/src/core/mmd_collision_world.rs': {
+            'old_sha256': ('b1b8bdcd47f15bbd235c9a08f44112f0fd5c164c04c3761efbf01cc3395c4b32'
+                           if host == 'windows-x64' else
+                           'b2c170abc64007637f4f84e045c0d32c69e0fa3b0d5edde3582069983519a13e'),
+            'new_sha256': ('a2d6f0f8fd4b02ced744ce69b31142453bfb79d65693732cc573a38f515866a0'
+                           if host == 'windows-x64' else
+                           'f4d003e50c47d40673523fbc7fa0f2dae9445a1059fcbc7120397a87d43dede4'),
+        },
+        'rust/crates/mds-bullet/tests/mmd_collision_world.rs': {
+            'old_sha256': '8a31d5dbc0e14024762199975064b702268bc8bb4dac7997d4e33b574792ba52',
+            'new_sha256': '6e33d7b921d2e84b8ef486f34682415e203695d33f271b40513608172608924a',
+        },
+    } for host in HOSTS},
+}
 COMMANDS = {'native-command.json', 'effective-native-command.json', 'observed-command.json'}
 STREAMS = {'capture/' + prefix + name + '.tsv'
            for prefix in ['', 'compact-', 'fallback-'] for name in ['inputs', 'native', 'observed', 'rust']}
@@ -455,6 +497,7 @@ def approved_source_map(manifest, host):
            'immutable dynamics world c23 test format admission')
     protected = apply_mmd_collision_admission(manifest, host, protected)
     protected = apply_mmd_collision_format_admission(protected, host)
+    protected = apply_mmd_body_readback_admission(protected, host)
     return {**protected, **current_verification_map(manifest, host)}
 
 
@@ -491,6 +534,17 @@ def apply_mmd_collision_format_admission(protected, host):
     path = admission['path']
     schema(protected.get(path) == identity['old_sha256'], 'MMD collision world format old identity')
     return {**protected, path: identity['new_sha256']}
+
+
+def apply_mmd_body_readback_admission(protected, host):
+    schema(source_map_digest(MMD_BODY_READBACK) == MMD_BODY_READBACK_SHA256,
+           'immutable MMD body readback admission')
+    schema(host in HOSTS, 'MMD body readback host')
+    result = dict(protected)
+    for path, identity in MMD_BODY_READBACK['hosts'][host].items():
+        schema(protected.get(path) == identity['old_sha256'], 'MMD body readback old identity')
+        result[path] = identity['new_sha256']
+    return result
 
 
 def select_measurement(manifest, host, provenance):
@@ -580,6 +634,7 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                 'mmd_collision_world_source_admission': {name: value for name, value in
                     manifest['mmd_collision_world_source_admission'].items() if name != 'hosts'},
                 'mmd_collision_world_format_admission': MMD_COLLISION_WORLD_FORMAT,
+                'mmd_body_readback_admission': MMD_BODY_READBACK,
                 'historical_verification_baseline': {
                     'head': VERIFICATION_BASE, 'four_host_map_sha256': VERIFICATION_BASE_SHA256,
                     'physical_sha256': manifest['verification_sha256'][host_name]},

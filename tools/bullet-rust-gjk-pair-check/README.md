@@ -221,3 +221,22 @@ This discovery run failed at the unknown provenance guard. Its mutation gate was
 `not-run`. The observation supplies no successful measured-profile receipt or
 final-head native acceptance. Fresh exact-head hosted capture, compiled mutations,
 suite baselines, final integrity, and independent acceptance remain `UNRUN`.
+
+The current-source projection also admits the readback-only change at
+`58da13d0ced68d8c459d51cf2fefdc634246a940`, based on
+`f132ae6e155e8586ecaca6b34bc6041f7867e372`, tree
+`3091c3e3bf7569da71b4aa323bdb850ea1138e86`. The fixed layer replaces exactly
+`src/core/world_objects.rs`, `src/core/mmd_collision_world.rs`, and
+`tests/mmd_collision_world.rs` under `rust/crates/mds-bullet/`. The first adds
+rigid-body COM readback; the second adds transform/matrix/pose getters; the
+third tests the COM/motion-state distinction, matrix bits, and handle rejection.
+Each previous identity must match before the replacement. Windows source
+files retain CRLF identities; the test file retains its `-text` LF identity.
+
+This is verification drift maintenance after the readback commit was rejected
+by the old exact source closure, not a numerical mismatch or a new native
+measurement. The layer is recorded as source-only `UNRUN` in
+`current_source.mmd_body_readback_admission`. It does not alter historical
+profiles, the macOS captured map, native fixtures, compiler selection, command
+checks, or numerical comparisons. Fresh hosted capture and mutation evidence
+remain required for acceptance.

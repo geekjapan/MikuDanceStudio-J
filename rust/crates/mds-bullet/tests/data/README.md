@@ -4,10 +4,13 @@
 `4105040`, using its vendored Bullet 2.75, scalar SSE emulation and pure Rust UCRT
 math replacements. No native source was changed for this capture.
 
-From the repository root, regenerate it with:
+The fixture remains the frozen native reference. The current public `World`
+uses Rust, so its example output must not regenerate or overwrite this fixture.
+From the repository root, capture the Rust result to a separate file:
 
 ```sh
-cargo run --manifest-path rust/Cargo.toml -p mds-bullet --example free_sphere_oracle --release > rust/crates/mds-bullet/tests/data/free-sphere-native.tsv
+cargo run --manifest-path rust/Cargo.toml -p mds-bullet --example free_sphere_oracle --release > /tmp/free-sphere-rust.tsv
+diff -u rust/crates/mds-bullet/tests/data/free-sphere-native.tsv /tmp/free-sphere-rust.tsv
 ```
 
 Each row contains the case index, frame index, unclamped native substep count,
@@ -23,9 +26,10 @@ Masses, damping factors and rotations differ across the three bodies. These are
 noncolliding, gravity-driven spheres. This fixture does not validate collisions,
 constraints, sleeping or angular velocity driven by torque.
 
-`free_sphere_native.rs` checks the live native shim against this recording.
+`free_sphere_native.rs` checks the public Rust world against this recording.
 `pure_bullet.rs` checks the native-free Rust pilot against the same recording.
-The existing public World still uses the native shim.
+Neither test is a fresh native recapture. Any future native recapture needs a
+separate native producer and source/toolchain provenance before comparison.
 
 The pure checks can run without compiling or linking Bullet or any C++ code:
 

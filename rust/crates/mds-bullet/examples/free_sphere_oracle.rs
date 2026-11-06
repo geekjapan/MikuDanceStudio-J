@@ -1,5 +1,5 @@
-//! Capture the existing native shim, not the Rust pilot.
-//! cargo run -p mds-bullet --example free_sphere_oracle --release > crates/mds-bullet/tests/data/free-sphere-native.tsv
+//! Capture the current public Rust world for comparison with the frozen native fixture.
+//! This output must not replace `tests/data/free-sphere-native.tsv`.
 
 #[path = "../tests/support/pilot_cases.rs"]
 mod cases;

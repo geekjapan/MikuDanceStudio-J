@@ -142,11 +142,11 @@ MMD_BODY_READBACK = {
         },
     } for host in HOSTS},
 }
-PHYSICS_SOURCE_SHA256 = '0a7a2a6d05f8df179fd97c8c82f65a200cbec19650f2c4c61f8c8ae351d6bb3b'
+PHYSICS_SOURCE_SHA256 = '4304faee9f7eafe5f523c479a6fd446022b9973303152db028174e35f69eb430'
 PHYSICS_SOURCE = {'kind': 'fixed-rust-physics-source-only',
  'base_head': '13c3083067b65db95f89b072ed82dbd627b9fa99',
- 'source_head': 'a0a570038518e6e659390f67c283474acd3b1f5a',
- 'source_tree': 'f0178c68554722cbec14a4e4efe558bbdd753694',
+ 'source_head': '9da4f0371cb630d526a31cf29711aaad3b7f4767',
+ 'source_tree': 'b9d9885a993a2dc600384d17359f8a76cc5d46ec',
  'execution': 'UNRUN',
  'mode': '100644',
  'blobs': {'rust/crates/mds-bullet/Cargo.toml': {'old': '6e5d5dd46325bb4a68f89b82d23b0634bc49c730',
@@ -168,7 +168,7 @@ PHYSICS_SOURCE = {'kind': 'fixed-rust-physics-source-only',
            'rust/crates/mds-bullet/tests/free_sphere_native.rs': {'old': 'fe2b60e326ca1354fe7df35543a7cc1de95ec467',
                                                                   'new': '7bce153c84eae5cd7f2c35c70a29020596bf7e8d'},
            'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': {'old': None,
-                                                                  'new': '4c4ebdd19f7f5a6d22e0577db122b4dd08581ec0'},
+                                                                  'new': 'bcf8268438fb730d28613fc76a19f9f83fc73e61'},
            'rust/crates/mds-bullet/tests/world.rs': {'old': '76101107eb6a34816e9ac391789ef7593b716046',
                                                      'new': '4113bfe4f72a2470c73ef204cb47d2cc95f80a2b'}},
  'hosts': {host: ({'replacements': {'rust/crates/mds-bullet/Cargo.toml': {'old_sha256': '197af14c1241b6e1942fcb450346f21dbdec08bcf140bce1d7e4332e7ca8bfba',
@@ -190,7 +190,7 @@ PHYSICS_SOURCE = {'kind': 'fixed-rust-physics-source-only',
                   'rust/crates/mds-bullet/tests/world.rs': {'old_sha256': '6e684bee3869c4fc5fcc4960fdee8876108134aa28ba9b6bb4b95e6e2b64b03a',
                                                             'new_sha256': '4c631fbeae74042491e86758dd031f8633f46aa65af587d8cfea00b5ed2df8b1'}},
  'additions': {'rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs': 'ea47f602a426d59c5c7ece8b9105fbd56a09cbe7e79a9f3c33b12d007f767277',
-               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24'}}
+               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d'}}
  if host == 'windows-x64' else {'replacements': {'rust/crates/mds-bullet/Cargo.toml': {'old_sha256': 'd7f5097c2a952290c3d5383db34449ed2897585c82f22ba87ecff6a5ae2efa30',
                                                         'new_sha256': 'c9a0703ef18c8aaa133aa26b9b27b8fdc920b9b0a99174d8b6dc175c682ceb05'},
                   'rust/crates/mds-bullet/examples/free_sphere_oracle.rs': {'old_sha256': '70b3f7714d21b4d0f258ab19e29f5f533d6e714e7cdaf919636e410d926c04a7',
@@ -210,7 +210,7 @@ PHYSICS_SOURCE = {'kind': 'fixed-rust-physics-source-only',
                   'rust/crates/mds-bullet/tests/world.rs': {'old_sha256': '6e684bee3869c4fc5fcc4960fdee8876108134aa28ba9b6bb4b95e6e2b64b03a',
                                                             'new_sha256': '4c631fbeae74042491e86758dd031f8633f46aa65af587d8cfea00b5ed2df8b1'}},
  'additions': {'rust/crates/mds-bullet/src/core/mmd_dynamics_world.rs': 'bef581de4be1d274954e61adf5f2565f3166abf9b47563222cc4a6a95dbfeec2',
-               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '13fee53c12e32cc9910f889f4376c8ff6f32f9e98d1643f81fb6e6f0fe649b24'}}) for host in HOSTS}}
+               'rust/crates/mds-bullet/tests/mmd_dynamics_world.rs': '734bd567a1ec45c7fe56083373240033394d2f596808b0cd22b0a69bef68c35d'}}) for host in HOSTS}}
 COMMANDS = {'native-command.json', 'effective-native-command.json', 'observed-command.json'}
 STREAMS = {'capture/' + prefix + name + '.tsv'
            for prefix in ['', 'compact-', 'fallback-'] for name in ['inputs', 'native', 'observed', 'rust']}

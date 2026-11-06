@@ -841,7 +841,7 @@ mod tests {
     }
 
     use super::Op::{self, *};
-    use super::{ptr, sys, MsvcRand, PhysicsScene, SUBSTEP};
+    use super::{body_pose, mmd, MsvcRand, PhysicsScene, SUBSTEP};
     use mds_formats::pmm::Pmm;
     use std::path::PathBuf;
 

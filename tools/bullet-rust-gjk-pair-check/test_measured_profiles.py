@@ -519,7 +519,8 @@ class DynamicsC23TestFormatAdmissionTests(unittest.TestCase):
                 expected = (set(self.manifest['profiles'][host]['protected_source_sha256'])
                             | set(self.manifest['verification_sha256'][host]) | measured_profiles.ADDITIONS
                             | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS
-                            | measured_profiles.DYNAMICS_WORLD_ADDITIONS | measured_profiles.MMD_COLLISION_WORLD_ADDITIONS)
+                            | measured_profiles.DYNAMICS_WORLD_ADDITIONS | measured_profiles.MMD_COLLISION_WORLD_ADDITIONS
+                            | set(measured_profiles.PHYSICS_SOURCE['hosts'][host]['additions']))
                 self.assertEqual(set(source), expected)
 
     def test_closed_schema_scope_and_composed_old_identity_refusals(self):

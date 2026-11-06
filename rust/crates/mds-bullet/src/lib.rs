@@ -17,6 +17,15 @@ use core::discrete_dynamics_world::{DiscreteDynamicsWorld, StepError};
 use core::math::{Quat, Vec3};
 use core::world_objects::{BodyHandle, Pose};
 
+/// The MMD application's ground, rigid bodies, and spring joints.
+pub mod mmd {
+    pub use crate::core::discrete_dynamics_world::StepError;
+    pub use crate::core::math::{Basis, Quat, Transform, Vec3};
+    pub use crate::core::mmd_dynamics_world::MmdDynamicsWorld;
+    pub use crate::core::world_objects::{BodyDesc, BodyHandle, JointDesc, Pose};
+    pub use crate::core::InvalidArgument;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// A handle does not belong to this world.

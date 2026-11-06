@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-mds-bullet-sys = { path = "../mds-bullet-sys" }
+mds-bullet = { path = "../mds-bullet" }
 mds-crtmath = { path = "../mds-crtmath" }
 mds-formats = { path = "../mds-formats" }
 mds-math = { path = "../mds-math" }

@@ -10,7 +10,8 @@ use super::time::StepClock;
 use super::world_objects::{BodyDesc, BodyHandle, JointDesc};
 use super::InvalidArgument;
 
-pub(crate) struct MmdDynamicsWorld {
+pub struct MmdDynamicsWorld {
+    _thread: std::marker::PhantomData<*mut ()>,
     collision: MmdCollisionWorld,
     clock: StepClock,
     islands: SimulationIslands,
@@ -18,8 +19,9 @@ pub(crate) struct MmdDynamicsWorld {
 }
 
 impl MmdDynamicsWorld {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
+            _thread: std::marker::PhantomData,
             collision: MmdCollisionWorld::new(),
             clock: StepClock::new(),
             islands: SimulationIslands::default(),
@@ -35,7 +37,7 @@ impl MmdDynamicsWorld {
         &self.solver
     }
 
-    pub(crate) fn create_body(
+    pub fn create_body(
         &mut self,
         desc: BodyDesc,
         mode: i32,
@@ -43,27 +45,19 @@ impl MmdDynamicsWorld {
         self.collision.create_body(desc, mode)
     }
 
-    pub(crate) fn create_joint(
-        &mut self,
-        desc: JointDesc,
-        uid: i32,
-    ) -> Result<usize, InvalidArgument> {
+    pub fn create_joint(&mut self, desc: JointDesc, uid: i32) -> Result<usize, InvalidArgument> {
         self.collision.create_joint(desc, uid)
     }
 
-    pub(crate) fn set_floor(&mut self, on: bool) -> Result<(), InvalidArgument> {
+    pub fn set_floor(&mut self, on: bool) -> Result<(), InvalidArgument> {
         self.collision.set_floor(on)
     }
 
-    pub(crate) fn set_kinematic(
-        &mut self,
-        body: BodyHandle,
-        on: bool,
-    ) -> Result<(), InvalidArgument> {
+    pub fn set_kinematic(&mut self, body: BodyHandle, on: bool) -> Result<(), InvalidArgument> {
         self.collision.set_kinematic(body, on)
     }
 
-    pub(crate) fn set_motion_state(
+    pub fn set_motion_state(
         &mut self,
         body: BodyHandle,
         world: Transform,
@@ -71,24 +65,31 @@ impl MmdDynamicsWorld {
         self.collision.set_motion_state(body, world)
     }
 
-    pub(crate) fn reseat(
-        &mut self,
-        body: BodyHandle,
-        world: Transform,
-    ) -> Result<(), InvalidArgument> {
+    pub fn reseat(&mut self, body: BodyHandle, world: Transform) -> Result<(), InvalidArgument> {
         self.collision.reseat(body, world)
     }
 
-    pub(crate) fn stop_at(
-        &mut self,
-        body: BodyHandle,
-        origin: Vec3,
-    ) -> Result<(), InvalidArgument> {
+    pub fn stop_at(&mut self, body: BodyHandle, origin: Vec3) -> Result<(), InvalidArgument> {
         self.collision.stop_at(body, origin)
     }
 
-    pub(crate) fn set_gravity(&mut self, gravity: Vec3) -> Result<(), InvalidArgument> {
+    pub fn set_gravity(&mut self, gravity: Vec3) -> Result<(), InvalidArgument> {
         self.collision.set_dynamics_gravity(gravity)
+    }
+
+    pub fn step(&mut self, dt: f32, max_substeps: i32, fixed: f32) -> Result<i32, StepError> {
+        self.step_simulation(dt, max_substeps, fixed, |_| {})
+    }
+
+    pub fn body_matrix(&self, body: BodyHandle) -> Result<[f32; 16], InvalidArgument> {
+        self.collision.body_matrix(body)
+    }
+
+    pub fn body_pose(
+        &self,
+        body: BodyHandle,
+    ) -> Result<(Vec3, super::math::Quat), InvalidArgument> {
+        self.collision.body_pose(body)
     }
 
     pub(crate) fn step_simulation(
@@ -182,5 +183,11 @@ impl MmdDynamicsWorld {
             },
         );
         result.map_err(|UninitializedSolverSlot(slot)| StepError::UninitializedSolverSlot(slot))
+    }
+}
+
+impl Default for MmdDynamicsWorld {
+    fn default() -> Self {
+        Self::new()
     }
 }

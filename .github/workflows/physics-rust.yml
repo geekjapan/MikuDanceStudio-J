@@ -1,0 +1,70 @@
+name: Rust application physics
+
+on:
+  push:
+    branches: [w6-physics-rust]
+  pull_request:
+    paths:
+      - 'rust/crates/mds-physics/**'
+      - 'rust/crates/mds-bullet/**'
+      - 'rust/crates/mds-pose/**'
+      - 'rust/crates/mds-math/**'
+      - 'rust/crates/mds-crtmath/**'
+      - 'tests/fixtures/rust/**'
+      - 'rust/crates/mds-formats/**'
+      - 'rust/crates/mds-trace/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - '.github/workflows/physics-rust.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  physics:
+    name: Rust physics (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust
+    env:
+      CC: mds-native-compiler-disabled
+      CXX: mds-native-compiler-disabled
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy
+      - name: Require a Rust-only physics dependency closure
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 tree --locked -p mds-physics --edges normal,build > "$RUNNER_TEMP/physics-dependencies.txt"
+          cat "$RUNNER_TEMP/physics-dependencies.txt"
+          if grep -q 'mds-bullet-sys' "$RUNNER_TEMP/physics-dependencies.txt"; then
+            echo '::error::Application physics still depends on native Bullet'
+            exit 1
+          fi
+      - name: Check physics and compare native trace fixtures
+        run: |
+          set -euo pipefail
+          { git rev-parse HEAD; rustup run 1.95.0 rustc -Vv; } > "$RUNNER_TEMP/physics-provenance.txt"
+          cargo +1.95.0 clippy --locked -p mds-physics --all-targets -- -D warnings
+          cargo +1.95.0 test --locked -p mds-bullet --test mmd_dynamics_world --test mmd_collision_world 2>&1 | tee "$RUNNER_TEMP/physics-owner-tests.log"
+          cargo +1.95.0 test --locked -p mds-physics -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/physics-tests.log"
+      - name: Preserve physics evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: physics-rust-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/physics-*.txt
+            ${{ runner.temp }}/physics-*.log
+          if-no-files-found: error

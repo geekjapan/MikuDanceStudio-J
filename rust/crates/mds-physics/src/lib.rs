@@ -25,35 +25,20 @@
 //! `src/window/ui_editor_click.cpp`, `src/window/command_frame_edit.cpp`,
 //! `src/window/command_view_menu.cpp`.
 
-use mds_bullet_sys as sys;
+use mds_bullet::mmd::{self, BodyHandle, MmdDynamicsWorld};
 use mds_formats::pmm::Pmm;
 use mds_math::{Mat4, Quat, Vec3};
 use mds_pose::keys;
 use mds_pose::model::{flag, kind, Model, Rigid};
 use mds_pose::Scene;
 use std::fmt::Write as _;
-use std::ptr;
 
 const SUBSTEP: f32 = 1.0 / 60.0;
 /// `AviRecordFps` of the trace mode.
 const FPS: f32 = 30.0;
 
-fn check(code: i32, what: &str) -> Result<(), String> {
-    if code == sys::MDS_BT_OK {
-        Ok(())
-    } else {
-        Err(format!("{what}: Bullet error {code}"))
-    }
-}
-
-/// The Bullet world with its ground plane. It owns the bodies and joints.
-struct World(*mut sys::mds_mmd_world);
-
-impl Drop for World {
-    fn drop(&mut self) {
-        // SAFETY: the pointer came from mds_mmd_world_create and is freed once.
-        unsafe { sys::mds_mmd_world_destroy(self.0) }
-    }
+fn check<T>(result: Result<T, impl std::fmt::Debug>, what: &str) -> Result<T, String> {
+    result.map_err(|error| format!("{what}: Bullet error {error:?}"))
 }
 
 /// A world or pose operation, recorded by the unit tests.
@@ -87,10 +72,10 @@ impl MsvcRand {
 
 pub struct PhysicsScene {
     pub scene: Scene,
-    world: World,
-    /// Per model (scene order), per rigid body: the Bullet body, null for
+    world: MmdDynamicsWorld,
+    /// Per model (scene order), per rigid body: the Bullet body, None for
     /// shapes the loaders do not build.
-    bodies: Vec<Vec<*mut sys::mds_mmd_body>>,
+    bodies: Vec<Vec<Option<BodyHandle>>>,
     /// `PhysicsResetPending`: the next `PhysicsFrame` settles.
     settle: bool,
     /// `physicsBodiesMoved`: never set by the trace.
@@ -167,17 +152,9 @@ impl PhysicsScene {
         pumped: bool,
     ) -> Result<PhysicsScene, String> {
         let scene = Scene::load(pmm, read)?;
-        // SAFETY: no arguments; null on failure.
-        let world = World(unsafe { sys::mds_mmd_world_create() });
-        if world.0.is_null() {
-            return Err("Bullet world creation failed".into());
-        }
+        let mut world = MmdDynamicsWorld::new();
         if pumped {
-            // SAFETY: the world is live; only the ground is in it.
-            check(
-                unsafe { sys::mds_mmd_world_step(world.0, 0.0, 10, SUBSTEP) },
-                "startup step",
-            )?;
+            check(world.step(0.0, 10, SUBSTEP), "startup step")?;
         }
         let p = &pmm.physics;
         let mut this = PhysicsScene {
@@ -227,66 +204,69 @@ impl PhysicsScene {
 
     /// `CreateRigidBody` per rigid body, then `CreatePhysJoint` per joint.
     fn create_bodies(
-        &self,
+        &mut self,
         m: usize,
         uid: &mut i32,
-    ) -> Result<Vec<*mut sys::mds_mmd_body>, String> {
+    ) -> Result<Vec<Option<BodyHandle>>, String> {
         let model = &self.scene.models[m];
         let mut bodies = Vec::with_capacity(model.rigids.len());
         for r in &model.rigids {
-            let mut body = ptr::null_mut();
-            if r.shape <= 2 {
-                // SAFETY: the world is live; the arrays outlive the call.
-                check(
-                    unsafe {
-                        sys::mds_mmd_body_create(
-                            self.world.0,
-                            i32::from(r.shape),
-                            r.size[0],
-                            r.size[1],
-                            r.size[2],
-                            r.start_origin.as_ptr(),
-                            r.start_rotation.as_ptr(),
-                            i32::from(r.mode),
-                            r.mass,
-                            r.linear_damping,
-                            r.angular_damping,
-                            r.restitution,
-                            r.friction,
-                            (1u16 << (r.group & 15)) as i16,
-                            r.mask as i16,
-                            &mut body,
-                        )
-                    },
+            let body = if r.shape <= 2 {
+                Some(check(
+                    self.world.create_body(
+                        mmd::BodyDesc {
+                            shape_kind: i32::from(r.shape),
+                            shape_params: [r.size[0], r.size[1], r.size[2], 0.0],
+                            mass: r.mass,
+                            pose: mmd::Pose {
+                                position: mmd::Vec3(r.start_origin),
+                                rotation: mmd::Quat(r.start_rotation),
+                            },
+                            kinematic: r.mode == 0,
+                            linear_damping: r.linear_damping,
+                            angular_damping: r.angular_damping,
+                            restitution: r.restitution,
+                            friction: r.friction,
+                            filter: Some([(1u16 << (r.group & 15)) as i16, r.mask as i16]),
+                        },
+                        i32::from(r.mode),
+                    ),
                     "rigid body",
-                )?;
-            }
+                )?)
+            } else {
+                None
+            };
             bodies.push(body);
         }
         for j in &model.joints {
-            let (a, b) = (bodies[j.rigid_a], bodies[j.rigid_b]);
-            if a.is_null() || b.is_null() {
+            let (Some(a), Some(b)) = (bodies[j.rigid_a], bodies[j.rigid_b]) else {
                 continue;
-            }
-            // SAFETY: as above; both bodies belong to this world.
+            };
             check(
-                unsafe {
-                    sys::mds_mmd_joint_create(
-                        self.world.0,
-                        a,
-                        b,
-                        j.frame_a.0.as_ptr(),
-                        j.frame_a.1.as_ptr(),
-                        j.frame_b.0.as_ptr(),
-                        j.frame_b.1.as_ptr(),
-                        j.linear_lower.as_ptr(),
-                        j.linear_upper.as_ptr(),
-                        j.angular_lower.as_ptr(),
-                        j.angular_upper.as_ptr(),
-                        j.springs.as_ptr(),
-                        *uid,
-                    )
-                },
+                self.world.create_joint(
+                    mmd::JointDesc {
+                        bodies: [a, b],
+                        frames: [
+                            mmd::Pose {
+                                position: mmd::Vec3(j.frame_a.0),
+                                rotation: mmd::Quat(j.frame_a.1),
+                            },
+                            mmd::Pose {
+                                position: mmd::Vec3(j.frame_b.0),
+                                rotation: mmd::Quat(j.frame_b.1),
+                            },
+                        ],
+                        linear_lower: mmd::Vec3(j.linear_lower),
+                        linear_upper: mmd::Vec3(j.linear_upper),
+                        angular_lower: mmd::Vec3(j.angular_lower),
+                        angular_upper: mmd::Vec3(j.angular_upper),
+                        spring_enabled: j.springs.map(|stiffness| stiffness > 0.0),
+                        spring_stiffness: j.springs,
+                        use_linear_reference_frame_a: true,
+                        disable_collisions: false,
+                    },
+                    *uid,
+                ),
                 "joint",
             )?;
             *uid += 1;
@@ -294,16 +274,13 @@ impl PhysicsScene {
         Ok(bodies)
     }
 
-    /// Hands the `CF_KINEMATIC_OBJECT` flags that `NotifyBonePhysicsMode`
-    /// set since the last world call to Bullet. The C++ sets them at once;
-    /// Bullet reads them only in `setGravity` and `stepSimulation`.
-    fn push_kinematic_flags(&self) -> Result<(), String> {
+    /// Apply the flags immediately before the world reads them.
+    fn push_kinematic_flags(&mut self) -> Result<(), String> {
         for (model, bodies) in self.scene.models.iter().zip(&self.bodies) {
             for (r, &body) in model.rigids.iter().zip(bodies) {
-                if !body.is_null() {
-                    // SAFETY: a live body of this world.
+                if let Some(body) = body {
                     check(
-                        unsafe { sys::mds_mmd_body_set_kinematic(body, i32::from(r.kinematic)) },
+                        self.world.set_kinematic(body, r.kinematic),
                         "kinematic flag",
                     )?;
                 }
@@ -317,38 +294,31 @@ impl PhysicsScene {
         self.log.borrow_mut().push(_op);
     }
 
-    fn set_gravity(&self, g: [f32; 3]) -> Result<(), String> {
+    fn set_gravity(&mut self, g: [f32; 3]) -> Result<(), String> {
         self.note(Op::Gravity);
         self.push_kinematic_flags()?;
-        // SAFETY: the world is live.
-        check(
-            unsafe { sys::mds_mmd_world_set_gravity(self.world.0, g[0], g[1], g[2]) },
-            "gravity",
-        )
+        check(self.world.set_gravity(mmd::Vec3(g)), "gravity")
     }
 
-    fn world_step(&self, dt: f32) -> Result<(), String> {
+    fn world_step(&mut self, dt: f32) -> Result<(), String> {
         self.note(Op::Step(dt));
         self.push_kinematic_flags()?;
-        // SAFETY: the world is live.
-        check(
-            unsafe { sys::mds_mmd_world_step(self.world.0, dt, 10, SUBSTEP) },
-            "step",
-        )
+        check(self.world.step(dt, 10, SUBSTEP), "step").map(|_| ())
     }
 
-    /// `ModelKinematicSync`: bone followers get the bone pose in their
-    /// motion state.
-    fn kinematic_sync(&self, m: usize) -> Result<(), String> {
+    /// `ModelKinematicSync`: bone followers get the bone pose in their motion state.
+    fn kinematic_sync(&mut self, m: usize) -> Result<(), String> {
         let model = &self.scene.models[m];
         for (r, &body) in model.rigids.iter().zip(&self.bodies[m]) {
-            if r.mode != 0 || body.is_null() {
+            let Some(body) = body else {
+                continue;
+            };
+            if r.mode != 0 {
                 continue;
             }
             let mat = follow_matrix(model, r, r.bone);
-            // SAFETY: a live body; 16 floats.
             check(
-                unsafe { sys::mds_mmd_body_set_motion_state(body, mat.0.as_ptr()) },
+                self.world.set_motion_state(body, world_transform(mat)),
                 "kinematic sync",
             )?;
         }
@@ -356,10 +326,13 @@ impl PhysicsScene {
     }
 
     /// `ModelDynamicReseat`: physics bodies jump to the bone pose and stop.
-    fn dynamic_reseat(&self, m: usize) -> Result<(), String> {
+    fn dynamic_reseat(&mut self, m: usize) -> Result<(), String> {
         let model = &self.scene.models[m];
         for (r, &body) in model.rigids.iter().zip(&self.bodies[m]) {
-            if r.mode as i8 <= 0 || body.is_null() {
+            let Some(body) = body else {
+                continue;
+            };
+            if r.mode as i8 <= 0 {
                 continue;
             }
             let bone = if r.bone < 0 {
@@ -368,21 +341,17 @@ impl PhysicsScene {
                 r.bone
             };
             let mat = follow_matrix(model, r, bone);
-            // SAFETY: a live body; 16 floats.
-            check(
-                unsafe { sys::mds_mmd_body_reseat(body, mat.0.as_ptr()) },
-                "reseat",
-            )?;
+            check(self.world.reseat(body, world_transform(mat)), "reseat")?;
         }
         Ok(())
     }
 
-    fn sync_all(&self) -> Result<(), String> {
+    fn sync_all(&mut self) -> Result<(), String> {
         self.note(Op::Sync);
         (0..self.bodies.len()).try_for_each(|m| self.kinematic_sync(m))
     }
 
-    fn reseat_all(&self) -> Result<(), String> {
+    fn reseat_all(&mut self) -> Result<(), String> {
         self.note(Op::Reseat);
         (0..self.bodies.len()).try_for_each(|m| self.dynamic_reseat(m))
     }
@@ -390,7 +359,7 @@ impl PhysicsScene {
     fn readback_all(&mut self) -> Result<(), String> {
         self.note(Op::Readback);
         for (model, bodies) in self.scene.models.iter_mut().zip(&self.bodies) {
-            readback(model, bodies)?;
+            readback(model, bodies, &mut self.world)?;
         }
         Ok(())
     }
@@ -564,11 +533,7 @@ impl PhysicsScene {
     /// call this: its floor byte only sets the ground's deactivation time,
     /// which Bullet reads for non-static bodies alone.
     pub fn set_floor_visible(&mut self, on: bool) -> Result<(), String> {
-        // SAFETY: the world is live.
-        check(
-            unsafe { sys::mds_mmd_world_set_floor(self.world.0, i32::from(on)) },
-            "floor",
-        )
+        check(self.world.set_floor(on), "floor")
     }
 
     /// The physics reset menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`,
@@ -642,7 +607,7 @@ impl PhysicsScene {
             .map(|bodies| {
                 bodies
                     .iter()
-                    .map(|&b| (!b.is_null()).then(|| body_pose(b)).transpose())
+                    .map(|&b| b.map(|b| body_pose(&self.world, b)).transpose())
                     .collect()
             })
             .collect()
@@ -654,10 +619,9 @@ impl PhysicsScene {
         for (model, bodies) in self.scene.models.iter().zip(&self.bodies) {
             mds_pose::trace::write_model(out, frame, model)?;
             for (i, &body) in bodies.iter().enumerate() {
-                if body.is_null() {
-                    return Err(format!("model {} rigid body {i} has no body", model.slot));
-                }
-                let (origin, rotation) = body_pose(body)?;
+                let body =
+                    body.ok_or_else(|| format!("model {} rigid body {i} has no body", model.slot))?;
+                let (origin, rotation) = body_pose(&self.world, body)?;
                 write!(out, "{frame} rigid {} {i}", model.slot).unwrap();
                 mds_pose::trace::floats(out, &origin)?;
                 mds_pose::trace::floats(out, &rotation)?;
@@ -684,14 +648,17 @@ impl PhysicsScene {
 /// A body's world origin and rotation quaternion, x y z w.
 pub type BodyPose = ([f32; 3], [f32; 4]);
 
-fn body_pose(body: *mut sys::mds_mmd_body) -> Result<BodyPose, String> {
-    let (mut origin, mut rotation) = ([0.0f32; 3], [0.0f32; 4]);
-    // SAFETY: a live body; 3 and 4 floats.
-    check(
-        unsafe { sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr()) },
-        "body pose",
-    )?;
-    Ok((origin, rotation))
+fn body_pose(world: &MmdDynamicsWorld, body: BodyHandle) -> Result<BodyPose, String> {
+    let (origin, rotation) = check(world.body_pose(body), "body pose")?;
+    Ok((origin.0, rotation.0))
+}
+
+fn world_transform(matrix: Mat4) -> mmd::Transform {
+    let m = matrix.0;
+    mmd::Transform {
+        basis: mmd::Basis([[m[0], m[4], m[8]], [m[1], m[5], m[9]], [m[2], m[6], m[10]]]),
+        origin: mmd::Vec3([m[12], m[13], m[14]]),
+    }
 }
 
 /// `BuildFollowMatrix`: `Rz * Rx * Ry * T(rigid)`, then
@@ -713,26 +680,23 @@ fn follow_matrix(model: &Model, r: &Rigid, bone: i32) -> Mat4 {
     o
 }
 
-fn body_matrix(body: *mut sys::mds_mmd_body) -> Result<Mat4, String> {
-    let mut m = Mat4([0.0; 16]);
-    // SAFETY: a live body; 16 floats.
-    check(
-        unsafe { sys::mds_mmd_body_matrix(body, m.0.as_mut_ptr()) },
-        "body matrix",
-    )?;
-    Ok(m)
+fn body_matrix(world: &MmdDynamicsWorld, body: BodyHandle) -> Result<Mat4, String> {
+    check(world.body_matrix(body), "body matrix").map(Mat4)
 }
 
 /// `ModelPhysicsReadback`: over-stretched joints, then the physics bodies
 /// drive their bones' world matrices and physics poses.
-fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), String> {
+fn readback(
+    model: &mut Model,
+    bodies: &[Option<BodyHandle>],
+    world: &mut MmdDynamicsWorld,
+) -> Result<(), String> {
     for j in &model.joints {
-        let (a, b) = (bodies[j.rigid_a], bodies[j.rigid_b]);
-        if a.is_null() || b.is_null() {
+        let (Some(a), Some(b)) = (bodies[j.rigid_a], bodies[j.rigid_b]) else {
             continue;
-        }
-        let ma = body_matrix(a)?;
-        let mb = body_matrix(b)?;
+        };
+        let ma = body_matrix(world, a)?;
+        let mb = body_matrix(world, b)?;
         let (ma, mb) = (ma.0, mb.0);
         let dy = ma[13] - mb[13];
         let dx = ma[12] - mb[12];
@@ -749,9 +713,8 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
             (mb[14] - ma[14]) * k,
         );
         let moved = Mat4::multiply(&Mat4(ma), &t).0;
-        // SAFETY: a live body; 3 floats.
         check(
-            unsafe { sys::mds_mmd_body_stop_at(b, moved[12..15].as_ptr()) },
+            world.stop_at(b, mmd::Vec3([moved[12], moved[13], moved[14]])),
             "over-stretch stop",
         )?;
     }
@@ -760,10 +723,13 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
         let Ok(bi) = usize::try_from(r.bone) else {
             continue;
         };
-        if r.mode as i8 <= 0 || body.is_null() {
+        let Some(body) = body else {
+            continue;
+        };
+        if r.mode as i8 <= 0 {
             continue;
         }
-        let w = body_matrix(body)?;
+        let w = body_matrix(world, body)?;
         model.bones[bi].mat_init = Mat4::multiply(&r.inv_transform, &w);
     }
 
@@ -857,6 +823,23 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn follow_matrix_conversion_preserves_basis_words() {
+        let words = [
+            1.0, -0.0, 2.0, 0.0, 3.0, 4.0, 5.0, 0.0, 6.0, 7.0, 8.0, 0.0, 9.0, 10.0, 11.0, 1.0,
+        ];
+        let world = super::world_transform(mds_math::Mat4(words));
+        for row in 0..3 {
+            for column in 0..3 {
+                assert_eq!(
+                    world.basis.0[row][column].to_bits(),
+                    words[column * 4 + row].to_bits()
+                );
+            }
+        }
+        assert_eq!(world.origin.0, [9.0, 10.0, 11.0]);
+    }
+
     use super::Op::{self, *};
     use super::{ptr, sys, MsvcRand, PhysicsScene, SUBSTEP};
     use mds_formats::pmm::Pmm;
@@ -1138,44 +1121,37 @@ mod tests {
 
     /// Drops a unit box (half extent 1) from y = 20, away from the model and
     /// colliding with the ground alone, for two seconds; its final pose.
-    fn drop_box(s: &PhysicsScene) -> ([f32; 3], [f32; 4]) {
-        let mut body = ptr::null_mut();
-        // SAFETY: the world is live; the arrays outlive the calls.
-        unsafe {
-            let code = sys::mds_mmd_body_create(
-                s.world.0,
+    fn drop_box(s: &mut PhysicsScene) -> ([f32; 3], [f32; 4]) {
+        let body = s
+            .world
+            .create_body(
+                mmd::BodyDesc {
+                    shape_kind: 1,
+                    shape_params: [1.0, 1.0, 1.0, 0.0],
+                    mass: 1.0,
+                    pose: mmd::Pose {
+                        position: mmd::Vec3([500.0, 20.0, 500.0]),
+                        rotation: mmd::Quat([0.0, 0.0, 0.0, 1.0]),
+                    },
+                    kinematic: false,
+                    linear_damping: 0.0,
+                    angular_damping: 0.0,
+                    restitution: 0.0,
+                    friction: 0.5,
+                    filter: Some([0x4000, i16::MIN]),
+                },
                 1,
-                1.0,
-                1.0,
-                1.0,
-                [500.0, 20.0, 500.0].as_ptr(),
-                [0.0, 0.0, 0.0, 1.0].as_ptr(),
-                1,
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.5,
-                0x4000,
-                i16::MIN,
-                &mut body,
-            );
-            assert_eq!(code, sys::MDS_BT_OK);
-        }
+            )
+            .unwrap();
         for _ in 0..120 {
             s.world_step(SUBSTEP).unwrap();
         }
-        let (mut origin, mut rotation) = ([0.0; 3], [0.0; 4]);
-        // SAFETY: a live body of this world.
-        let code =
-            unsafe { sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr()) };
-        assert_eq!(code, sys::MDS_BT_OK);
-        (origin, rotation)
+        body_pose(&s.world, body).unwrap()
     }
 
     #[test]
     fn the_floor_menu_switches_the_ground_contact() {
-        let rest = drop_box(&open(1));
+        let rest = drop_box(&mut open(1));
         assert!(
             (rest.0[1] - 1.0).abs() < 0.05,
             "rests on the floor: {rest:?}"
@@ -1183,14 +1159,14 @@ mod tests {
 
         let mut s = open(1);
         s.set_floor_visible(false).unwrap();
-        let fallen = drop_box(&s).0[1];
+        let fallen = drop_box(&mut s).0[1];
         // Free fall from 20 under -98 for 2 s ends near -176.
         assert!(fallen < -150.0, "falls through: {fallen}");
 
         let mut s = open(1);
         s.set_floor_visible(false).unwrap();
         s.set_floor_visible(true).unwrap();
-        assert_eq!(drop_box(&s), rest, "1 is the startup flag value");
+        assert_eq!(drop_box(&mut s), rest, "1 is the startup flag value");
     }
 
     #[test]

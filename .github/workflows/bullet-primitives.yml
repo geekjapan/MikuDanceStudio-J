@@ -72,6 +72,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bullet-native"
           { git rev-parse HEAD; uname -a; clang++ --version; rustup run 1.95.0 rustc -Vv; python3 --version; } 2>&1 | tee "$RUNNER_TEMP/bullet-native/provenance.log"
           git ls-files --stage recipes/bullet275/bullet-src/src rust/crates/mds-bullet rust/crates/mds-bullet-sys/shim rust/crates/mds-crtmath 'tools/bullet-rust-*' > "$RUNNER_TEMP/bullet-native/source-manifest.txt"
+      - name: Verify outer GJK source admission and historical profiles
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python3 -B tools/bullet-rust-gjk-pair-check/test_measured_profiles.py -v 2>&1 | tee "$RUNNER_TEMP/bullet-native/profile-tests.log"
+          python3 -B -O tools/bullet-rust-gjk-pair-check/test_measured_profiles.py -v 2>&1 | tee "$RUNNER_TEMP/bullet-native/profile-tests-optimized.log"
       - name: Recapture math and compare every frozen bit
         if: ${{ !cancelled() }}
         run: |

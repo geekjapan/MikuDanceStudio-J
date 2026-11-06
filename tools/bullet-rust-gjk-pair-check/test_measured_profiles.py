@@ -14,6 +14,69 @@ import measured_profiles
 from test_capture import mutations
 
 
+class MmdBodyReadbackAdmissionTests(unittest.TestCase):
+    def test_fixed_readback_metadata_and_digest_reject_edits(self):
+        layer = measured_profiles.MMD_BODY_READBACK
+        path = next(iter(layer['hosts']['linux-x64']))
+        changes = [lambda v: v.update(execution='PASS'),
+                   lambda v: v.update(source_head='0' * 40),
+                   lambda v: v.update(source_tree='0' * 40),
+                   lambda v: v.update(base_head='0' * 40),
+                   lambda v: v.update(mode='100755'),
+                   lambda v: v['blobs'][path].update(new='0' * 40),
+                   lambda v: v['hosts'].pop('windows-x64'),
+                   lambda v: v['hosts']['linux-x64'].update(extra={}),
+                   lambda v: v['hosts']['linux-x64'][path].update(new_sha256='0' * 64)]
+        for change in changes:
+            changed = copy.deepcopy(layer)
+            change(changed)
+            with patch.object(measured_profiles, 'MMD_BODY_READBACK', changed), \
+                    self.assertRaisesRegex(ValueError, 'immutable MMD body readback admission'):
+                measured_profiles.apply_mmd_body_readback_admission({}, 'linux-x64')
+
+    def test_exact_readback_layer_requires_all_old_identities_once(self):
+        layer = measured_profiles.MMD_BODY_READBACK
+        self.assertEqual(layer['execution'], 'UNRUN')
+        self.assertEqual(set(layer['hosts']), measured_profiles.HOSTS)
+        paths = {'rust/crates/mds-bullet/' + p for p in (
+            'src/core/world_objects.rs', 'src/core/mmd_collision_world.rs',
+            'tests/mmd_collision_world.rs')}
+        for host, identities in layer['hosts'].items():
+            self.assertEqual(set(identities), paths)
+            old = {p: h['old_sha256'] for p, h in identities.items()}
+            old['unchanged.rs'] = '1' * 64
+            expected = {**old, **{p: h['new_sha256'] for p, h in identities.items()}}
+            result = measured_profiles.apply_mmd_body_readback_admission(old, host)
+            self.assertEqual(result, expected)
+            self.assertEqual(old, {**{p: h['old_sha256'] for p, h in identities.items()},
+                                   'unchanged.rs': '1' * 64})
+            for path in paths:
+                for changed in (result, {**old, path: '0' * 64},
+                                {p: h for p, h in old.items() if p != path}):
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'readback old identity'):
+                        measured_profiles.apply_mmd_body_readback_admission(changed, host)
+            with self.assertRaisesRegex(ValueError, 'readback host'):
+                measured_profiles.apply_mmd_body_readback_admission(old, 'unknown')
+
+    def test_current_readback_bytes_and_complete_closure_refusals(self):
+        manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
+        for host, identities in measured_profiles.MMD_BODY_READBACK['hosts'].items():
+            expected = measured_profiles.approved_source_map(manifest, host)
+            for path, identity in identities.items():
+                data = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+                physical = data.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else data
+                self.assertEqual(measured_profiles.sha(physical), identity['new_sha256'])
+                self.assertEqual(expected[path], identity['new_sha256'])
+                mutations = [{**expected, path: identity['old_sha256']},
+                             {**expected, path: measured_profiles.sha(physical + b' ')},
+                             {p: h for p, h in expected.items() if p != path},
+                             {**expected, 'unexpected.rs': '0' * 64}]
+                for changed in mutations:
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=None,
+                            source_hashes=lambda: changed, stream=None, transport=None)
+
+
 class MmdCollisionAdmissionTests(unittest.TestCase):
     def test_verification_git_layer_requires_exact_paths_modes_and_scope(self):
         blobs = measured_profiles.VERIFICATION_BASE_BLOBS
@@ -677,6 +740,7 @@ class MacosSupplementalMeasurementTests(unittest.TestCase):
         changed['verification_sha256'] = None
         changed['future_source_admission'] = {'anything': '0' * 64}
         with patch.object(measured_profiles, 'approved_source_map', side_effect=AssertionError('current source used')), \
+                patch.object(measured_profiles, 'apply_mmd_body_readback_admission', side_effect=AssertionError('readback layer used for history')), \
                 patch.object(measured_profiles, 'current_verification_map', side_effect=AssertionError('current verification used')):
             self.assertEqual(measured_profiles.macos_capture_protected_source_map(changed), protected)
         path = next(iter(changed['mmd_collision_world_source_admission']['hosts']['macos-arm64']['additions']))
@@ -1162,6 +1226,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.assertEqual(receipt['current_source']['bridge']['integration_head'], self.manifest['source_admission']['integration_head'])
                 self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))
                 self.assertEqual(receipt['current_source']['registration_format_admission'], measured_profiles.REGISTRATION_FORMAT)
+                self.assertEqual(receipt['current_source']['mmd_body_readback_admission'], measured_profiles.MMD_BODY_READBACK)
                 self.assertEqual(receipt['current_source']['broadphase_source_admission'],
                     {k: v for k, v in self.manifest['broadphase_source_admission'].items() if k != 'hosts'})
                 self.assertEqual(receipt['current_source']['status'], 'reviewed-current-source-expectation-execution-pending')

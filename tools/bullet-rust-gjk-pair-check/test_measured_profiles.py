@@ -65,7 +65,7 @@ class PhysicsSourceIntegrationTests(unittest.TestCase):
         self.assertEqual(set(layer['hosts']), measured_profiles.HOSTS)
         for host, delta in layer['hosts'].items():
             expected = measured_profiles.approved_source_map(manifest, host)
-            self.assertEqual(len(delta['replacements']), 9)
+            self.assertEqual(len(delta['replacements']), 10)
             self.assertEqual(len(delta['additions']), 2)
             for path, blobs in layer['blobs'].items():
                 tree = subprocess.check_output(['git', 'ls-tree', 'HEAD', '--', path], cwd=check.ROOT).decode().split()
